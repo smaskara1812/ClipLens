@@ -200,3 +200,11 @@ tzlocal==5.3.1
 vine==5.1.0
 wcwidth==0.6.0
 whitenoise==6.7.0
+
+
+
+
+download youtube video using yt-dlp in mac use this command
+yt-dlp --extractor-args "youtube:player_client=android" \
+--download-sections "*00:00:00-00:05:00" \
+"URL"

@@ -145,7 +145,7 @@ def _can_use_fuzzy_search() -> bool:
     )
 
 
-def _postgres_fuzzy_filter(qs, raw: str, fields: tuple[str, ...]):
+def _postgres_fuzzy_filter(qs, raw: str, fields: tuple[str, ...], threshold: float = None):
     """
     Fuzzy text match via pg_trgm TrigramWordSimilarity.
 
@@ -169,7 +169,8 @@ def _postgres_fuzzy_filter(qs, raw: str, fields: tuple[str, ...]):
     #   • Truly unrelated words score < 0.30 — filtered out ✓
     # Long AI-generated text fields (scene_description, ocr_text) should NOT be
     # passed here at all; FTS with stemming handles them correctly.
-    threshold = float(getattr(settings, 'FUZZY_SEARCH_SIMILARITY_THRESHOLD', 0.35))
+    if threshold is None:
+        threshold = float(getattr(settings, 'FUZZY_SEARCH_SIMILARITY_THRESHOLD', 0.35))
     similarity_expr = None
     for field in fields:
         expr = TrigramWordSimilarity(raw, field)
@@ -406,7 +407,7 @@ def setup_channel_page(request):
 
 @editor_required
 def upload_page(request):
-    channels = list(request.user.channels.all())
+    channels = list(_user_channels(request.user))
     if not channels:
         return redirect('setup_channel')
     categories = Category.objects.all()
@@ -523,6 +524,49 @@ def player_page(request):
         videos_page = list(videos[:100])
         has_more_videos = False
 
+    # ── Chapter name search ───────────────────────────────────────────────────
+    chapter_matches = []
+    if q:
+        _ch_qs = VideoChapter.objects.filter(
+            video__visibility=Video.VISIBILITY_PUBLIC,
+            video__status=Video.STATUS_READY,
+        ).select_related('video', 'video__channel')
+        _ch_qs = _apply_ai_video_filters(_ch_qs, ch_slug, cat_slug, duration_filter, date_filter)
+        _fts_ch_pks = set()
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _ChSQ
+            _fts_ch_qs   = _ch_qs.filter(title__search=_ChSQ(q, config='english', search_type='plain'))
+            _fts_ch_pks  = set(_fts_ch_qs.values_list('pk', flat=True)[:200])
+            _fuzzy_ch_qs = _postgres_fuzzy_filter(_ch_qs, q, ('title',))
+            _ch_qs = _ch_qs.filter(
+                Q(pk__in=_fts_ch_pks) | Q(pk__in=_fuzzy_ch_qs.values('pk'))
+            )
+        else:
+            _ch_qs = _ch_qs.filter(_q_icontains_all_terms('title', q))
+            _fts_ch_pks = set(_ch_qs.values_list('pk', flat=True)[:200])
+        seen_chapter_videos = {}
+        for ch in _ch_qs.order_by('video_id', 'timestamp')[:200]:
+            vid_id   = str(ch.video_id)
+            is_exact = ch.pk in _fts_ch_pks
+            if vid_id not in seen_chapter_videos:
+                seen_chapter_videos[vid_id] = {'video': ch.video, 'moments': [], 'has_exact': False}
+            entry = seen_chapter_videos[vid_id]
+            if is_exact:
+                entry['has_exact'] = True
+            entry['moments'].append({
+                'start':            ch.timestamp,
+                'text':             ch.title,
+                'highlighted_text': _highlight_query(ch.title, q),
+                'time_fmt':         _fmt_seconds_display(ch.timestamp),
+                'is_exact':         is_exact,
+            })
+        for entry in seen_chapter_videos.values():
+            entry['moments'].sort(key=lambda m: (0 if m['is_exact'] else 1, m['start']))
+        chapter_matches = sorted(
+            seen_chapter_videos.values(),
+            key=lambda v: (0 if v.get('has_exact') else 1, -len(v['moments'])),
+        )
+
     # ── In-video speech search ────────────────────────────────────────────────
     segment_matches = []
     if q:
@@ -601,7 +645,10 @@ def player_page(request):
                 labels__search=_SQ2(q, config='english', search_type='plain')
             )
             _fts_yolo_pks = set(_fts_yolo_qs.values_list('pk', flat=True)[:400])
-            _fuzzy_yolo_qs = _postgres_fuzzy_filter(_yolo_qs, q, ('labels',))
+            # YOLO labels are standardized COCO class names — raise threshold to 0.5
+            # to prevent spurious matches (e.g. "elephant" matching "potted plant").
+            # FTS handles exact/stemmed matches; fuzzy only catches clear typos here.
+            _fuzzy_yolo_qs = _postgres_fuzzy_filter(_yolo_qs, q, ('labels',), threshold=0.5)
             _yolo_qs = _yolo_qs.filter(
                 Q(pk__in=_fts_yolo_pks) | Q(pk__in=_fuzzy_yolo_qs.values('pk'))
             )
@@ -884,9 +931,6 @@ def player_page(request):
             _fts_scene_qs  = _photo_qs.filter(
                 scene_description__search=_SQP(q, config='english', search_type='plain')
             )
-            _fts_ocr_qs    = _photo_qs.filter(
-                ocr_text__search=_SQP(q, config='english', search_type='plain')
-            )
             # FTS on denormalized face name cache ("Soham, Alice, Bob")
             _fts_face_qs   = _photo_qs.filter(
                 face_names__search=_SQP(q, config='english', search_type='plain')
@@ -894,17 +938,20 @@ def player_page(request):
             # Fuzzy on short fields only.
             # face_names = "Soham, Alice" — short CSV, typos useful ("Sohm"→"Soham")
             # labels = comma-separated object names ("dog, cat") — short, typos useful ("elefant"→"elephant")
-            # scene_description / ocr_text = long paragraphs — FTS handles these; fuzzy is noisy there.
+            # scene_description = long AI paragraph — FTS handles it; fuzzy is noisy there.
+            # ocr_text = exact printed text — icontains only (no FTS, no fuzzy); stemming would
+            #            cause false positives on unrelated words. "cow" must literally appear as
+            #            a contiguous substring of at least one word in the OCR text.
             _fuzzy_qs = _postgres_fuzzy_filter(_photo_qs, q, ('title', 'tags', 'labels', 'face_names'))
             _photo_qs = _photo_qs.filter(
                 Q(pk__in=_fts_title_qs.values('pk'))
                 | Q(pk__in=_fts_labels_qs.values('pk'))
                 | Q(pk__in=_fts_scene_qs.values('pk'))
-                | Q(pk__in=_fts_ocr_qs.values('pk'))
                 | Q(pk__in=_fts_face_qs.values('pk'))
                 | Q(pk__in=_fuzzy_qs.values('pk'))
                 | Q(pk__in=_photo_people_ids)
                 | Q(face_names__icontains=q)   # direct substring match for names
+                | Q(ocr_text__icontains=q)     # exact substring: "cow" in "cowboy" ✓; not in "conference" ✗
             ).distinct()
         else:
             _photo_qs = _photo_qs.filter(
@@ -934,7 +981,11 @@ def player_page(request):
                     _tf = _clip_model_cache.get_text_features(**_txt_inputs)
                     _tf = _tf / _tf.norm(dim=-1, keepdim=True)
                 _tv = _tf[0].tolist()
-                _threshold = getattr(settings, 'CLIP_SIMILARITY_THRESHOLD', 0.20)
+                # Photos use a stricter threshold than videos: CLIP does word→concept
+                # associations (e.g. "cow" → Bali via Hindu context) that are too loose
+                # for photo library search. 0.28 keeps genuine visual matches while
+                # filtering out cultural/conceptual leaps.
+                _threshold = getattr(settings, 'CLIP_PHOTO_SIMILARITY_THRESHOLD', 0.28)
                 _clip_photos = (
                     Photo.objects
                     .filter(visibility=Photo.VISIBILITY_PUBLIC, status=Photo.STATUS_READY)
@@ -967,6 +1018,7 @@ def player_page(request):
         'current_date':        date_filter,
         'current_sort':        sort,
         'segment_matches':     segment_matches,
+        'chapter_matches':     chapter_matches,
         'scene_matches':       scene_matches,
         'people_matches':      people_matches,
         'channel_matches':     channel_matches,
@@ -1763,12 +1815,12 @@ def video_upload(request):
     if not _is_editor(request.user):
         return Response({'error': 'You do not have upload access.'}, status=status.HTTP_403_FORBIDDEN)
 
-    # If a specific channel_id was supplied, verify the user owns it
+    # If a specific channel_id was supplied, verify the user can manage it (owner OR co-editor)
     channel_id = request.data.get('channel_id')
     if channel_id:
-        channel = request.user.channels.filter(pk=channel_id).first()
+        channel = _user_channels(request.user).filter(pk=channel_id).first()
         if not channel:
-            return Response({'error': 'Channel not found or not owned by you.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Channel not found or you do not have access.'}, status=status.HTTP_400_BAD_REQUEST)
     else:
         channel = _user_channel(request.user)
 
@@ -2473,6 +2525,140 @@ def subtitle_regenerate(request, video_id):
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
+# ─── Subtitle editor ──────────────────────────────────────────────────────────
+
+def _parse_subtitle_cues(content: str, fmt: str) -> list:
+    """
+    Parse WebVTT or SRT content into a list of cue dicts:
+      {id, start, end, text}
+    where start/end are strings in 'HH:MM:SS.mmm' format.
+    """
+    import re as _re
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
+    cues = []
+
+    if fmt == 'vtt':
+        # Skip everything up to and including the WEBVTT header line
+        body = _re.sub(r'^.*?WEBVTT[^\n]*\n', '', content, count=1, flags=_re.DOTALL)
+        # Each cue is separated by a blank line
+        blocks = [b.strip() for b in _re.split(r'\n{2,}', body) if b.strip()]
+        ts_pat = _re.compile(
+            r'^(?P<start>\d+:\d{2}:\d{2}[.,]\d{3}|\d+:\d{2}[.,]\d{3})'
+            r'\s*-->\s*'
+            r'(?P<end>\d+:\d{2}:\d{2}[.,]\d{3}|\d+:\d{2}[.,]\d{3})'
+        )
+        for block in blocks:
+            lines = block.split('\n')
+            # Optional cue identifier on first line
+            if lines and '-->' not in lines[0]:
+                cue_id = lines[0].strip()
+                lines = lines[1:]
+            else:
+                cue_id = str(len(cues) + 1)
+            if not lines:
+                continue
+            m = ts_pat.match(lines[0])
+            if not m:
+                continue
+            start, end = m.group('start'), m.group('end')
+            # Strip cue settings (position, align etc.) from timestamp line
+            text = '\n'.join(lines[1:]).strip()
+            # Normalise MM:SS.mmm → HH:MM:SS.mmm
+            def _norm(t):
+                t = t.replace(',', '.')
+                parts = t.split(':')
+                if len(parts) == 2:
+                    t = f'00:{t}'
+                return t
+            cues.append({'id': cue_id, 'start': _norm(start), 'end': _norm(end), 'text': text})
+
+    else:  # srt
+        ts_pat = _re.compile(
+            r'^(?P<start>\d+:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(?P<end>\d+:\d{2}:\d{2}[,\.]\d{3})'
+        )
+        for block in _re.split(r'\n{2,}', content):
+            lines = [l for l in block.split('\n') if l.strip()]
+            if not lines:
+                continue
+            # Skip the cue number line
+            start_idx = 0
+            if lines[0].strip().isdigit():
+                start_idx = 1
+            if start_idx >= len(lines):
+                continue
+            m = ts_pat.match(lines[start_idx])
+            if not m:
+                continue
+            start = m.group('start').replace(',', '.')
+            end   = m.group('end').replace(',', '.')
+            text  = '\n'.join(lines[start_idx + 1:]).strip()
+            cues.append({'id': str(len(cues) + 1), 'start': start, 'end': end, 'text': text})
+
+    return cues
+
+
+def _build_subtitle_content(cues: list, fmt: str) -> str:
+    """Rebuild WebVTT or SRT content from cue list."""
+    if fmt == 'vtt':
+        lines = ['WEBVTT', '']
+        for i, c in enumerate(cues, 1):
+            lines += [str(i), f"{c['start']} --> {c['end']}", c['text'], '']
+        return '\n'.join(lines)
+    else:  # srt
+        lines = []
+        for i, c in enumerate(cues, 1):
+            start = c['start'].replace('.', ',')
+            end   = c['end'].replace('.', ',')
+            lines += [str(i), f"{start} --> {end}", c['text'], '']
+        return '\n'.join(lines)
+
+
+@login_required
+def subtitle_editor_page(request, video_id, subtitle_id):
+    """Web editor for a single subtitle track — accessible to channel editors."""
+    video    = get_object_or_404(Video, id=video_id)
+    subtitle = get_object_or_404(Subtitle, id=subtitle_id, video=video)
+    if not _is_video_owner(request.user, video):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied
+    return render(request, 'videos/subtitle_editor.html', {
+        'video':    video,
+        'subtitle': subtitle,
+    })
+
+
+@api_view(['GET', 'POST'])
+@api_login_required
+def subtitle_cues(request, video_id, subtitle_id):
+    """
+    GET  /api/videos/<id>/subtitles/<sub_id>/cues/ — return parsed cues as JSON.
+    POST /api/videos/<id>/subtitles/<sub_id>/cues/ — save edited cues back to file.
+    """
+    video    = get_object_or_404(Video, id=video_id)
+    subtitle = get_object_or_404(Subtitle, id=subtitle_id, video=video)
+    if not _is_video_owner(request.user, video):
+        return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'GET':
+        try:
+            raw = subtitle.file.read().decode('utf-8')
+        except Exception as exc:
+            return Response({'error': f'Could not read file: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        cues = _parse_subtitle_cues(raw, subtitle.format)
+        return Response({'cues': cues, 'format': subtitle.format, 'language': subtitle.language_label})
+
+    # POST — save edited cues
+    cues = request.data.get('cues')
+    if not isinstance(cues, list):
+        return Response({'error': 'cues must be a list.'}, status=status.HTTP_400_BAD_REQUEST)
+    content = _build_subtitle_content(cues, subtitle.format)
+    from django.core.files.base import ContentFile
+    old_name = subtitle.file.name.split('/')[-1]
+    subtitle.file.delete(save=False)
+    subtitle.file.save(old_name, ContentFile(content.encode('utf-8')), save=True)
+    return Response({'ok': True, 'cue_count': len(cues)})
+
+
 # ─── Audio Tracks API ─────────────────────────────────────────────────────────
 
 @api_view(['GET'])
@@ -2665,16 +2851,19 @@ def faces_page(request):
         )
 
         q = request.GET.get('q', '').strip()
-        # Single query: annotate all per-identity counts in SQL — no Python loop queries
+        # Single query: annotate all per-identity counts in SQL — no Python loop queries.
+        # All counts are restricted to faces WHERE crop_path != '' so they match exactly
+        # what the person detail page shows (which also filters to saved crop images only).
+        has_crop = ~Q(faces__crop_path='')
         identities = (
             FaceIdentity.objects
             .filter(ch_q)
             .distinct()
             .annotate(
                 latest_video_upload=Max('faces__video__created_at'),
-                total=Count('faces', filter=ch_q),
-                confirmed=Count('faces', filter=ch_q & Q(faces__status=DetectedFace.STATUS_CONFIRMED)),
-                rejected=Count('faces', filter=ch_q & Q(faces__status=DetectedFace.STATUS_REJECTED)),
+                total=Count('faces', filter=ch_q & has_crop),
+                confirmed=Count('faces', filter=ch_q & has_crop & Q(faces__status=DetectedFace.STATUS_CONFIRMED)),
+                rejected=Count('faces', filter=ch_q & has_crop & Q(faces__status=DetectedFace.STATUS_REJECTED)),
                 video_count=Count('faces__video', filter=Q(faces__video__channel_id__in=user_channel_ids), distinct=True),
                 photo_count=Count('faces__photo', filter=Q(faces__photo__channel_id__in=user_channel_ids), distinct=True),
             )
@@ -3223,25 +3412,23 @@ def photo_library_page(request):
             _fts_scene_qs  = photos.filter(
                 scene_description__search=SearchQuery(q, config='english', search_type='plain')
             )
-            _fts_ocr_qs    = photos.filter(
-                ocr_text__search=SearchQuery(q, config='english', search_type='plain')
-            )
             # FTS on face names cache ("Soham, Alice")
             _fts_face_qs   = photos.filter(
                 face_names__search=SearchQuery(q, config='english', search_type='plain')
             )
             # Fuzzy ONLY on short user-controlled fields — long AI text fields are too noisy
             # face_names = "Soham, Alice" — short CSV, fuzzy gives typo tolerance on names
+            # ocr_text = exact printed text — icontains only; stemming adds false positives
             _fuzzy_qs = _postgres_fuzzy_filter(photos, q, ('title', 'tags', 'face_names'))
             photos = photos.filter(
                 Q(pk__in=_fts_qs.values('pk'))
                 | Q(pk__in=_fts_labels_qs.values('pk'))
                 | Q(pk__in=_fts_scene_qs.values('pk'))
-                | Q(pk__in=_fts_ocr_qs.values('pk'))
                 | Q(pk__in=_fts_face_qs.values('pk'))
                 | Q(pk__in=_fuzzy_qs.values('pk'))
                 | Q(pk__in=people_photo_ids)
                 | Q(face_names__icontains=q)   # direct name substring match
+                | Q(ocr_text__icontains=q)     # exact substring: "cow" in "cowboy" ✓; not in "conference" ✗
             ).distinct()
         else:
             photos = photos.filter(

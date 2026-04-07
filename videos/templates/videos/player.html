@@ -685,6 +685,11 @@
         Speech <span class="tab-count">{{ segment_matches|length }}</span>
       </button>
       {% endif %}
+      {% if chapter_matches %}
+      <button class="search-tab" onclick="switchTab('chapters', this)">
+        Chapters <span class="tab-count">{{ chapter_matches|length }}</span>
+      </button>
+      {% endif %}
       {% if channel_matches %}
       <button class="search-tab" onclick="switchTab('channels', this)">
         Channels <span class="tab-count">{{ channel_matches|length }}</span>
@@ -867,6 +872,40 @@
               Show {{ match.moments|length|add:'-4' }} more
             </button>
             {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Chapters tab -->
+    {% if chapter_matches %}
+    <div class="search-section active" id="tab-chapters">
+      <div class="speech-matches">
+        {% for match in chapter_matches %}
+        <div class="speech-video-block">
+          <a href="{% url 'watch' match.video.id %}" class="speech-video-header">
+            <div class="speech-video-thumb">
+              {% if match.video.thumbnail_url %}<img src="{{ match.video.thumbnail_url }}" alt="" />{% endif %}
+            </div>
+            <div>
+              <div class="speech-video-title">{{ match.video.title }}</div>
+              <div class="speech-video-channel">
+                {% if match.video.channel %}{{ match.video.channel.name }} · {% endif %}
+                {{ match.moments|length }} chapter{{ match.moments|length|pluralize }}
+              </div>
+            </div>
+          </a>
+          <div class="speech-moments" data-inject-divider="1">
+            {% for moment in match.moments %}
+            <a href="{% url 'watch' match.video.id %}?t={{ moment.start|floatformat:0 }}"
+               class="speech-moment"
+               data-exact="{{ moment.is_exact|yesno:'1,0' }}">
+              <span class="speech-moment-time">{{ moment.time_fmt }}</span>
+              <span class="speech-moment-text">{{ moment.highlighted_text|safe }}{% if not moment.is_exact %}<span class="fuzzy-badge">~</span>{% endif %}</span>
+            </a>
+            {% endfor %}
           </div>
         </div>
         {% endfor %}

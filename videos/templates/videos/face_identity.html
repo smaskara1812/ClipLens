@@ -149,7 +149,7 @@
   /* ── Crop grid ── */
   .crop-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 10px;
   }
 
@@ -157,27 +157,47 @@
   .crop-card {
     position: relative; border-radius: var(--radius-sm);
     overflow: hidden; background: var(--surface-3);
-    aspect-ratio: 1/1; cursor: pointer;
+    cursor: pointer;
     border: 2px solid transparent;
     transition: border-color .15s, transform .15s;
   }
   .crop-card:hover { transform: scale(1.03); }
   .crop-card.confirmed { border-color: var(--green); }
   .crop-card.rejected  { border-color: var(--red); opacity: .55; }
-  .crop-card img {
+
+  /* Image wrapper keeps the 1:1 ratio; overlays are relative to this */
+  .crop-img-wrap {
+    position: relative;
+    aspect-ratio: 1/1;
+    overflow: hidden;
+  }
+  .crop-img-wrap img {
     width: 100%; height: 100%; object-fit: cover; object-position: center top;
     display: block;
+  }
+
+  /* Permanent footer strip — always visible, never covered by overlay */
+  .crop-footer {
+    padding: 4px 8px;
+    font-size: 11px; font-weight: 600;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border-top: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+    font-family: monospace;
+    text-align: center;
+    letter-spacing: .3px;
   }
 
   /* Overlay: shows on hover (and always for confirmed/rejected) */
   .crop-overlay {
     position: absolute; inset: 0;
-    background: linear-gradient(to top, rgba(0,0,0,.8) 0%, transparent 50%);
+    background: linear-gradient(to top, rgba(0,0,0,.82) 0%, transparent 52%);
     display: flex; align-items: flex-end; justify-content: center;
-    padding-bottom: 8px; gap: 8px;
+    padding-bottom: 10px; gap: 6px;
     opacity: 0; transition: opacity .15s;
   }
-  .crop-card:hover .crop-overlay,
+  .crop-img-wrap:hover .crop-overlay,
   .crop-card.confirmed .crop-overlay,
   .crop-card.rejected  .crop-overlay { opacity: 1; }
 
@@ -213,15 +233,6 @@
     pointer-events: none;
   }
 
-  /* Timestamp chip */
-  .crop-timestamp {
-    position: absolute; bottom: 6px; left: 6px;
-    font-size: 10px; font-weight: 700;
-    background: rgba(0,0,0,.7); color: #fff;
-    padding: 1px 5px; border-radius: 3px;
-    font-variant-numeric: tabular-nums;
-    pointer-events: none;
-  }
 
   /* ── Toast ── */
   .toast {
@@ -370,43 +381,47 @@
            data-id="{{ face.pk }}"
            data-status="{{ face.status }}"
            data-crop-path="{{ face.crop_path }}">
-        <img src="{{ face.crop_url }}" alt="" loading="lazy" />
-        {% if grp.kind == 'video' %}
-        <div class="crop-timestamp">{{ face.timestamp|floatformat:0 }}s</div>
-        {% endif %}
+        <div class="crop-img-wrap">
+          <img src="{{ face.crop_url }}" alt="" loading="lazy" />
 
-        <!-- Thumbnail indicator -->
-        {% if face.crop_path == identity.thumbnail %}
-        <div class="crop-thumb-badge" id="thumb-badge-{{ face.pk }}">Thumbnail</div>
-        {% else %}
-        <div class="crop-thumb-badge" id="thumb-badge-{{ face.pk }}" style="display:none;">Thumbnail</div>
-        {% endif %}
-
-        <!-- Status badge -->
-        {% if face.status == 'confirmed' %}
-        <div class="crop-status-badge confirmed">✓</div>
-        {% elif face.status == 'rejected' %}
-        <div class="crop-status-badge rejected">✕</div>
-        {% endif %}
-
-        <!-- Hover actions (only for own channel's videos) -->
-        {% if can_edit %}
-        <div class="crop-overlay">
-          <button class="crop-action confirm" title="Confirm — this is {{ identity.name }}"
-                  onclick="setStatus(event, {{ face.pk }}, 'confirmed')">✓</button>
-          <button class="crop-action reject"  title="Reject — this is NOT {{ identity.name }}"
-                  onclick="setStatus(event, {{ face.pk }}, 'rejected')">✕</button>
-          {% if face.status != 'unreviewed' %}
-          <button class="crop-action unset" title="Reset to unreviewed"
-                  onclick="setStatus(event, {{ face.pk }}, 'unreviewed')">↺</button>
+          <!-- Thumbnail indicator -->
+          {% if face.crop_path == identity.thumbnail %}
+          <div class="crop-thumb-badge" id="thumb-badge-{{ face.pk }}">Thumbnail</div>
+          {% else %}
+          <div class="crop-thumb-badge" id="thumb-badge-{{ face.pk }}" style="display:none;">Thumbnail</div>
           {% endif %}
-          <button class="crop-action thumb-set" title="Use as profile thumbnail"
-                  onclick="setThumbnail(event, {{ face.pk }})">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
-              <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-            </svg>
-          </button>
-        </div>
+
+          <!-- Status badge -->
+          {% if face.status == 'confirmed' %}
+          <div class="crop-status-badge confirmed">✓</div>
+          {% elif face.status == 'rejected' %}
+          <div class="crop-status-badge rejected">✕</div>
+          {% endif %}
+
+          <!-- Hover actions (only for own channel's videos) -->
+          {% if can_edit %}
+          <div class="crop-overlay">
+            <button class="crop-action confirm" title="Confirm — this is {{ identity.name }}"
+                    onclick="setStatus(event, {{ face.pk }}, 'confirmed')">✓</button>
+            <button class="crop-action reject"  title="Reject — this is NOT {{ identity.name }}"
+                    onclick="setStatus(event, {{ face.pk }}, 'rejected')">✕</button>
+            {% if face.status != 'unreviewed' %}
+            <button class="crop-action unset" title="Reset to unreviewed"
+                    onclick="setStatus(event, {{ face.pk }}, 'unreviewed')">↺</button>
+            {% endif %}
+            <button class="crop-action thumb-set" title="Use as profile thumbnail"
+                    onclick="setThumbnail(event, {{ face.pk }})">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
+                <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+              </svg>
+            </button>
+          </div>
+          {% endif %}
+        </div><!-- /.crop-img-wrap -->
+
+        <!-- Timestamp footer — always visible, never covered by overlay -->
+        {% if grp.kind == 'video' %}
+        <div class="crop-footer">{{ face.timestamp|floatformat:0 }}s</div>
         {% endif %}
       </div>
       {% endif %}

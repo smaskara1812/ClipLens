@@ -1,0 +1,386 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Edit Subtitles — {{ video.title }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .se-wrap {
+    max-width: 1200px; margin: 0 auto; padding: 20px 24px 60px;
+    display: grid; grid-template-columns: 1fr 480px; gap: 24px; align-items: start;
+  }
+  @media (max-width: 900px) { .se-wrap { grid-template-columns: 1fr; } }
+
+  /* Left: video + header */
+  .se-left { position: sticky; top: 72px; }
+  .se-video-wrap {
+    border-radius: var(--radius); overflow: hidden;
+    background: #000; aspect-ratio: 16/9;
+  }
+  .se-video-wrap video { width: 100%; height: 100%; display: block; }
+  .se-video-title {
+    font-size: 15px; font-weight: 700; margin: 12px 0 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .se-video-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+
+  /* Right: cue editor */
+  .se-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; gap: 10px; flex-wrap: wrap;
+  }
+  .se-header h2 { font-size: 17px; font-weight: 800; }
+  .se-actions { display: flex; gap: 8px; align-items: center; }
+
+  .se-status {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface-2); color: var(--text-muted);
+  }
+  .se-status.saved   { background: var(--green-bg,rgba(16,185,129,.15));  color: var(--green,#10b981); }
+  .se-status.saving  { background: var(--accent-soft); color: var(--accent); }
+  .se-status.dirty   { background: var(--yellow-bg,rgba(245,158,11,.15)); color: var(--yellow,#f59e0b); }
+  .se-status.error   { background: rgba(239,68,68,.15); color: #ef4444; }
+
+  /* Cue table */
+  .se-cues { display: flex; flex-direction: column; gap: 2px; }
+
+  .se-cue {
+    display: grid; grid-template-columns: 120px 1fr;
+    gap: 0; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); overflow: hidden;
+    transition: border-color .12s;
+    cursor: default;
+  }
+  .se-cue:hover { border-color: var(--border-2); }
+  .se-cue.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  .se-cue-time {
+    background: var(--surface-2); padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    border-right: 1px solid var(--border);
+  }
+  .se-ts {
+    font-size: 11px; font-family: monospace; color: var(--text-muted);
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 3px; padding: 2px 5px; width: 100%; box-sizing: border-box;
+    outline: none; transition: border-color .12s;
+  }
+  .se-ts:focus { border-color: var(--accent); color: var(--text); }
+
+  .se-cue-text {
+    padding: 8px 10px; font-size: 13px; line-height: 1.5;
+    min-height: 44px; outline: none;
+    color: var(--text); white-space: pre-wrap; word-break: break-word;
+  }
+  .se-cue-text:focus { background: var(--surface); }
+
+  .se-cue-play {
+    grid-column: 1; align-self: center; justify-self: center;
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 2px 4px; border-radius: 4px; font-size: 15px;
+    transition: color .12s, background .12s;
+  }
+  .se-cue-play:hover { color: var(--accent); background: var(--accent-soft); }
+
+  /* Toolbar below cues */
+  .se-toolbar {
+    display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap;
+  }
+
+  /* Loading state */
+  .se-loading {
+    text-align: center; padding: 60px 20px; color: var(--text-muted);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="se-wrap">
+  <!-- Left: video preview -->
+  <div class="se-left">
+    <div class="se-video-wrap">
+      {% if video.hls_playlist %}
+      <video id="seVideo" controls preload="metadata">
+        <source src="/media/{{ video.hls_playlist }}" type="application/x-mpegURL" />
+      </video>
+      {% elif video.file %}
+      <video id="seVideo" controls preload="metadata">
+        <source src="{{ video.file.url }}" />
+      </video>
+      {% else %}
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;">No video source</div>
+      {% endif %}
+    </div>
+    <div class="se-video-title">{{ video.title }}</div>
+    <div class="se-video-meta">
+      {% if video.channel %}{{ video.channel.name }} · {% endif %}
+      {{ subtitle.language_label }} subtitle · {{ subtitle.get_format_display }}
+    </div>
+    <a href="{% url 'watch' video.id %}" class="btn btn-ghost btn-sm" style="display:inline-flex;align-items:center;gap:5px;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back to video
+    </a>
+  </div>
+
+  <!-- Right: cue editor -->
+  <div>
+    <div class="se-header">
+      <h2>Edit Subtitles</h2>
+      <div class="se-actions">
+        <span class="se-status" id="seStatus">Loading…</span>
+        <button class="btn btn-ghost btn-sm" onclick="discardChanges()" id="discardBtn" disabled>Discard</button>
+        <button class="btn btn-primary btn-sm" onclick="saveCues()" id="saveBtn" disabled>Save</button>
+      </div>
+    </div>
+
+    <div class="se-loading" id="seLoading">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:32px;height:32px;margin:0 auto 12px;display:block;opacity:.4;">
+        <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+      </svg>
+      Loading subtitle file…
+    </div>
+
+    <div class="se-cues" id="seCues" style="display:none;"></div>
+
+    <div class="se-toolbar" id="seToolbar" style="display:none;">
+      <button class="btn btn-ghost btn-sm" onclick="addCueAtEnd()">+ Add cue</button>
+      <a id="downloadBtn" class="btn btn-ghost btn-sm" download>Download</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const _videoId    = '{{ video.id }}';
+const _subtitleId = {{ subtitle.id }};
+const _format     = '{{ subtitle.format }}';
+let _cues         = [];    // current working copy
+let _original     = '';    // JSON.stringify of original for dirty detection
+let _dirty        = false;
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+
+// ── Load cues ─────────────────────────────────────────────────────────────────
+async function loadCues() {
+  const res = await fetch(`/api/videos/${_videoId}/subtitles/${_subtitleId}/cues/`, {
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    setStatus('error', 'Failed to load subtitles');
+    document.getElementById('seLoading').textContent = 'Failed to load subtitle file.';
+    return;
+  }
+  const d = await res.json();
+  _cues = d.cues;
+  _original = JSON.stringify(_cues);
+  document.getElementById('seLoading').style.display = 'none';
+  document.getElementById('seCues').style.display    = 'flex';
+  document.getElementById('seToolbar').style.display = 'flex';
+  renderCues();
+  setStatus('saved', `${_cues.length} cues loaded`);
+  updateDownloadLink();
+}
+
+// ── Render cue list ───────────────────────────────────────────────────────────
+function renderCues() {
+  const container = document.getElementById('seCues');
+  container.innerHTML = '';
+  _cues.forEach((cue, idx) => {
+    const row = document.createElement('div');
+    row.className = 'se-cue';
+    row.dataset.idx = idx;
+    row.innerHTML = `
+      <div class="se-cue-time">
+        <input class="se-ts" value="${esc(cue.start)}" title="Start time"
+               onchange="updateCue(${idx}, 'start', this.value)" />
+        <input class="se-ts" value="${esc(cue.end)}"   title="End time"
+               onchange="updateCue(${idx}, 'end',   this.value)" />
+        <button class="se-cue-play" title="Seek to this cue" onclick="seekTo(${idx})">▶</button>
+      </div>
+      <div class="se-cue-text" contenteditable="true"
+           oninput="updateCueText(${idx}, this)"
+           onkeydown="handleCueKeydown(event, ${idx})">${esc(cue.text).replace(/\n/g,'<br>')}</div>`;
+    container.appendChild(row);
+  });
+  document.getElementById('saveBtn').disabled    = false;
+  document.getElementById('discardBtn').disabled = false;
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Cue update helpers ────────────────────────────────────────────────────────
+function updateCue(idx, field, value) {
+  _cues[idx][field] = value.trim();
+  markDirty();
+}
+
+function updateCueText(idx, el) {
+  // Get plain text from contenteditable (convert <br> back to newlines)
+  _cues[idx].text = el.innerText;
+  markDirty();
+}
+
+function handleCueKeydown(e, idx) {
+  // Shift+Enter inside contenteditable inserts a real newline (default Enter submits)
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    document.execCommand('insertLineBreak');
+  }
+}
+
+function addCueAtEnd() {
+  const last = _cues[_cues.length - 1];
+  const newStart = last ? _addSeconds(last.end, 0.5) : '00:00:00.000';
+  const newEnd   = _addSeconds(newStart, 2);
+  _cues.push({ id: String(_cues.length + 1), start: newStart, end: newEnd, text: '' });
+  markDirty();
+  renderCues();
+  // Scroll to and focus the new cue's text box
+  const rows = document.querySelectorAll('.se-cue');
+  const last_row = rows[rows.length - 1];
+  last_row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  last_row?.querySelector('.se-cue-text')?.focus();
+}
+
+function _addSeconds(ts, secs) {
+  // ts = 'HH:MM:SS.mmm'
+  const [hms, ms] = (ts || '00:00:00.000').split('.');
+  const [h, m, s] = (hms || '00:00:00').split(':').map(Number);
+  let total = h * 3600 + m * 60 + (s || 0) + secs;
+  const hh  = String(Math.floor(total / 3600)).padStart(2, '0');
+  total     %= 3600;
+  const mm  = String(Math.floor(total / 60)).padStart(2, '0');
+  total     %= 60;
+  const ss  = String(Math.floor(total)).padStart(2, '0');
+  const mmm = String(parseInt(ms || '0')).padStart(3, '0');
+  return `${hh}:${mm}:${ss}.${mmm}`;
+}
+
+// ── Seek video to a cue ───────────────────────────────────────────────────────
+function seekTo(idx) {
+  const cue = _cues[idx];
+  if (!cue) return;
+  const vid = document.getElementById('seVideo');
+  if (!vid) return;
+  vid.currentTime = _tsToSeconds(cue.start);
+  vid.play();
+  // Highlight active cue
+  document.querySelectorAll('.se-cue').forEach(r => r.classList.remove('active'));
+  document.querySelector(`.se-cue[data-idx="${idx}"]`)?.classList.add('active');
+}
+
+function _tsToSeconds(ts) {
+  const [hms, ms] = (ts || '0:0:0.0').split('.');
+  const parts = hms.split(':').map(Number);
+  if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2] + (parseInt(ms||0)/1000);
+  if (parts.length === 2) return parts[0]*60   + parts[1]               + (parseInt(ms||0)/1000);
+  return 0;
+}
+
+// ── Sync active cue with video playback ──────────────────────────────────────
+const _vid = document.getElementById('seVideo');
+if (_vid) {
+  _vid.addEventListener('timeupdate', () => {
+    const t = _vid.currentTime;
+    let active = -1;
+    for (let i = 0; i < _cues.length; i++) {
+      if (_tsToSeconds(_cues[i].start) <= t && t <= _tsToSeconds(_cues[i].end)) {
+        active = i; break;
+      }
+    }
+    document.querySelectorAll('.se-cue').forEach((r, i) => {
+      r.classList.toggle('active', i === active);
+    });
+  });
+}
+
+// ── Save cues ─────────────────────────────────────────────────────────────────
+async function saveCues() {
+  setStatus('saving', 'Saving…');
+  document.getElementById('saveBtn').disabled = true;
+  const res = await fetch(`/api/videos/${_videoId}/subtitles/${_subtitleId}/cues/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({ cues: _cues }),
+  });
+  document.getElementById('saveBtn').disabled = false;
+  if (res.ok) {
+    _original = JSON.stringify(_cues);
+    _dirty    = false;
+    setStatus('saved', `Saved · ${_cues.length} cues`);
+    updateDownloadLink();
+  } else {
+    setStatus('error', 'Save failed');
+  }
+}
+
+function discardChanges() {
+  if (!_dirty) return;
+  if (!confirm('Discard all unsaved changes?')) return;
+  _cues  = JSON.parse(_original);
+  _dirty = false;
+  renderCues();
+  setStatus('saved', `${_cues.length} cues loaded`);
+}
+
+function markDirty() {
+  _dirty = true;
+  setStatus('dirty', 'Unsaved changes');
+}
+
+function setStatus(cls, text) {
+  const el = document.getElementById('seStatus');
+  el.className = `se-status ${cls}`;
+  el.textContent = text;
+}
+
+// ── Download current cues as file ─────────────────────────────────────────────
+function updateDownloadLink() {
+  const ext  = _format === 'vtt' ? 'vtt' : 'srt';
+  const mime = _format === 'vtt' ? 'text/vtt' : 'application/x-subrip';
+  const content = buildContent();
+  const blob = new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const btn  = document.getElementById('downloadBtn');
+  btn.href     = url;
+  btn.download = `subtitles_{{ subtitle.language }}.${ext}`;
+}
+
+function buildContent() {
+  if (_format === 'vtt') {
+    const lines = ['WEBVTT', ''];
+    _cues.forEach((c, i) => {
+      lines.push(String(i + 1));
+      lines.push(`${c.start} --> ${c.end}`);
+      lines.push(c.text);
+      lines.push('');
+    });
+    return lines.join('\n');
+  } else {
+    const lines = [];
+    _cues.forEach((c, i) => {
+      lines.push(String(i + 1));
+      lines.push(`${c.start.replace('.', ',')} --> ${c.end.replace('.', ',')}`);
+      lines.push(c.text);
+      lines.push('');
+    });
+    return lines.join('\n');
+  }
+}
+
+// Warn on unload if dirty
+window.addEventListener('beforeunload', e => {
+  if (_dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+loadCues();
+</script>
+{% endblock %}

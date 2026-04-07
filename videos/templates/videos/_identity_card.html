@@ -53,7 +53,7 @@ must be defined in the parent template (faces.html).
       {% if row.is_photo_only %}
       <span>{{ row.photo_count|default:0 }} photo{{ row.photo_count|default:0|pluralize }}</span>
       {% else %}
-      <span>{{ row.total }} crop{{ row.total|pluralize }}</span>
+      <span>{{ row.total }} detection{{ row.total|pluralize }}</span>
       <span class="dot">·</span>
       <span>{{ row.video_count }} video{{ row.video_count|pluralize }}</span>
       {% if row.photo_count %}

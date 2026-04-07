@@ -15,8 +15,8 @@ from .models import (
 class UserProfileInline(admin.StackedInline):
     model = UserProfile
     can_delete = False
-    verbose_name = 'FreeStream Role'
-    verbose_name_plural = 'FreeStream Role'
+    verbose_name = 'ClipLens Role'
+    verbose_name_plural = 'ClipLens Roles'
     fields = ('role',)
 
 

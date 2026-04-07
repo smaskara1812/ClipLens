@@ -50,7 +50,7 @@ X_FRAME_OPTIONS = 'SAMEORIGIN'
 # Set to '*' to allow all, or list specific origins e.g. 'https://lms.essar.com'
 EMBED_ALLOW_ORIGINS = os.getenv('EMBED_ALLOW_ORIGINS', '*')
 
-ROOT_URLCONF = 'freestream.urls'
+ROOT_URLCONF = 'cliplens.urls'
 
 TEMPLATES = [
     {
@@ -71,7 +71,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'freestream.wsgi.application'
+WSGI_APPLICATION = 'cliplens.wsgi.application'
 
 _use_mssql    = os.getenv('USE_MSSQL',    'false').lower() == 'true'
 _use_mysql    = os.getenv('USE_MYSQL',    'false').lower() == 'true'

@@ -1,18 +1,18 @@
 """
-Celery application for FreeStream.
+Celery application for ClipLens.
 
 Start a worker with:
-    celery -A freestream worker -l info
+    celery -A cliplens worker -l info
 
 In development you can also use:
-    celery -A freestream worker -l info --concurrency=2
+    celery -A cliplens worker -l info --concurrency=2
 """
 import os
 from celery import Celery
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'freestream.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cliplens.settings')
 
-app = Celery('freestream')
+app = Celery('cliplens')
 
 # Read config from CELERY_* keys in Django settings
 app.config_from_object('django.conf:settings', namespace='CELERY')
