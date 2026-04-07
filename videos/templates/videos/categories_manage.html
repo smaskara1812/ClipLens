@@ -1,0 +1,292 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Manage Categories — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .admin-layout { max-width: 900px; margin: 0 auto; padding: 28px 24px; }
+  .page-hero { margin-bottom: 28px; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .page-hero h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+  .page-hero h1 svg { width: 24px; height: 24px; color: var(--accent); }
+  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+  .breadcrumb { font-size: 13px; color: var(--text-subtle); margin-bottom: 20px; display: flex; align-items: center; gap: 6px; }
+  .breadcrumb a { color: var(--accent); text-decoration: none; }
+  .breadcrumb a:hover { text-decoration: underline; }
+
+  /* Add form */
+  .add-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 28px; }
+  .add-card h2 { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+  .add-row { display: flex; gap: 10px; align-items: flex-end; }
+  .add-row .input-group { flex: 1; }
+  .add-row label { display: block; font-size: 12px; font-weight: 600; color: var(--text-subtle); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .add-row input { width: 100%; }
+
+  /* Table */
+  .cat-table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { padding: 11px 16px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-subtle); background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background var(--transition); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+  td { padding: 11px 16px; font-size: 13px; vertical-align: middle; }
+  .cat-name-cell { display: flex; align-items: center; gap: 8px; }
+  .cat-name { font-weight: 600; }
+  .cat-slug { font-size: 11px; color: var(--text-subtle); font-family: monospace; }
+  .cat-count { font-variant-numeric: tabular-nums; }
+  .cat-count a { color: var(--accent); text-decoration: none; }
+  .cat-count a:hover { text-decoration: underline; }
+  .row-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .btn-rename { font-size: 12px; padding: 5px 12px; }
+  .btn-delete { font-size: 12px; padding: 5px 10px; background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .btn-delete:hover { border-color: var(--red, #ef4444); color: var(--red, #ef4444); }
+  .btn-delete:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Edit inline */
+  .edit-inline { display: none; align-items: center; gap: 8px; width: 100%; }
+  .edit-inline input { flex: 1; font-size: 13px; padding: 5px 9px; }
+  .edit-inline.active { display: flex; }
+  .cat-display { display: flex; align-items: center; gap: 8px; }
+  tr.editing .cat-display { display: none; }
+  tr.editing .edit-inline { display: flex; }
+
+  .empty-state { text-align: center; padding: 40px 24px; color: var(--text-subtle); font-size: 14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  <div class="breadcrumb">
+    <a href="{% url 'user_management' %}">Admin Panel</a>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="9 18 15 12 9 6"/></svg>
+    Categories
+  </div>
+
+  <div class="page-hero">
+    <div>
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        Manage Categories
+      </h1>
+      <p>{{ categories|length }} categor{{ categories|length|pluralize:"y,ies" }} · Superadmin only</p>
+    </div>
+  </div>
+
+  <!-- Add category -->
+  <div class="add-card">
+    <h2>Add New Category</h2>
+    <div class="add-row">
+      <div class="input-group">
+        <label for="newCatName">Name</label>
+        <input type="text" id="newCatName" placeholder="e.g. Technology" maxlength="100" />
+      </div>
+      <button class="btn btn-primary" onclick="createCategory()" id="createBtn">Add Category</button>
+    </div>
+  </div>
+
+  <!-- Categories table -->
+  <div class="cat-table-wrap">
+    <table id="catTable">
+      <thead>
+        <tr>
+          <th>Name / Slug</th>
+          <th>Videos</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="catTbody">
+        {% for cat in categories %}
+        <tr id="cat-row-{{ cat.id }}" data-id="{{ cat.id }}" data-name="{{ cat.name|escapejs }}" data-count="{{ cat.video_count }}">
+          <td>
+            <div class="cat-display">
+              <span class="cat-name">{{ cat.name }}</span>
+              <span class="cat-slug">{{ cat.slug }}</span>
+            </div>
+            <div class="edit-inline">
+              <input type="text" class="edit-input" value="{{ cat.name|escapejs }}" maxlength="100"
+                     onkeydown="if(event.key==='Enter') saveRename({{ cat.id }}, this); if(event.key==='Escape') cancelEdit({{ cat.id }});" />
+              <button class="btn btn-primary btn-rename" onclick="saveRename({{ cat.id }}, this.previousElementSibling)">Save</button>
+              <button class="btn-delete" onclick="cancelEdit({{ cat.id }})">Cancel</button>
+            </div>
+          </td>
+          <td class="cat-count">
+            {% if cat.video_count > 0 %}
+            <a href="{% url 'category' cat.slug %}">{{ cat.video_count }} video{{ cat.video_count|pluralize }}</a>
+            {% else %}
+            <span style="color:var(--text-subtle)">0 videos</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="row-actions">
+              <button class="btn btn-secondary btn-rename" onclick="startEdit({{ cat.id }})">Rename</button>
+              <button class="btn-delete" id="del-{{ cat.id }}"
+                      onclick="deleteCategory({{ cat.id }}, {{ cat.video_count }})"
+                      {% if cat.video_count > 0 %}title="Reassign all videos first"{% endif %}>
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="3" class="empty-state">No categories yet — add one above.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+
+async function createCategory() {
+  const input = document.getElementById('newCatName');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  const btn = document.getElementById('createBtn');
+  btn.disabled = true;
+  const res = await fetch('/api/categories/', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ name }),
+  });
+  btn.disabled = false;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    showToast('error', 'Could not create category', err.name?.[0] || err.error || '');
+    return;
+  }
+  const cat = await res.json();
+  input.value = '';
+  addRowToTable(cat);
+  updateHeroCount(1);
+  showToast('success', `Category "${cat.name}" created`);
+}
+
+function addRowToTable(cat) {
+  const tbody = document.getElementById('catTbody');
+  // Remove empty-state row if present
+  const empty = tbody.querySelector('td[colspan]');
+  if (empty) empty.closest('tr').remove();
+
+  const tr = document.createElement('tr');
+  tr.id = `cat-row-${cat.id}`;
+  tr.dataset.id = cat.id;
+  tr.dataset.name = cat.name;
+  tr.dataset.count = 0;
+  tr.innerHTML = `
+    <td>
+      <div class="cat-display">
+        <span class="cat-name">${escHtml(cat.name)}</span>
+        <span class="cat-slug">${escHtml(cat.slug)}</span>
+      </div>
+      <div class="edit-inline">
+        <input type="text" class="edit-input" value="${escAttr(cat.name)}" maxlength="100"
+               onkeydown="if(event.key==='Enter') saveRename(${cat.id}, this); if(event.key==='Escape') cancelEdit(${cat.id});" />
+        <button class="btn btn-primary btn-rename" onclick="saveRename(${cat.id}, this.previousElementSibling)">Save</button>
+        <button class="btn-delete" onclick="cancelEdit(${cat.id})">Cancel</button>
+      </div>
+    </td>
+    <td class="cat-count"><span style="color:var(--text-subtle)">0 videos</span></td>
+    <td>
+      <div class="row-actions">
+        <button class="btn btn-secondary btn-rename" onclick="startEdit(${cat.id})">Rename</button>
+        <button class="btn-delete" id="del-${cat.id}" onclick="deleteCategory(${cat.id}, 0)">Delete</button>
+      </div>
+    </td>`;
+  // Insert alphabetically
+  const rows = [...tbody.querySelectorAll('tr[data-id]')];
+  const name = cat.name.toLowerCase();
+  const after = rows.find(r => r.dataset.name.toLowerCase() > name);
+  after ? tbody.insertBefore(tr, after) : tbody.appendChild(tr);
+}
+
+function startEdit(id) {
+  const row = document.getElementById(`cat-row-${id}`);
+  row.classList.add('editing');
+  row.querySelector('.edit-input').focus();
+}
+
+function cancelEdit(id) {
+  const row = document.getElementById(`cat-row-${id}`);
+  row.classList.remove('editing');
+}
+
+async function saveRename(id, input) {
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  input.disabled = true;
+  const res = await fetch(`/api/categories/${id}/`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ name }),
+  });
+  input.disabled = false;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    showToast('error', 'Rename failed', err.name?.[0] || err.error || '');
+    return;
+  }
+  const updated = await res.json();
+  const row = document.getElementById(`cat-row-${id}`);
+  row.dataset.name = updated.name;
+  row.querySelector('.cat-name').textContent = updated.name;
+  row.querySelector('.cat-slug').textContent = updated.slug;
+  row.querySelector('.edit-input').value = updated.name;
+  row.classList.remove('editing');
+  showToast('success', `Renamed to "${updated.name}"`);
+}
+
+async function deleteCategory(id, count) {
+  if (count > 0) {
+    showToast('error', 'Cannot delete', `${count} video(s) are assigned. Reassign them first.`);
+    return;
+  }
+  if (!confirm('Delete this category? This cannot be undone.')) return;
+  const btn = document.getElementById(`del-${id}`);
+  btn.disabled = true;
+  const res = await fetch(`/api/categories/${id}/`, {
+    method: 'DELETE', credentials: 'include',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  if (res.ok || res.status === 204) {
+    const row = document.getElementById(`cat-row-${id}`);
+    const name = row.dataset.name;
+    row.remove();
+    updateHeroCount(-1);
+    showToast('success', `"${name}" deleted`);
+    if (!document.querySelector('#catTbody tr[data-id]')) {
+      document.getElementById('catTbody').innerHTML =
+        '<tr><td colspan="3" class="empty-state">No categories yet — add one above.</td></tr>';
+    }
+  } else {
+    btn.disabled = false;
+    const err = await res.json().catch(() => ({}));
+    showToast('error', 'Delete failed', err.error || '');
+  }
+}
+
+function updateHeroCount(delta) {
+  const p = document.querySelector('.page-hero p');
+  if (!p) return;
+  const m = p.textContent.match(/(\d+)/);
+  if (!m) return;
+  const n = parseInt(m[1]) + delta;
+  p.textContent = `${n} categor${n === 1 ? 'y' : 'ies'} · Superadmin only`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) {
+  return s.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Allow Enter key in add field
+document.getElementById('newCatName').addEventListener('keydown', e => {
+  if (e.key === 'Enter') createCategory();
+});
+</script>
+{% endblock %}

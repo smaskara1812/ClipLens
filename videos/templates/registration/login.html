@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sign In — ClipStream</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:       #09090e;
+      --surface:  #111118;
+      --surface-2:#16161f;
+      --border:   rgba(255,255,255,.08);
+      --border-2: rgba(255,255,255,.13);
+      --accent:   #6366f1;
+      --accent-h: #4f46e5;
+      --text:     #f0f0f8;
+      --text-muted:#9191aa;
+      --radius:   12px;
+      --shadow:   0 20px 60px rgba(0,0,0,.6);
+    }
+    [data-theme="light"] {
+      --bg:       #f2f2f7;
+      --surface:  #ffffff;
+      --surface-2:#f6f6fb;
+      --border:   rgba(0,0,0,.08);
+      --border-2: rgba(0,0,0,.13);
+      --text:     #0f0f14;
+      --text-muted:#6b6b80;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%; font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+
+    .page {
+      min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; padding: 24px;
+    }
+
+    /* Background glow */
+    .page::before {
+      content: ''; position: fixed; top: -200px; left: 50%;
+      transform: translateX(-50%);
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, rgba(99,102,241,.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 40px 40px 36px;
+      width: 100%; max-width: 400px;
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+
+    /* Logo */
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 20px; font-weight: 800; letter-spacing: -.4px;
+      color: var(--text); text-decoration: none; margin-bottom: 32px;
+    }
+    .logo svg { width: 32px; height: 32px; flex-shrink: 0; }
+    .logo span { color: var(--accent); }
+
+    /* Heading */
+    .heading { font-size: 22px; font-weight: 800; letter-spacing: -.3px; }
+    .subhead  { font-size: 14px; color: var(--text-muted); margin-top: 5px; }
+
+    /* Form */
+    .form { margin-top: 28px; display: flex; flex-direction: column; gap: 16px; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+    .field input {
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: 8px; padding: 11px 14px; font-size: 14px;
+      color: var(--text); outline: none; font-family: inherit;
+      transition: border-color .15s;
+    }
+    .field input:focus { border-color: var(--accent); }
+    .field input::placeholder { color: var(--text-muted); opacity: .6; }
+
+    /* Remember me row */
+    .remember-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--text-muted); cursor: pointer;
+    }
+    .remember-row input[type="checkbox"] {
+      width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer;
+    }
+
+    /* Submit */
+    .submit-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: background .15s;
+      margin-top: 4px;
+    }
+    .submit-btn:hover { background: var(--accent-h); }
+
+    /* Errors */
+    .errors {
+      background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3);
+      border-radius: 8px; padding: 10px 14px;
+      font-size: 13px; color: #f87171; line-height: 1.6;
+    }
+
+    /* Theme toggle */
+    .theme-row {
+      display: flex; justify-content: center; margin-top: 24px;
+    }
+    .theme-btn {
+      background: none; border: 1px solid var(--border-2); color: var(--text-muted);
+      border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer;
+      font-family: inherit; transition: all .15s; display: flex; align-items: center; gap: 6px;
+    }
+    .theme-btn:hover { border-color: var(--accent); color: var(--text); }
+    .theme-btn svg { width: 13px; height: 13px; }
+  </style>
+</head>
+<body>
+
+<div class="page">
+  <div class="card">
+
+    <a href="#" class="logo">
+      <svg viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="7" fill="#6366f1"/>
+        <polygon points="11,8 21,14 11,20" fill="white"/>
+      </svg>
+      Free<span>Stream</span>
+    </a>
+
+    <div class="heading">Welcome back</div>
+    <div class="subhead">Sign in to access your video library</div>
+
+    {% if form.errors %}
+    <div class="errors" style="margin-top:20px;">
+      {% for field in form %}
+        {% for error in field.errors %}{{ error }}<br/>{% endfor %}
+      {% endfor %}
+      {% for error in form.non_field_errors %}{{ error }}<br/>{% endfor %}
+    </div>
+    {% endif %}
+
+    <form class="form" method="post">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}" />
+
+      <div class="field">
+        <label for="id_username">Username</label>
+        <input type="text" name="username" id="id_username"
+               placeholder="your username" autocomplete="username" autofocus />
+      </div>
+
+      <div class="field">
+        <label for="id_password">Password</label>
+        <input type="password" name="password" id="id_password"
+               placeholder="••••••••" autocomplete="current-password" />
+      </div>
+
+      <label class="remember-row">
+        <input type="checkbox" name="remember" />
+        Keep me signed in
+      </label>
+
+      <button type="submit" class="submit-btn">Sign In →</button>
+    </form>
+
+    <div class="theme-row">
+      <button class="theme-btn" onclick="toggleTheme()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        Toggle theme
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Persist theme across pages
+  (function() {
+    const t = localStorage.getItem('fs-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('fs-theme', next);
+  }
+</script>
+</body>
+</html>

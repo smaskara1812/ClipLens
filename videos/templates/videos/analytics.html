@@ -1,0 +1,671 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Analytics — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .analytics-wrap {
+    max-width: 1100px; margin: 36px auto; padding: 0 24px 60px;
+  }
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+  .page-header p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  /* Stats row */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    margin-bottom: 32px;
+  }
+  @media (max-width: 640px) { .stats-row { grid-template-columns: 1fr; } }
+
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 24px 28px;
+    display: flex; flex-direction: column; gap: 6px;
+    transition: background var(--transition), border-color var(--transition);
+  }
+  .stat-label {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted);
+  }
+  .stat-value {
+    font-size: 32px; font-weight: 800; letter-spacing: -1px; color: var(--text);
+  }
+  .stat-icon { font-size: 20px; margin-bottom: 4px; }
+
+  /* Table */
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); overflow: hidden;
+  }
+  .table-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .table-header h2 { font-size: 15px; font-weight: 700; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 12px 16px; text-align: left;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background var(--transition);
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+  td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
+
+  .video-thumb-cell {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .v-thumb {
+    width: 80px; height: 45px; object-fit: cover;
+    border-radius: 6px; background: var(--surface-3);
+    flex-shrink: 0;
+  }
+  .v-thumb-placeholder {
+    width: 80px; height: 45px; border-radius: 6px;
+    background: var(--surface-3); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .v-thumb-placeholder svg { width: 20px; height: 20px; color: var(--text-subtle); }
+  .v-title { font-weight: 600; color: var(--text); max-width: 240px; }
+  .v-date { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  .num-cell { font-weight: 700; color: var(--text); }
+
+  .action-cell { display: flex; gap: 8px; }
+  .action-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border-2); background: transparent;
+    color: var(--text-muted); cursor: pointer; text-decoration: none;
+    transition: all var(--transition);
+  }
+  .action-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .action-btn svg { width: 13px; height: 13px; }
+  .action-btn.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+
+  .empty-state {
+    padding: 60px 24px; text-align: center; color: var(--text-muted);
+  }
+  .empty-state svg { width: 48px; height: 48px; margin: 0 auto 16px; color: var(--text-subtle); display: block; }
+  .empty-state p { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+  .empty-state span { font-size: 13px; }
+
+  /* Edit modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 200; padding: 24px;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); width: 100%; max-width: 560px;
+    max-height: 90vh; overflow-y: auto;
+    box-shadow: var(--shadow);
+    transform: translateY(20px); transition: transform .2s;
+  }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-head {
+    padding: 24px 24px 0;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-head h3 { font-size: 16px; font-weight: 700; }
+  .modal-close {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 4px; border-radius: 6px; display: flex;
+    transition: color var(--transition);
+  }
+  .modal-close:hover { color: var(--red); }
+  .modal-close svg { width: 18px; height: 18px; }
+  .modal-body { padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 18px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; }
+  .form-input, .form-textarea, .form-select {
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm, 6px); padding: 9px 12px;
+    font-size: 14px; color: var(--text); outline: none; width: 100%;
+    font-family: inherit;
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+  .form-input:focus, .form-textarea:focus, .form-select:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .form-textarea { resize: vertical; min-height: 80px; line-height: 1.6; }
+  .form-select { appearance: none; cursor: pointer; }
+  .form-select option { background: var(--surface-2); }
+  .toggle-wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .toggle-info .toggle-label { font-size: 14px; font-weight: 500; }
+  .toggle-info .toggle-hint { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; inset: 0; cursor: pointer;
+    background: var(--border-2); border-radius: 22px; transition: background var(--transition);
+  }
+  .toggle-slider::before {
+    content: ''; position: absolute;
+    width: 16px; height: 16px; left: 3px; bottom: 3px;
+    background: #fff; border-radius: 50%; transition: transform var(--transition);
+  }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+  .modal-footer {
+    padding: 0 24px 24px;
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+
+  /* Chapters section in modal */
+  .chapters-list { display: flex; flex-direction: column; gap: 8px; }
+  .chapter-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .chapter-ts {
+    width: 80px; background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: 6px; padding: 7px 10px; font-size: 13px; color: var(--text);
+    outline: none; font-family: inherit;
+  }
+  .chapter-ts:focus { border-color: var(--accent); }
+  .chapter-title-input {
+    flex: 1; background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: 6px; padding: 7px 10px; font-size: 13px; color: var(--text);
+    outline: none; font-family: inherit;
+  }
+  .chapter-title-input:focus { border-color: var(--accent); }
+  .chapter-del {
+    background: none; border: none; color: var(--text-subtle); cursor: pointer;
+    padding: 4px; border-radius: 4px; display: flex;
+    transition: color var(--transition);
+  }
+  .chapter-del:hover { color: var(--red); }
+  .chapter-del svg { width: 15px; height: 15px; }
+
+  /* Thumbnail upload */
+  .thumb-upload-row { display: flex; align-items: center; gap: 12px; }
+  .thumb-preview {
+    width: 120px; height: 68px; border-radius: 8px;
+    object-fit: cover; background: var(--surface-3); display: block;
+  }
+  .thumb-preview-placeholder {
+    width: 120px; height: 68px; border-radius: 8px;
+    background: var(--surface-3); display: flex; align-items: center; justify-content: center;
+  }
+  .thumb-preview-placeholder svg { width: 24px; height: 24px; color: var(--text-subtle); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analytics-wrap">
+
+  <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+    <div>
+      <h1>Analytics</h1>
+      <p style="color:var(--text-muted);font-size:14px;margin-top:4px;">
+        {% if channel %}{{ channel.name }}{% else %}All Channels Combined{% endif %}
+      </p>
+    </div>
+    {% if all_channels %}
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <label style="font-size:12px;font-weight:600;color:var(--text-muted);">Channel</label>
+      <select class="form-select" style="padding:7px 12px;font-size:13px;width:auto;min-width:180px;"
+              onchange="location.href='{% url 'analytics' %}?channel='+this.value">
+        <option value="all" {% if selected_id == 'all' %}selected{% endif %}>All Channels</option>
+        {% for ch in all_channels %}
+        <option value="{{ ch.id }}" {% if selected_id == ch.id|stringformat:'s' %}selected{% endif %}>{{ ch.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if all_channels %}
+  <!-- Stats row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon">👁️</div>
+      <div class="stat-label">Total Views</div>
+      <div class="stat-value">{{ total_views }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">❤️</div>
+      <div class="stat-label">Total Likes</div>
+      <div class="stat-value">{{ total_likes }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">💬</div>
+      <div class="stat-label">Total Comments</div>
+      <div class="stat-value">{{ total_comments }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">👥</div>
+      <div class="stat-label">Subscribers</div>
+      <div class="stat-value">{{ total_subscribers }}</div>
+    </div>
+  </div>
+
+  <!-- Watch Time Graph -->
+  {% if chart_labels %}
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;margin-bottom:28px;">
+    <div style="font-size:15px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Watch Time — Last 30 Days
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">Daily minutes watched across all your videos</div>
+    <div style="height:200px;position:relative;">
+      <canvas id="watchTimeChart"></canvas>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Videos table -->
+  <div class="table-wrap">
+    <div class="table-header">
+      <h2>Your Videos <span style="color:var(--text-muted);font-weight:400;font-size:13px;">({{ videos|length }})</span></h2>
+      <a href="{% url 'upload' %}" class="action-btn" style="border-color:var(--accent);color:var(--accent);background:var(--accent-soft);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Upload Video
+      </a>
+    </div>
+
+    {% if videos %}
+    <div style="overflow-x:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Video</th>
+          {% if not channel %}<th>Channel</th>{% endif %}
+          <th>Status</th>
+          <th>Views</th>
+          <th>Likes</th>
+          <th>Comments</th>
+          <th>Visibility</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for video in videos %}
+        <tr>
+          <td>
+            <div class="video-thumb-cell">
+              {% if video.thumbnail_url %}
+              <img src="{{ video.thumbnail_url }}" alt="" class="v-thumb" />
+              {% else %}
+              <div class="v-thumb-placeholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+                </svg>
+              </div>
+              {% endif %}
+              <div>
+                <div class="v-title">{{ video.title|truncatechars:50 }}</div>
+                <div class="v-date">{{ video.created_at|date:"M j, Y" }}</div>
+              </div>
+            </div>
+          </td>
+          {% if not channel %}
+          <td style="font-size:12px;color:var(--text-muted);white-space:nowrap;">
+            {% if video.channel %}<a href="{% url 'channel' video.channel.slug %}" style="color:var(--accent);">{{ video.channel.name }}</a>{% else %}—{% endif %}
+          </td>
+          {% endif %}
+          <td>
+            {% if video.status == 'ready' %}
+              <span class="badge badge-ready"><span class="badge-dot"></span>Ready</span>
+            {% elif video.status == 'processing' %}
+              <span class="badge badge-processing"><span class="badge-dot"></span>Processing</span>
+            {% elif video.status == 'pending' %}
+              <span class="badge badge-pending"><span class="badge-dot"></span>Pending</span>
+            {% else %}
+              <span class="badge badge-failed"><span class="badge-dot"></span>Failed</span>
+            {% endif %}
+          </td>
+          <td class="num-cell">{{ video.views_count }}</td>
+          <td class="num-cell">{{ video.likes_total }}</td>
+          <td class="num-cell">{{ video.comments_total }}</td>
+          <td>
+            {% if video.is_public %}
+              <span style="color:var(--green);font-size:12px;font-weight:600;">Public</span>
+            {% else %}
+              <span style="color:var(--text-muted);font-size:12px;font-weight:600;">Private</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="action-cell">
+              {% if video.status == 'ready' %}
+              <a href="{% url 'watch' video.id %}" class="action-btn" target="_blank">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Watch
+              </a>
+              {% endif %}
+              <button class="action-btn" onclick="openEdit('{{ video.id }}', {{ video.is_public|lower }}, {{ video.comments_enabled|lower }}, '{{ video.title|escapejs }}', '{{ video.description|escapejs }}', '{{ video.thumbnail_url|default:'' }}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+                Edit
+              </button>
+              <button class="action-btn danger" onclick="deleteVideo('{{ video.id }}', '{{ video.title|escapejs }}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                  <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                </svg>
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      <p>No videos yet</p>
+      <span>Upload your first video to see analytics here.</span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Edit Video</h3>
+      <button class="modal-close" onclick="closeEdit()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <input type="text" id="editTitle" class="form-input" placeholder="Video title" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <textarea id="editDescription" class="form-textarea" placeholder="Video description" rows="3"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Thumbnail</label>
+        <div class="thumb-upload-row">
+          <div id="thumbPreviewWrap">
+            <div class="thumb-preview-placeholder" id="thumbPlaceholder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9l4-4 4 4 4-4 4 4"/>
+              </svg>
+            </div>
+            <img id="thumbPreviewImg" src="" alt="" class="thumb-preview" style="display:none;" />
+          </div>
+          <div style="flex:1;">
+            <input type="file" id="editThumbnail" accept="image/*" style="display:none;" onchange="previewThumb(this)" />
+            <button class="action-btn" onclick="document.getElementById('editThumbnail').click()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Change Thumbnail
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toggle-wrap">
+        <div class="toggle-info">
+          <div class="toggle-label">Public</div>
+          <div class="toggle-hint">Private videos are only accessible via direct URL</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="editIsPublic" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-wrap">
+        <div class="toggle-info">
+          <div class="toggle-label">Comments enabled</div>
+          <div class="toggle-hint">Allow viewers to leave comments</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="editCommentsEnabled" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <!-- Chapters -->
+      <div class="form-group">
+        <label class="form-label" style="margin-bottom:8px;">Chapters</label>
+        <div class="chapters-list" id="chaptersList"></div>
+        <button type="button" class="action-btn" style="margin-top:8px;align-self:flex-start;" onclick="addChapterRow()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          Add Chapter
+        </button>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" onclick="closeEdit()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="saveEditBtn" onclick="saveEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let _editVideoId = null;
+let _originalChapters = [];
+
+function openEdit(videoId, isPublic, commentsEnabled, title, description, thumbUrl) {
+  _editVideoId = videoId;
+  document.getElementById('editTitle').value = title;
+  document.getElementById('editDescription').value = description;
+  document.getElementById('editIsPublic').checked = isPublic;
+  document.getElementById('editCommentsEnabled').checked = commentsEnabled;
+  document.getElementById('editThumbnail').value = '';
+
+  // Thumbnail preview
+  const img = document.getElementById('thumbPreviewImg');
+  const placeholder = document.getElementById('thumbPlaceholder');
+  if (thumbUrl) {
+    img.src = thumbUrl; img.style.display = 'block'; placeholder.style.display = 'none';
+  } else {
+    img.style.display = 'none'; placeholder.style.display = 'flex';
+  }
+
+  // Load chapters
+  loadChapters(videoId);
+
+  document.getElementById('editModal').classList.add('open');
+}
+
+function closeEdit() {
+  document.getElementById('editModal').classList.remove('open');
+  _editVideoId = null;
+}
+
+function previewThumb(input) {
+  if (!input.files[0]) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = document.getElementById('thumbPreviewImg');
+    const placeholder = document.getElementById('thumbPlaceholder');
+    img.src = e.target.result; img.style.display = 'block'; placeholder.style.display = 'none';
+  };
+  reader.readAsDataURL(input.files[0]);
+}
+
+async function loadChapters(videoId) {
+  const res = await fetch(`/api/videos/${videoId}/chapters/`);
+  const chapters = await res.json();
+  _originalChapters = chapters;
+  renderChapters(chapters);
+}
+
+function renderChapters(chapters) {
+  const list = document.getElementById('chaptersList');
+  list.innerHTML = '';
+  chapters.forEach(ch => addChapterRow(ch.id, ch.title, ch.timestamp));
+}
+
+function addChapterRow(id = null, title = '', timestamp = '') {
+  const list = document.getElementById('chaptersList');
+  const row = document.createElement('div');
+  row.className = 'chapter-row';
+  row.dataset.chapterId = id || '';
+  row.innerHTML = `
+    <input type="number" class="chapter-ts" placeholder="0" min="0" step="1" value="${timestamp}" title="Start time (seconds)" />
+    <input type="text" class="chapter-title-input" placeholder="Chapter title" value="${title}" />
+    <button type="button" class="chapter-del" onclick="this.closest('.chapter-row').remove()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  `;
+  list.appendChild(row);
+}
+
+async function saveEdit() {
+  if (!_editVideoId) return;
+  const btn = document.getElementById('saveEditBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  try {
+    // 1. Update metadata
+    const res = await fetch(`/api/videos/${_editVideoId}/`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+      body: JSON.stringify({
+        title: document.getElementById('editTitle').value,
+        description: document.getElementById('editDescription').value,
+        is_public: document.getElementById('editIsPublic').checked,
+        comments_enabled: document.getElementById('editCommentsEnabled').checked,
+      }),
+    });
+    if (!res.ok) throw new Error('Failed to save video settings');
+
+    // 2. Upload thumbnail if changed
+    const thumbFile = document.getElementById('editThumbnail').files[0];
+    if (thumbFile) {
+      const fd = new FormData();
+      fd.append('thumbnail', thumbFile);
+      const tr = await fetch(`/api/videos/${_editVideoId}/thumbnail/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: fd,
+      });
+      if (!tr.ok) throw new Error('Failed to upload thumbnail');
+    }
+
+    // 3. Sync chapters — delete all existing, re-create from form
+    for (const ch of _originalChapters) {
+      await fetch(`/api/chapters/${ch.id}/`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+      });
+    }
+    const rows = document.querySelectorAll('#chaptersList .chapter-row');
+    for (const row of rows) {
+      const ts = parseFloat(row.querySelector('.chapter-ts').value);
+      const title = row.querySelector('.chapter-title-input').value.trim();
+      if (title && !isNaN(ts)) {
+        await fetch(`/api/videos/${_editVideoId}/chapters/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+          body: JSON.stringify({ title, timestamp: ts }),
+        });
+      }
+    }
+
+    showToast('success', 'Saved!', 'Video settings updated.');
+    closeEdit();
+    setTimeout(() => location.reload(), 1000);
+  } catch (e) {
+    showToast('error', 'Error', e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Changes';
+  }
+}
+
+async function deleteVideo(videoId, title) {
+  if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
+  const res = await fetch(`/api/videos/${videoId}/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': getCookie('csrftoken') },
+  });
+  if (res.ok) {
+    showToast('success', 'Deleted', title);
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showToast('error', 'Error', 'Could not delete video.');
+  }
+}
+
+function getCookie(name) {
+  const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+</script>
+
+{% if chart_labels %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const canvas = document.getElementById('watchTimeChart');
+  if (!canvas) return;
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+  const tickColor = isDark ? '#71717a' : '#9ca3af';
+  new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: {{ chart_labels|safe }},
+      datasets: [{
+        label: 'Watch Time (min)',
+        data: {{ chart_data|safe }},
+        backgroundColor: 'rgba(99,102,241,0.45)',
+        borderColor: '#6366f1',
+        borderWidth: 1,
+        borderRadius: 5,
+        hoverBackgroundColor: 'rgba(99,102,241,0.7)',
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} min` } }
+      },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: tickColor, font: { size: 11 }, maxTicksLimit: 10 } },
+        y: { grid: { color: gridColor }, ticks: { color: tickColor, font: { size: 11 }, callback: v => v + ' min' }, beginAtZero: true }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

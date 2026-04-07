@@ -1,0 +1,75 @@
+{% comment %}
+Shared partial for a single identity card on /faces/
+Context: row = {identity, total, confirmed, rejected, unreviewed, video_count}
+JS functions openCardMenu, renameIdentity, openMergeModal, deleteIdentity
+must be defined in the parent template (faces.html).
+{% endcomment %}
+<div class="identity-card" id="icard-{{ row.identity.pk }}">
+  <a href="{% url 'face_identity' row.identity.pk %}?from={{ request.get_full_path|urlencode }}" class="identity-card-link">
+    <div class="identity-card-thumb">
+      {% if row.identity.thumbnail_url %}
+      <img src="{{ row.identity.thumbnail_url }}" alt="{{ row.identity.name }}" />
+      {% else %}
+      <svg class="placeholder-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/>
+      </svg>
+      {% endif %}
+      {% if not row.identity.is_auto_named %}
+      <span class="identity-card-badge">Named</span>
+      {% else %}
+      <span class="identity-card-badge auto">Auto</span>
+      {% endif %}
+    </div>
+
+    <!-- Tiny review progress bar -->
+    {% if row.total %}
+    <div class="review-bar">
+      {% if row.confirmed %}
+      <div class="review-bar-confirmed" style="width:{% widthratio row.confirmed row.total 100 %}%"></div>
+      {% endif %}
+      {% if row.rejected %}
+      <div class="review-bar-rejected" style="width:{% widthratio row.rejected row.total 100 %}%"></div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </a>
+
+  <div class="identity-card-body">
+    <div class="identity-card-name-row">
+      <div class="identity-card-name">{{ row.identity.name }}</div>
+      {% if not row.is_photo_only %}
+      <button
+        class="card-menu-btn"
+        onclick="openCardMenu(event, {{ row.identity.pk }}, '{{ row.identity.name|escapejs }}')"
+        title="Actions"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+          <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+        </svg>
+      </button>
+      {% endif %}
+    </div>
+    <div class="identity-card-meta">
+      {% if row.is_photo_only %}
+      <span>{{ row.photo_count|default:0 }} photo{{ row.photo_count|default:0|pluralize }}</span>
+      {% else %}
+      <span>{{ row.total }} crop{{ row.total|pluralize }}</span>
+      <span class="dot">·</span>
+      <span>{{ row.video_count }} video{{ row.video_count|pluralize }}</span>
+      {% if row.photo_count %}
+      <span class="dot">·</span>
+      <span>{{ row.photo_count }} photo{{ row.photo_count|pluralize }}</span>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% if row.total %}
+      {% if row.unreviewed == 0 %}
+      <div class="review-pill done">✓ Fully reviewed</div>
+      {% elif row.confirmed or row.rejected %}
+      <div class="review-pill partial">{{ row.unreviewed }} left to review</div>
+      {% else %}
+      <div class="review-pill none">Not reviewed</div>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ClipStream — Upload Video</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f0f13;
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #18181f;
+      border-bottom: 1px solid #2a2a35;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .logo {
+      font-size: 22px;
+      font-weight: 700;
+      color: #7c6af7;
+      letter-spacing: -0.5px;
+    }
+    header .logo span { color: #e4e4e7; }
+    header nav { margin-left: auto; display: flex; gap: 16px; }
+    header nav a {
+      color: #a1a1aa;
+      text-decoration: none;
+      font-size: 14px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    header nav a:hover { background: #2a2a35; color: #e4e4e7; }
+    header nav a.active { background: #7c6af7; color: #fff; }
+
+    main {
+      flex: 1;
+      max-width: 680px;
+      width: 100%;
+      margin: 48px auto;
+      padding: 0 24px;
+    }
+
+    h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+    .subtitle { color: #71717a; font-size: 14px; margin-bottom: 32px; }
+
+    .card {
+      background: #18181f;
+      border: 1px solid #2a2a35;
+      border-radius: 14px;
+      padding: 32px;
+    }
+
+    /* Drop zone */
+    .dropzone {
+      border: 2px dashed #3a3a4a;
+      border-radius: 10px;
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+      margin-bottom: 28px;
+    }
+    .dropzone:hover, .dropzone.drag-over {
+      border-color: #7c6af7;
+      background: rgba(124,106,247,0.05);
+    }
+    .dropzone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .dropzone .icon { font-size: 40px; margin-bottom: 12px; }
+    .dropzone .dz-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .dropzone .dz-sub { font-size: 13px; color: #71717a; }
+    .dropzone .dz-sub span { color: #7c6af7; }
+    .file-chosen {
+      margin-top: 12px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: #23232e;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .file-chosen .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a1f0a1; }
+    .file-chosen .fsize { color: #71717a; }
+
+    /* Form fields */
+    .form-group { margin-bottom: 20px; }
+    label { display: block; font-size: 13px; font-weight: 500; color: #a1a1aa; margin-bottom: 7px; }
+    label .req { color: #f87171; }
+    input[type="text"], textarea, select {
+      width: 100%;
+      background: #0f0f13;
+      border: 1px solid #2a2a35;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      color: #e4e4e7;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+    input[type="text"]:focus, textarea:focus, select:focus { border-color: #7c6af7; }
+    textarea { resize: vertical; min-height: 90px; }
+    select option { background: #18181f; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #0f0f13; border: 1px solid #2a2a35; border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .toggle-label { font-size: 14px; }
+    .toggle-label small { display: block; font-size: 12px; color: #71717a; margin-top: 2px; }
+    .toggle {
+      position: relative; width: 42px; height: 24px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #3a3a4a; border-radius: 24px; transition: background 0.2s;
+    }
+    .slider::before {
+      content: ''; position: absolute;
+      width: 18px; height: 18px; left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%; transition: transform 0.2s;
+    }
+    .toggle input:checked + .slider { background: #7c6af7; }
+    .toggle input:checked + .slider::before { transform: translateX(18px); }
+
+    /* Progress */
+    .progress-wrap { display: none; margin-bottom: 20px; }
+    .progress-bar-bg {
+      background: #2a2a35; border-radius: 999px; height: 6px; overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%; background: linear-gradient(90deg, #7c6af7, #a78bfa);
+      border-radius: 999px; width: 0%; transition: width 0.3s;
+    }
+    .progress-label { font-size: 12px; color: #71717a; margin-top: 6px; }
+
+    /* Submit */
+    .btn-submit {
+      width: 100%;
+      padding: 13px;
+      background: #7c6af7;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn-submit:hover { background: #6d5de0; }
+    .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #23232e; border: 1px solid #3a3a4a;
+      border-radius: 10px; padding: 14px 20px;
+      font-size: 14px; display: flex; align-items: center; gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      transform: translateY(80px); opacity: 0;
+      transition: transform 0.3s, opacity 0.3s;
+      max-width: 360px; z-index: 100;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.success { border-color: #4ade80; }
+    .toast.error { border-color: #f87171; }
+    .toast .t-icon { font-size: 20px; }
+    .toast .t-body .t-title { font-weight: 600; }
+    .toast .t-body .t-sub { color: #71717a; font-size: 12px; margin-top: 2px; }
+
+    /* Result card */
+    .result-card {
+      display: none;
+      background: #0f0f13;
+      border: 1px solid #4ade80;
+      border-radius: 10px;
+      padding: 18px;
+      margin-top: 20px;
+    }
+    .result-card .r-title { font-weight: 600; color: #4ade80; margin-bottom: 10px; font-size: 14px; }
+    .result-card table { width: 100%; font-size: 13px; border-collapse: collapse; }
+    .result-card td { padding: 4px 0; vertical-align: top; }
+    .result-card td:first-child { color: #71717a; width: 120px; }
+    .result-card .copy-btn {
+      background: #2a2a35; border: none; color: #a78bfa;
+      padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
+      margin-left: 8px;
+    }
+    .result-card .copy-btn:hover { background: #3a3a4a; }
+
+    .poll-status {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    }
+    .poll-status.pending { background: #2a2a35; color: #a1a1aa; }
+    .poll-status.processing { background: #1a1a2e; color: #7c6af7; }
+    .poll-status.ready { background: #14301a; color: #4ade80; }
+    .poll-status.failed { background: #2a1111; color: #f87171; }
+    .poll-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .poll-status.processing .poll-dot { animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Free<span>Stream</span></div>
+  <nav>
+    <a href="upload.html" class="active">Upload</a>
+    <a href="player.html">Player</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Upload Video</h1>
+  <p class="subtitle">Upload a video file — it will be converted to HLS (m3u8) automatically.</p>
+
+  <div class="card">
+    <form id="uploadForm">
+
+      <!-- Drop zone -->
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="videoFile" accept="video/*" required />
+        <div class="icon">🎬</div>
+        <div class="dz-title">Drop your video here</div>
+        <div class="dz-sub">or <span>browse files</span> &nbsp;·&nbsp; MP4, MOV, MKV, AVI, WebM</div>
+      </div>
+      <div class="file-chosen" id="fileChosen">
+        <span>📄</span>
+        <span class="fname" id="fileName"></span>
+        <span class="fsize" id="fileSize"></span>
+      </div>
+
+      <!-- Title -->
+      <div class="form-group">
+        <label>Title <span class="req">*</span></label>
+        <input type="text" id="title" placeholder="Enter video title" required />
+      </div>
+
+      <!-- Description -->
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="description" placeholder="What is this video about?"></textarea>
+      </div>
+
+      <!-- Tags + Uploader -->
+      <div class="row">
+        <div class="form-group">
+          <label>Tags</label>
+          <input type="text" id="tags" placeholder="e.g. training, HR, demo" />
+        </div>
+        <div class="form-group">
+          <label>Uploaded by</label>
+          <input type="text" id="uploadedBy" placeholder="Your name" />
+        </div>
+      </div>
+
+      <!-- Visibility -->
+      <div class="form-group">
+        <div class="toggle-row">
+          <div class="toggle-label">
+            Public
+            <small>Visible to everyone via API</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="isPublic" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="progress-label" id="progressLabel">Uploading...</div>
+      </div>
+
+      <button type="submit" class="btn-submit" id="submitBtn">Upload Video</button>
+    </form>
+
+    <!-- Result -->
+    <div class="result-card" id="resultCard">
+      <div class="r-title">✅ Upload successful — processing started</div>
+      <table>
+        <tr><td>Video ID</td><td id="rId">—</td></tr>
+        <tr><td>Status</td><td><span id="rStatus" class="poll-status pending"><span class="poll-dot"></span><span id="rStatusText">pending</span></span></td></tr>
+        <tr>
+          <td>Player URL</td>
+          <td>
+            <span id="rPlayerUrl">—</span>
+            <button class="copy-btn" onclick="copyPlayerUrl()">copy</button>
+          </td>
+        </tr>
+        <tr><td>HLS URL</td><td id="rHlsUrl">—</td></tr>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast">
+  <div class="t-icon" id="toastIcon">✅</div>
+  <div class="t-body">
+    <div class="t-title" id="toastTitle"></div>
+    <div class="t-sub" id="toastSub"></div>
+  </div>
+</div>
+
+<script>
+  const API = 'http://localhost:8000/api';
+  let pollInterval = null;
+  let uploadedVideoId = null;
+
+  // ── Drop zone ──
+  const dz = document.getElementById('dropzone');
+  const fileInput = document.getElementById('videoFile');
+  const fileChosen = document.getElementById('fileChosen');
+
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) {
+      fileInput.files = e.dataTransfer.files;
+      showFileInfo(e.dataTransfer.files[0]);
+    }
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) showFileInfo(fileInput.files[0]);
+  });
+
+  function showFileInfo(f) {
+    document.getElementById('fileName').textContent = f.name;
+    document.getElementById('fileSize').textContent = formatBytes(f.size);
+    fileChosen.style.display = 'flex';
+    if (!document.getElementById('title').value) {
+      document.getElementById('title').value = f.name.replace(/\.[^.]+$/, '');
+    }
+  }
+
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    return (b/1048576).toFixed(1) + ' MB';
+  }
+
+  // ── Upload form ──
+  document.getElementById('uploadForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const file = fileInput.files[0];
+    if (!file) return showToast('error', 'No file selected', 'Please pick a video file.');
+
+    const title = document.getElementById('title').value.trim();
+    if (!title) return showToast('error', 'Title required', 'Please enter a title.');
+
+    const fd = new FormData();
+    fd.append('video_file', file);
+    fd.append('title', title);
+    fd.append('description', document.getElementById('description').value);
+    fd.append('tags', document.getElementById('tags').value);
+    fd.append('uploaded_by', document.getElementById('uploadedBy').value);
+    fd.append('is_public', document.getElementById('isPublic').checked ? 'true' : 'false');
+
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar = document.getElementById('progressBar');
+    const progressLabel = document.getElementById('progressLabel');
+    progressWrap.style.display = 'block';
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API}/videos/upload/`);
+
+      xhr.upload.addEventListener('progress', ev => {
+        if (ev.lengthComputable) {
+          const pct = Math.round(ev.loaded / ev.total * 100);
+          progressBar.style.width = pct + '%';
+          progressLabel.textContent = `Uploading… ${pct}%`;
+        }
+      });
+
+      const result = await new Promise((resolve, reject) => {
+        xhr.onload = () => resolve(JSON.parse(xhr.responseText));
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(fd);
+      });
+
+      if (xhr.status !== 201) throw new Error(JSON.stringify(result));
+
+      progressBar.style.width = '100%';
+      progressLabel.textContent = 'Upload complete. Converting to HLS…';
+
+      uploadedVideoId = result.id;
+      showResult(result);
+      showToast('success', 'Upload complete!', 'HLS conversion started in background.');
+      startPolling(result.id);
+
+    } catch (err) {
+      showToast('error', 'Upload failed', err.message);
+      progressWrap.style.display = 'none';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Upload Video';
+  });
+
+  // ── Result card ──
+  function showResult(data) {
+    document.getElementById('rId').textContent = data.id;
+    document.getElementById('rStatusText').textContent = data.status;
+    setStatusStyle(data.status);
+    document.getElementById('rPlayerUrl').textContent =
+      `player.html?id=${data.id}`;
+    document.getElementById('rHlsUrl').textContent = '— processing…';
+    document.getElementById('resultCard').style.display = 'block';
+  }
+
+  function setStatusStyle(s) {
+    const el = document.getElementById('rStatus');
+    el.className = `poll-status ${s}`;
+    document.getElementById('rStatusText').textContent = s;
+  }
+
+  // ── Polling ──
+  function startPolling(id) {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/videos/${id}/status/`);
+        const data = await res.json();
+        setStatusStyle(data.status);
+        if (data.hls_url) {
+          document.getElementById('rHlsUrl').textContent =
+            `http://localhost:8000${data.hls_url}`;
+        }
+        if (data.status === 'ready') {
+          clearInterval(pollInterval);
+          showToast('success', 'Ready to stream!', 'Video is now available.');
+        }
+        if (data.status === 'failed') {
+          clearInterval(pollInterval);
+          showToast('error', 'Processing failed', data.processing_error || '');
+        }
+      } catch (_) {}
+    }, 3000);
+  }
+
+  // ── Copy player URL ──
+  function copyPlayerUrl() {
+    if (!uploadedVideoId) return;
+    navigator.clipboard.writeText(
+      `${location.origin}/player.html?id=${uploadedVideoId}`
+    );
+    showToast('success', 'Copied!', 'Player URL copied to clipboard.');
+  }
+
+  // ── Toast ──
+  function showToast(type, title, sub) {
+    const t = document.getElementById('toast');
+    document.getElementById('toastIcon').textContent = type === 'success' ? '✅' : '❌';
+    document.getElementById('toastTitle').textContent = title;
+    document.getElementById('toastSub').textContent = sub;
+    t.className = `toast ${type} show`;
+    setTimeout(() => t.classList.remove('show'), 4000);
+  }
+</script>
+</body>
+</html>

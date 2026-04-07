@@ -1,0 +1,3008 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}{{ video.title }} — ClipLens{% endblock %}
+
+{% block meta %}
+<meta property="og:title" content="{{ video.title }}" />
+<meta property="og:description" content="{{ video.description|truncatechars:160 }}" />
+{% if video.thumbnail_url %}<meta property="og:image" content="{{ request.scheme }}://{{ request.get_host }}{{ video.thumbnail_url }}" />{% endif %}
+<meta property="og:url" content="{{ request.scheme }}://{{ request.get_host }}{% url 'watch' video.id %}" />
+<meta property="og:type" content="video.other" />
+{% endblock %}
+
+{% block extra_head %}
+<script src="{% static 'videos/hls.min.js' %}" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js'"></script>
+<style>
+  .watch-layout {
+    max-width: 1280px; margin: 0 auto;
+    padding: 24px 24px 60px;
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 28px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .watch-layout { grid-template-columns: 1fr; } }
+
+  /* ── Player ── */
+  .video-wrap {
+    background: #000; border-radius: var(--radius-lg); overflow: hidden;
+    aspect-ratio: 16/9; position: relative;
+  }
+  video { width: 100%; height: 100%; display: block; }
+  .player-loading {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center; background: rgba(0,0,0,.5);
+  }
+  .spinner {
+    width: 44px; height: 44px; border: 3px solid rgba(255,255,255,.15);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .not-ready {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    background: #0a0a12; color: var(--text-subtle);
+  }
+  .not-ready svg { width: 52px; height: 52px; }
+  .not-ready p { font-size: 14px; }
+
+  /* ── Custom controls bar ── */
+  .watch-ctrl-bar {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 30px 12px 10px;
+    background: linear-gradient(transparent, rgba(0,0,0,.88));
+    display: flex; align-items: center; gap: 8px;
+    z-index: 25; opacity: 0; transition: opacity .25s;
+    user-select: none; -webkit-user-select: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+  .video-wrap.sc .watch-ctrl-bar,
+  .video-wrap.paused .watch-ctrl-bar { opacity: 1; }
+
+  /* Big-play centre overlay */
+  .big-play { position: absolute; inset: 0; display: flex; align-items: center;
+              justify-content: center; z-index: 18; pointer-events: none;
+              opacity: 0; transition: opacity .25s; }
+  .big-play.hidden { display: none; }
+  .video-wrap.sc .big-play,
+  .video-wrap.paused .big-play { opacity: 1; }
+  .bp-btn { width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.55);
+            border: 2px solid rgba(255,255,255,.28); display: flex; align-items: center;
+            justify-content: center; cursor: pointer; pointer-events: none;
+            transition: transform .15s, background .15s; backdrop-filter: blur(4px); }
+  .video-wrap.sc .bp-btn,
+  .video-wrap.paused .bp-btn { pointer-events: all; }
+  .bp-btn:hover { transform: scale(1.1); background: rgba(0,0,0,.75); }
+  .bp-btn svg { width: 26px; height: 26px; color: #fff; }
+
+  /* Ctrl buttons */
+  .wc-btn { background: none; border: none; color: #fff; cursor: pointer; padding: 4px;
+            border-radius: 4px; display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; transition: background .12s; }
+  .wc-btn:hover { background: rgba(255,255,255,.12); }
+  .wc-btn svg { width: 18px; height: 18px; }
+
+  /* Seek bar */
+  .wc-seek { flex: 1; height: 4px; background: rgba(255,255,255,.18); border-radius: 3px;
+             position: relative; cursor: pointer; transition: height .12s; }
+  .wc-seek:hover, .wc-seek.drag { height: 6px; }
+  .wc-seek-w { position: absolute; left: 0; top: 0; bottom: 0;
+               background: rgba(255,255,255,.25); border-radius: 3px; pointer-events: none; }
+  .wc-seek-f { position: absolute; left: 0; top: 0; bottom: 0;
+               background: var(--accent); border-radius: 3px; pointer-events: none; }
+  .wc-seek-t { position: absolute; top: 50%; width: 13px; height: 13px; background: #fff;
+               border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none;
+               opacity: 0; transition: opacity .12s; box-shadow: 0 0 4px rgba(0,0,0,.5); }
+  .wc-seek:hover .wc-seek-t, .wc-seek.drag .wc-seek-t { opacity: 1; }
+
+  /* Chapter tick marks on seek bar */
+  .wc-ch-mark {
+    position: absolute; top: 0; bottom: 0; width: 2px;
+    background: rgba(255,255,255,.5); pointer-events: none;
+    transform: translateX(-50%); border-radius: 1px;
+  }
+  .wc-seek:hover .wc-ch-mark { background: rgba(255,255,255,.75); }
+
+  /* Chapter hover tooltip */
+  .wc-ch-tooltip {
+    position: absolute; bottom: calc(100% + 8px);
+    background: rgba(0,0,0,.85); color: #fff;
+    font-size: 11px; font-weight: 600; padding: 4px 8px;
+    border-radius: 4px; white-space: nowrap; pointer-events: none;
+    transform: translateX(-50%); display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,.5);
+  }
+  .wc-ch-tooltip::after {
+    content: ''; position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%); border: 4px solid transparent;
+    border-top-color: rgba(0,0,0,.85);
+  }
+
+  /* Time */
+  .wc-time { font-size: 11px; color: rgba(255,255,255,.7); white-space: nowrap;
+             font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+  /* Volume */
+  .wc-vol-wrap { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+  .wc-vol-sl { width: 56px; height: 3px; -webkit-appearance: none; appearance: none;
+               background: rgba(255,255,255,.25); border-radius: 2px; cursor: pointer; outline: none; }
+  .wc-vol-sl::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px;
+                                      background: #fff; border-radius: 50%; }
+  .wc-vol-sl::-moz-range-thumb { width: 11px; height: 11px; background: #fff; border-radius: 50%; border: none; }
+
+  /* Speed / Quality popup pickers */
+  .quality-wrap { position: relative; flex-shrink: 0; }
+  .quality-btn {
+    background: none; border: 1px solid rgba(255,255,255,.2);
+    color: rgba(255,255,255,.75); padding: 3px 8px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 4px;
+    transition: all .12s; font-family: inherit;
+  }
+  .quality-btn:hover { border-color: rgba(255,255,255,.5); color: #fff; }
+  .quality-menu {
+    position: absolute; bottom: calc(100% + 8px); right: 0;
+    background: #1a1a24; border: 1px solid rgba(255,255,255,.12);
+    border-radius: var(--radius-sm); display: none; flex-direction: column;
+    z-index: 50; box-shadow: 0 8px 32px rgba(0,0,0,.7); overflow: hidden;
+  }
+  .quality-menu.open { display: flex; }
+  .quality-opt {
+    padding: 9px 14px; font-size: 13px; cursor: pointer; white-space: nowrap;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; color: rgba(255,255,255,.6); transition: background .1s;
+  }
+  .quality-opt:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .quality-opt.active { background: rgba(99,102,241,.15); color: #818cf8; font-weight: 600; }
+  .quality-opt .q-check { opacity: 0; font-size: 11px; }
+  .quality-opt.active .q-check { opacity: 1; }
+  .quality-opt .q-kbps { font-size: 10px; color: rgba(255,255,255,.35); }
+
+  /* Fullscreen btn in ctrl bar */
+  .wc-fs { background: none; border: none; color: rgba(255,255,255,.7); cursor: pointer;
+           padding: 4px; border-radius: 4px; display: flex; align-items: center;
+           justify-content: center; flex-shrink: 0; transition: background .12s; }
+  .wc-fs:hover { background: rgba(255,255,255,.12); color: #fff; }
+  .wc-fs svg { width: 15px; height: 15px; }
+
+  /* Skip flash */
+  .wc-skip-flash { position: absolute; top: 50%; transform: translateY(-50%); z-index: 35;
+                   background: rgba(255,255,255,.1); border-radius: 50%;
+                   width: 54px; height: 54px; display: flex; flex-direction: column;
+                   align-items: center; justify-content: center; gap: 1px;
+                   pointer-events: none; opacity: 0; transition: opacity .15s;
+                   font-size: 10px; font-weight: 700; color: #fff; }
+  .wc-skip-flash svg { width: 18px; height: 18px; }
+  .wc-skip-flash.l { left: 10%; }
+  .wc-skip-flash.r { right: 10%; }
+  .wc-skip-flash.show { opacity: 1; }
+
+  /* ── Video info ── */
+  .video-info { margin-top: 18px; }
+  .video-title { font-size: 22px; font-weight: 800; line-height: 1.3; letter-spacing: -0.3px; }
+
+  .meta-row {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 10px; margin-top: 12px;
+  }
+  .meta-item {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 13px; color: var(--text-muted);
+  }
+  .meta-item svg { width: 14px; height: 14px; }
+
+  .action-row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+  /* Channel card */
+  .channel-card {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+    margin-top: 18px; text-decoration: none; color: inherit;
+    transition: border-color var(--transition), background var(--transition);
+  }
+  .channel-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .ch-avatar-lg {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: var(--accent); display: flex; align-items: center;
+    justify-content: center; font-size: 18px; font-weight: 700;
+    color: #fff; overflow: hidden; flex-shrink: 0;
+  }
+  .ch-avatar-lg img { width: 100%; height: 100%; object-fit: cover; }
+  .ch-info .ch-name { font-weight: 700; font-size: 15px; }
+  .ch-info .ch-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Description */
+  .description-wrap { margin-top: 18px; }
+  .description-box {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+    font-size: 14px; color: var(--text-muted); line-height: 1.7;
+    white-space: pre-wrap; max-height: 120px; overflow: hidden;
+    position: relative; transition: max-height .3s;
+  }
+  .description-box.expanded { max-height: 1000px; }
+  .desc-fade {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 48px;
+    background: linear-gradient(transparent, var(--surface-2));
+    display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px;
+  }
+  .desc-fade.hidden { display: none; }
+  .desc-expand-btn {
+    background: none; border: none; color: var(--accent);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+
+  /* Tags */
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .tag {
+    background: var(--accent-soft); border: 1px solid transparent;
+    border-radius: 999px; padding: 4px 12px;
+    font-size: 12px; color: var(--accent); font-weight: 500;
+    cursor: pointer; transition: border-color var(--transition);
+  }
+  .tag:hover { border-color: var(--accent); }
+
+  /* Share */
+  .share-wrap {
+    margin-top: 18px; display: flex;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .share-wrap input {
+    flex: 1; background: transparent; border: none; outline: none;
+    padding: 10px 14px; font-size: 13px; color: var(--text-muted); font-family: inherit;
+  }
+  .share-wrap button {
+    background: var(--accent); border: none; color: #fff;
+    padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background var(--transition); white-space: nowrap;
+  }
+  .share-wrap button:hover { background: var(--accent-h); }
+
+  /* HLS info */
+  .hls-info {
+    margin-top: 12px; display: flex; align-items: center; gap: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+  }
+  .hls-label {
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 700; padding: 2px 7px;
+    border-radius: 4px; flex-shrink: 0;
+  }
+  .hls-url {
+    flex: 1; font-size: 12px; color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ── Embed Wizard Modal ── */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,.6); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); width: 100%; max-width: 780px;
+    max-height: 90vh; display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5); overflow: hidden;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 24px; border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .modal-title { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .modal-title svg { width: 20px; height: 20px; color: var(--accent); }
+  .modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 6px; }
+  .modal-close:hover { background: var(--surface-3); color: var(--text); }
+  .modal-close svg { width: 20px; height: 20px; }
+  .modal-body { flex: 1; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  @media (max-width: 640px) { .modal-body { grid-template-columns: 1fr; } }
+
+  /* Wizard left panel — options */
+  .wizard-options {
+    padding: 20px 24px; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .wizard-section-title {
+    font-size: 11px; font-weight: 700; color: var(--text-subtle);
+    text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px;
+  }
+  .wizard-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .wizard-toggle-row:last-child { border-bottom: none; }
+  .wizard-toggle-info .wtl { font-size: 14px; font-weight: 500; }
+  .w-label { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+  .wizard-toggle-info .wts { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .w-input-row { display: flex; flex-direction: column; gap: 5px; }
+  .w-input-row label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+  .w-input { background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 6px; padding: 8px 10px; font-size: 13px; color: var(--text); outline: none; width: 100%; }
+  .w-input:focus { border-color: var(--accent); }
+  .w-color-row { display: flex; align-items: center; gap: 10px; }
+  .w-color-swatch { width: 36px; height: 36px; border-radius: 6px; border: 2px solid var(--border-2); cursor: pointer; overflow: hidden; }
+  .w-color-swatch input[type="color"] { width: 200%; height: 200%; margin: -50%; border: none; cursor: pointer; background: none; }
+  .w-seg { display: flex; gap: 4px; }
+  .w-seg-btn { flex: 1; padding: 7px; background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: pointer; text-align: center; transition: all var(--transition); }
+  .w-seg-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* Wizard right panel — preview + output */
+  .wizard-preview-panel {
+    padding: 20px 24px; display: flex; flex-direction: column; gap: 16px;
+  }
+  .wizard-preview-title { font-size: 11px; font-weight: 700; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.6px; }
+  .wizard-iframe-preview {
+    background: #000; border-radius: 8px; overflow: hidden;
+    aspect-ratio: 16/9; position: relative;
+  }
+  .wizard-iframe-preview iframe { width: 100%; height: 100%; border: none; display: block; }
+  .wizard-url-box {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .wizard-url-label { font-size: 10px; font-weight: 700; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+  .wizard-url-text { font-size: 11px; color: var(--accent); word-break: break-all; line-height: 1.5; }
+  .wizard-code-box {
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; font-family: monospace;
+    font-size: 11px; color: var(--text-muted); word-break: break-all; line-height: 1.6;
+  }
+
+  .modal-footer {
+    padding: 16px 24px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+    background: var(--surface-2);
+  }
+
+  /* ── Sidebar ── */
+  .sidebar-section { }
+  .sidebar-heading {
+    font-size: 11px; font-weight: 700; color: var(--text-subtle);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px;
+  }
+  .related-list { display: flex; flex-direction: column; gap: 8px; }
+  .related-item {
+    display: flex; gap: 10px; padding: 10px; border-radius: var(--radius-sm);
+    border: 1px solid transparent; transition: background var(--transition), border-color var(--transition);
+    text-decoration: none; color: inherit;
+  }
+  .related-item:hover { background: var(--surface-2); border-color: var(--border); }
+  .r-thumb {
+    width: 100px; min-width: 100px; aspect-ratio: 16/9;
+    background: var(--surface-3); border-radius: var(--radius-sm);
+    overflow: hidden; position: relative;
+  }
+  .r-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .r-thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); }
+  .r-dur {
+    position: absolute; bottom: 3px; right: 4px;
+    background: rgba(0,0,0,.78); color: #fff;
+    font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 600;
+  }
+  .r-info { flex: 1; overflow: hidden; }
+  .r-title {
+    font-size: 13px; font-weight: 600; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .r-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  /* ── Subtitle style panel ── */
+  .sub-style-btn {
+    background: none; border: none; color: var(--text-muted);
+    display: flex; align-items: center; padding: 5px 7px; cursor: pointer;
+    border-radius: 4px; transition: color .15s;
+  }
+  .sub-style-btn:hover { color: var(--accent); }
+  .sub-style-panel {
+    position: absolute; bottom: calc(100% + 10px); right: 0;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius); padding: 14px 16px;
+    min-width: 240px; z-index: 60; box-shadow: var(--shadow);
+    display: none; flex-direction: column; gap: 12px;
+  }
+  .sub-style-panel.open { display: flex; }
+  .sub-style-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .sub-style-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+  .sub-style-control { display: flex; align-items: center; gap: 6px; }
+  .sub-style-panel select, .sub-style-panel input[type=range] { font-size: 12px; }
+  .sub-style-panel select {
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); padding: 4px 8px; color: var(--text);
+    outline: none; cursor: pointer;
+  }
+  .sub-style-panel input[type=range] { width: 90px; accent-color: var(--accent); }
+  .sub-style-panel input[type=color] { width: 32px; height: 24px; border: 1px solid var(--border-2); border-radius: 4px; padding: 2px; cursor: pointer; background: none; }
+  .sub-val-label { font-size: 11px; color: var(--text-muted); min-width: 30px; text-align: right; }
+  .sub-style-title { font-size: 12px; font-weight: 700; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="watch-layout">
+
+  <!-- Left: Player + Info -->
+  <div>
+    <!-- Player -->
+    <div class="video-wrap" id="videoWrap">
+      {% if video.status == 'ready' and video.hls_path %}
+        <div class="player-loading" id="loader"><div class="spinner"></div></div>
+        <video id="videoEl" playsinline>
+          {% for sub in subtitles %}
+          <track kind="subtitles"
+                 src="{{ sub.url }}"
+                 srclang="{{ sub.language }}"
+                 label="{{ sub.language_label }}{% if sub.is_auto_generated %} (auto){% endif %}"
+                 {% if forloop.first %}default{% endif %} />
+          {% endfor %}
+        </video>
+
+        <!-- Centre big-play overlay -->
+        <div class="big-play hidden" id="bigPlay">
+          <div class="bp-btn" onclick="watchTogglePlay()">
+            <svg id="watchBpIcon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+          </div>
+        </div>
+
+        <!-- Skip flash indicators -->
+        <div class="wc-skip-flash l" id="wcSkipL">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>5s
+        </div>
+        <div class="wc-skip-flash r" id="wcSkipR">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>5s
+        </div>
+
+        <!-- End Screen Overlay (inside video-wrap so position:absolute works) -->
+        {% if end_screens %}
+        <div id="endScreenOverlay"
+             style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.80);z-index:30;border-radius:var(--radius-lg);align-items:center;justify-content:center;flex-wrap:wrap;gap:16px;padding:20px;">
+          <div style="position:absolute;top:12px;left:0;right:0;text-align:center;color:rgba(255,255,255,.6);font-size:12px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;">Up Next</div>
+          {% for es in end_screens %}
+          <a href="{% if es.target_video %}{% url 'watch' es.target_video.id %}{% else %}{{ es.target_url }}{% endif %}"
+             style="display:flex;flex-direction:column;align-items:center;gap:8px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:12px;text-decoration:none;color:#fff;width:160px;transition:background .15s,transform .15s;"
+             onmouseover="this.style.background='rgba(255,255,255,.22)';this.style.transform='scale(1.04)'"
+             onmouseout="this.style.background='rgba(255,255,255,.12)';this.style.transform='scale(1)'">
+            {% if es.target_video and es.target_video.thumbnail_url %}
+            <img src="{{ es.target_video.thumbnail_url }}" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;" />
+            {% else %}
+            <div style="width:100%;aspect-ratio:16/9;background:rgba(255,255,255,.08);border-radius:6px;display:flex;align-items:center;justify-content:center;">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28" style="opacity:.6;"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            {% endif %}
+            <span style="font-size:12px;font-weight:600;text-align:center;line-height:1.3;">{{ es.label }}</span>
+          </a>
+          {% endfor %}
+          <button onclick="document.getElementById('endScreenOverlay').style.display='none'"
+                  style="position:absolute;top:10px;right:12px;background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;">✕</button>
+        </div>
+        {% endif %}
+
+        <!-- Custom controls bar -->
+        <div class="watch-ctrl-bar" id="watchCtrlBar">
+          <!-- Play/Pause -->
+          <button class="wc-btn" onclick="watchTogglePlay()" title="Play / Pause  (Space)">
+            <svg id="watchPlayIcon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+          </button>
+
+          <!-- Seek bar -->
+          <div class="wc-seek" id="wcSeek">
+            <div class="wc-seek-w" id="wcSeekW"></div>
+            <div class="wc-seek-f" id="wcSeekF"></div>
+            <div id="wcChapterMarkers"></div>
+            <div class="wc-seek-t" id="wcSeekT"></div>
+            <div class="wc-ch-tooltip" id="wcChTooltip"></div>
+          </div>
+
+          <!-- Time -->
+          <span class="wc-time" id="wcTime">0:00 / 0:00</span>
+
+          <!-- Volume -->
+          <div class="wc-vol-wrap">
+            <button class="wc-btn" onclick="watchToggleMute()" title="Mute  (M)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path id="watchVolWave" d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              </svg>
+            </button>
+            <input type="range" class="wc-vol-sl" id="wcVolSl" min="0" max="1" step="0.05" value="1"
+                   oninput="watchSetVol(this.value)" title="Volume  (↑↓)"/>
+          </div>
+
+          <!-- Speed -->
+          <div class="quality-wrap" id="speedPickerWrap">
+            <button class="quality-btn" onclick="toggleSpeedMenu(event)" title="Playback speed">
+              <span id="speedLabel">1×</span>
+            </button>
+            <div class="quality-menu" id="speedMenu" style="min-width:96px;"></div>
+          </div>
+
+          <!-- Quality -->
+          <div class="quality-wrap" id="qualityPickerWrap" style="display:none;">
+            <button class="quality-btn" onclick="toggleQualityMenu(event)">
+              <span id="qualityLabel">Auto</span>
+              <span style="font-size:8px;opacity:.5;margin-left:1px;">▲</span>
+            </button>
+            <div class="quality-menu" id="qualityMenu"></div>
+          </div>
+
+          <!-- Subtitles / Captions -->
+          {% if subtitles %}
+          <div class="quality-wrap" id="ccPickerWrap">
+            <button class="quality-btn" onclick="toggleCcMenu(event)" title="Subtitles / Captions">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <rect x="2" y="5" width="20" height="14" rx="2"/>
+                <line x1="6" y1="10" x2="10" y2="10"/><line x1="12" y1="10" x2="18" y2="10"/>
+                <line x1="6" y1="14" x2="12" y2="14"/><line x1="14" y1="14" x2="18" y2="14"/>
+              </svg>
+            </button>
+            <div class="quality-menu" id="ccMenu" style="min-width:140px;">
+              <button class="quality-option" onclick="selectCc(-1)">Off</button>
+              {% for sub in subtitles %}
+              <button class="quality-option" onclick="selectCc({{ forloop.counter0 }})">{{ sub.language_label }}{% if sub.is_auto_generated %} (auto){% endif %}</button>
+              {% endfor %}
+            </div>
+          </div>
+
+          <!-- Subtitle style button -->
+          <div style="position:relative;" id="subStyleWrap">
+            <button class="sub-style-btn" onclick="toggleSubStylePanel(event)" title="Subtitle style">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+                <path d="M12 2v2M12 20v2M2 12h2M20 12h2"/>
+              </svg>
+            </button>
+            <div class="sub-style-panel" id="subStylePanel">
+              <div class="sub-style-title">Subtitle Style</div>
+              <div class="sub-style-row">
+                <span class="sub-style-label">Position</span>
+                <div class="sub-style-control">
+                  <select id="subPosition" onchange="applySubStyle()">
+                    <option value="bottom">Bottom</option>
+                    <option value="top">Top</option>
+                    <option value="middle">Middle</option>
+                  </select>
+                </div>
+              </div>
+              <div class="sub-style-row">
+                <span class="sub-style-label">Font Size</span>
+                <div class="sub-style-control">
+                  <input type="range" id="subFontSize" min="60" max="200" value="100" oninput="applySubStyle(); document.getElementById('subFontSizeVal').textContent=this.value+'%'"/>
+                  <span class="sub-val-label" id="subFontSizeVal">100%</span>
+                </div>
+              </div>
+              <div class="sub-style-row">
+                <span class="sub-style-label">Text Color</span>
+                <div class="sub-style-control">
+                  <input type="color" id="subColor" value="#ffffff" oninput="applySubStyle()"/>
+                </div>
+              </div>
+              <div class="sub-style-row">
+                <span class="sub-style-label">Background</span>
+                <div class="sub-style-control">
+                  <select id="subBg" onchange="applySubStyle()">
+                    <option value="rgba(0,0,0,0.75)">Dark</option>
+                    <option value="rgba(0,0,0,0)">None</option>
+                    <option value="rgba(0,0,0,0.4)">Subtle</option>
+                    <option value="rgba(255,255,255,0.85)">Light</option>
+                  </select>
+                </div>
+              </div>
+              <div class="sub-style-row">
+                <span class="sub-style-label">Font</span>
+                <div class="sub-style-control">
+                  <select id="subFont" onchange="applySubStyle()">
+                    <option value="inherit">Default</option>
+                    <option value="sans-serif">Sans-serif</option>
+                    <option value="serif">Serif</option>
+                    <option value="monospace">Monospace</option>
+                  </select>
+                </div>
+              </div>
+              <button onclick="resetSubStyle()" style="font-size:11px;color:var(--text-subtle);background:none;border:none;cursor:pointer;align-self:flex-start;padding:0;margin-top:2px;">Reset to defaults</button>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- Audio Track Switcher -->
+          {% if audio_tracks|length > 1 %}
+          <div class="quality-wrap" id="audioPickerWrap">
+            <button class="quality-btn" onclick="toggleAudioMenu(event)" title="Audio Track">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              </svg>
+            </button>
+            <div class="quality-menu" id="audioMenu" style="min-width:140px;">
+              {% for track in audio_tracks %}
+              <button class="quality-option{% if track.is_default %} active{% endif %}" onclick="selectAudioTrack('{{ track.hls_path }}', this)">
+                {{ track.label }}
+              </button>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- Picture in Picture -->
+          <button class="wc-btn" id="watchPipBtn" onclick="watchTogglePiP()" title="Picture in Picture  (P)" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="4" width="20" height="16" rx="2"/>
+              <rect x="12" y="11" width="9" height="7" rx="1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+
+          <!-- Fullscreen -->
+          <button class="wc-fs" onclick="watchToggleFs()" title="Fullscreen  (F)">
+            <svg id="watchFsIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+              <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+            </svg>
+          </button>
+        </div>
+      {% else %}
+        <div class="not-ready">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <p>Video is <strong>{{ video.status }}</strong> — check back shortly.</p>
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Info -->
+    <div class="video-info">
+      <h1 class="video-title" id="watchVideoTitle">{{ video.title }}</h1>
+
+      <div class="meta-row">
+        <span class="badge badge-{{ video.status }}">
+          <span class="badge-dot"></span>{{ video.status }}
+        </span>
+        {% if video.duration %}
+        <span class="meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          {{ video.duration|duration_fmt }}
+        </span>
+        {% endif %}
+        {% if video.resolution %}
+        <span class="meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          {{ video.resolution }}
+        </span>
+        {% endif %}
+        <span class="meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span id="viewsCount">{{ video.views_count }} views</span>
+        </span>
+      </div>
+
+      <div class="action-row">
+        <!-- Like button -->
+        <button class="btn btn-sm {% if user_liked %}btn-danger{% else %}btn-ghost{% endif %}" id="likeBtn" onclick="toggleLike()" {% if not request.user.is_authenticated %}title="Sign in to like"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="{% if user_liked %}currentColor{% else %}none{% endif %}" stroke="currentColor" stroke-width="2">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          <span id="likesCount">{{ video.likes_count }}</span>
+        </button>
+
+        <!-- Save / Bookmark -->
+        {% if request.user.is_authenticated %}
+        <button class="btn btn-sm {% if user_saved %}btn-success{% else %}btn-ghost{% endif %}" id="saveBtn" onclick="toggleSave()">
+          <svg id="saveIcon" viewBox="0 0 24 24" fill="{% if user_saved %}currentColor{% else %}none{% endif %}" stroke="currentColor" stroke-width="2">
+            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span id="saveBtnText">{% if user_saved %}Saved{% else %}Save{% endif %}</span>
+        </button>
+
+        <!-- Add to Playlist -->
+        <button class="btn btn-sm btn-ghost" onclick="openPlaylistModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+            <line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/>
+            <line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+          Add to Playlist
+        </button>
+        {% endif %}
+
+        <button class="btn btn-primary btn-sm" onclick="copyText('{{ request.scheme }}://{{ request.get_host }}{% url 'watch' video.id %}', 'Watch link copied!')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          Share Link
+        </button>
+        {% if video.hls_path %}
+        <button class="btn btn-secondary btn-sm" onclick="copyText('{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}', 'HLS URL copied!')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Copy HLS URL
+        </button>
+        {% endif %}
+        {% if is_owner %}
+        <button class="btn btn-ghost btn-sm" onclick="openEditModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Edit Video
+        </button>
+        {% endif %}
+      </div>
+
+      {% if video.channel %}
+      <a href="{% url 'channel' video.channel.slug %}" class="channel-card">
+        <div class="ch-avatar-lg">
+          {% if video.channel.avatar %}
+            <img src="{{ video.channel.avatar_url }}" alt="" />
+          {% else %}
+            {{ video.channel.name|first|upper }}
+          {% endif %}
+        </div>
+        <div class="ch-info">
+          <div class="ch-name">{{ video.channel.name }}</div>
+          {% if video.channel.description %}
+          <div class="ch-sub">{{ video.channel.description|truncatechars:60 }}</div>
+          {% endif %}
+        </div>
+        <svg style="margin-left:auto;color:var(--text-subtle);width:16px;height:16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </a>
+      {% endif %}
+
+      {% if video.description %}
+      <div class="description-wrap">
+        <div class="description-box" id="descBox">
+          {{ video.description }}
+          <div class="desc-fade" id="descFade">
+            <button class="desc-expand-btn" onclick="expandDesc()">Show more</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if video.tags %}
+      <div class="tags">
+        {% for tag in video.tags.split %}
+          <span class="tag" onclick="window.location='{% url 'player' %}?q={{ tag|cut:',' }}'">
+            #{{ tag|cut:"," }}
+          </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Chapters -->
+      {% if chapters %}
+      <div style="margin-top:18px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-subtle);margin-bottom:10px;">Chapters</div>
+        <div id="chaptersList" style="display:flex;flex-direction:column;gap:2px;">
+          {% for ch in chapters %}
+          <button onclick="seekToChapter({{ ch.timestamp }})"
+            style="display:flex;align-items:center;gap:10px;background:transparent;border:none;border-radius:6px;padding:7px 10px;cursor:pointer;text-align:left;width:100%;transition:background .12s;"
+            onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background='transparent'">
+            <span style="font-size:12px;font-weight:700;color:var(--accent);min-width:40px;flex-shrink:0;">{{ ch.timestamp|duration_fmt }}</span>
+            <span style="font-size:13px;color:var(--text);">{{ ch.title }}</span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- HLS URL -->
+      {% if video.hls_path %}
+      <div class="hls-info">
+        <span class="hls-label">HLS</span>
+        <span class="hls-url">{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}</span>
+        <button class="btn btn-sm btn-ghost" onclick="copyText('{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}', 'HLS URL copied!')">Copy</button>
+      </div>
+
+      <!-- Embed Wizard button -->
+      <div style="margin-top:10px;">
+        <button class="btn btn-primary btn-sm" onclick="openWizard()" style="width:100%;justify-content:center;gap:8px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+            <rect x="3" y="3" width="18" height="14" rx="2"/>
+            <path d="M8 21h8M12 17v4"/>
+            <polygon points="10 10 10 7 15 8.5 10 10" fill="currentColor" stroke="none"/>
+          </svg>
+          Generate Embed Code
+        </button>
+      </div>
+      {% endif %}
+
+      <!-- People in this Video (public) -->
+      <div style="margin-top:24px;" id="peopleSectionPublic">
+        <div style="font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            People in this Video
+          </div>
+          <button id="facesToggleBtn" class="btn btn-ghost btn-sm" onclick="toggleFaces()" style="font-size:12px;">Show</button>
+        </div>
+        <div id="faceIdentitiesPanel" style="display:none;"></div>
+      </div>
+
+      <!-- Comments -->
+      <div style="margin-top:28px;" id="commentsSection">
+        <div style="font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Comments
+          <span id="commentsCountBadge" style="font-size:12px;font-weight:400;color:var(--text-muted);">({{ comments|length }})</span>
+        </div>
+
+        {% if video.comments_enabled %}
+          {% if request.user.is_authenticated %}
+          <div style="display:flex;gap:10px;margin-bottom:20px;">
+            <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ request.user.username|first|upper }}</div>
+            <div style="flex:1;">
+              <textarea id="commentInput" placeholder="Add a comment… use @username to mention"
+                style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--text);outline:none;font-family:inherit;resize:vertical;min-height:72px;line-height:1.5;transition:border-color .15s;"
+                onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-2)'"></textarea>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;">
+                  <input type="checkbox" id="commentTimestamp" style="accent-color:var(--accent);" />
+                  Add timestamp (current position)
+                </label>
+                <button class="btn btn-primary btn-sm" onclick="postComment()">Post Comment</button>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:13px;color:var(--text-muted);margin-bottom:20px;">
+            <a href="/login/" style="color:var(--accent);font-weight:600;">Sign in</a> to leave a comment.
+          </div>
+          {% endif %}
+
+          <div id="commentsList" style="display:flex;flex-direction:column;gap:16px;">
+            {% for comment in comments %}
+            <div class="comment-item" data-comment-id="{{ comment.id }}" id="comment-{{ comment.id }}">
+              <!-- Avatar + body -->
+              <div style="display:flex;gap:10px;">
+                <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ comment.user.username|first|upper }}</div>
+                <div style="flex:1;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                    {% if comment.is_pinned %}
+                    <span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:1px 7px;border-radius:999px;display:flex;align-items:center;gap:3px;">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+                      Pinned
+                    </span>
+                    {% endif %}
+                    <span style="font-size:13px;font-weight:600;">{{ comment.user.username }}</span>
+                    <span style="font-size:11px;color:var(--text-muted);">{{ comment.created_at|timesince }} ago</span>
+                    {% if comment.timestamp_seconds is not None %}
+                    <button onclick="seekToTimestamp({{ comment.timestamp_seconds }})"
+                      style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:none;border-radius:4px;padding:1px 8px;cursor:pointer;">
+                      {{ comment.timestamp_seconds|floatformat:0|duration_fmt }}
+                    </button>
+                    {% endif %}
+                  </div>
+                  <div style="font-size:14px;color:var(--text);line-height:1.6;white-space:pre-wrap;">{{ comment.text }}</div>
+                  <!-- Actions -->
+                  <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+                    {% if request.user.is_authenticated %}
+                    <button onclick="likeComment({{ comment.id }}, this)"
+                      style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;padding:2px 0;transition:color .12s;"
+                      onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-subtle)'">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                      <span class="comment-likes-count">{{ comment.comment_likes.count }}</span>
+                    </button>
+                    <button onclick="showReplyBox({{ comment.id }})"
+                      style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:12px;font-weight:600;padding:2px 0;transition:color .12s;"
+                      onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-subtle)'">Reply</button>
+                    {% endif %}
+                    {% if is_owner %}
+                    <button onclick="pinComment({{ comment.id }}, this)"
+                      style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:12px;padding:2px 0;transition:color .12s;"
+                      onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-subtle)'">
+                      {% if comment.is_pinned %}Unpin{% else %}Pin{% endif %}
+                    </button>
+                    {% endif %}
+                    {% if request.user == comment.user or is_owner %}
+                    <button onclick="deleteComment({{ comment.id }}, this)"
+                      style="margin-left:auto;background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px;transition:color .12s;"
+                      onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text-subtle)'">Delete</button>
+                    {% endif %}
+                  </div>
+                  <!-- Reply input box (hidden by default) -->
+                  {% if request.user.is_authenticated %}
+                  <div id="replyBox-{{ comment.id }}" style="display:none;margin-top:10px;">
+                    <textarea placeholder="Write a reply…"
+                      style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);border-radius:6px;padding:8px 10px;font-size:13px;color:var(--text);outline:none;font-family:inherit;resize:vertical;min-height:60px;transition:border-color .15s;"
+                      onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-2)'"
+                      id="replyInput-{{ comment.id }}"></textarea>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+                      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('replyBox-{{ comment.id }}').style.display='none'">Cancel</button>
+                      <button class="btn btn-primary btn-sm" onclick="postReply({{ comment.id }})">Reply</button>
+                    </div>
+                  </div>
+                  {% endif %}
+                  <!-- Replies -->
+                  {% if comment.replies.all %}
+                  <div style="margin-top:12px;padding-left:14px;border-left:2px solid var(--border);display:flex;flex-direction:column;gap:12px;" id="replies-{{ comment.id }}">
+                    {% for reply in comment.replies.all %}
+                    <div style="display:flex;gap:8px;" id="comment-{{ reply.id }}">
+                      <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ reply.user.username|first|upper }}</div>
+                      <div style="flex:1;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px;">
+                          <span style="font-size:12px;font-weight:600;">{{ reply.user.username }}</span>
+                          <span style="font-size:10px;color:var(--text-muted);">{{ reply.created_at|timesince }} ago</span>
+                          {% if reply.timestamp_seconds is not None %}
+                          <button onclick="seekToTimestamp({{ reply.timestamp_seconds }})"
+                            style="font-size:10px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:none;border-radius:4px;padding:1px 6px;cursor:pointer;">
+                            {{ reply.timestamp_seconds|floatformat:0|duration_fmt }}
+                          </button>
+                          {% endif %}
+                        </div>
+                        <div style="font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap;">{{ reply.text }}</div>
+                        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                          {% if request.user.is_authenticated %}
+                          <button onclick="likeComment({{ reply.id }}, this)"
+                            style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:11px;display:flex;align-items:center;gap:3px;padding:1px 0;transition:color .12s;"
+                            onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-subtle)'">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                            <span class="comment-likes-count">{{ reply.comment_likes.count }}</span>
+                          </button>
+                          {% endif %}
+                          {% if request.user == reply.user or is_owner %}
+                          <button onclick="deleteComment({{ reply.id }}, this)"
+                            style="margin-left:auto;background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:10px;padding:1px 4px;border-radius:4px;transition:color .12s;"
+                            onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text-subtle)'">Delete</button>
+                          {% endif %}
+                        </div>
+                      </div>
+                    </div>
+                    {% endfor %}
+                  </div>
+                  {% else %}
+                  <div id="replies-{{ comment.id }}" style="margin-top:0;padding-left:14px;border-left:2px solid var(--border);display:none;flex-direction:column;gap:12px;"></div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            {% empty %}
+            <div id="noComments" style="color:var(--text-muted);font-size:13px;padding:8px 0;">No comments yet. Be the first!</div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:13px;color:var(--text-muted);">
+            Comments are disabled for this video.
+          </div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Sidebar: related videos -->
+  <aside>
+    <div class="sidebar-heading">Up Next</div>
+    <div class="related-list">
+      {% for v in related %}
+      <a href="{% url 'watch' v.id %}" class="related-item">
+        <div class="r-thumb">
+          {% if v.thumbnail_url %}
+            <img src="{{ v.thumbnail_url }}" alt="" loading="lazy" />
+          {% else %}
+            <div class="r-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20" height="20"><rect x="2" y="2" width="20" height="20" rx="2.18"/></svg>
+            </div>
+          {% endif %}
+          {% if v.duration %}<div class="r-dur">{{ v.duration|duration_fmt }}</div>{% endif %}
+        </div>
+        <div class="r-info">
+          <div class="r-title">{{ v.title }}</div>
+          <div class="r-sub">
+            {% if v.channel %}{{ v.channel.name }} · {% endif %}
+            {{ v.views_count }} views
+          </div>
+        </div>
+      </a>
+      {% empty %}
+      <div style="color:var(--text-subtle);font-size:13px;padding:12px 0;">No other videos yet.</div>
+      {% endfor %}
+    </div>
+  </aside>
+</div>
+
+<!-- ── Add to Playlist Modal ── -->
+{% if request.user.is_authenticated %}
+<div class="modal-backdrop" id="playlistModal" onclick="if(event.target===this)closePlaylistModal()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+        </svg>
+        Add to Playlist
+      </div>
+      <button class="modal-close" onclick="closePlaylistModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="display:block;padding:16px 24px;max-height:320px;overflow-y:auto;">
+      {% if user_playlists %}
+        {% for pl in user_playlists %}
+        <label style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;" class="pl-row">
+          <input type="checkbox" data-pl-id="{{ pl.id }}" class="pl-checkbox" style="accent-color:var(--accent);width:16px;height:16px;" />
+          <span style="font-size:14px;font-weight:500;">{{ pl.title }}</span>
+          <span style="margin-left:auto;font-size:12px;color:var(--text-muted);">{{ pl.video_count }} videos</span>
+        </label>
+        {% endfor %}
+      {% else %}
+        <div style="text-align:center;padding:24px;color:var(--text-muted);font-size:13px;">
+          No playlists yet.<br/>
+          <a href="{% url 'playlists' %}" style="color:var(--accent);font-weight:600;">Create one →</a>
+        </div>
+      {% endif %}
+    </div>
+    <div style="padding:12px 24px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;">
+      <input type="text" id="newPlTitle" class="form-input" placeholder="New playlist name…" style="flex:1;" />
+      <button class="btn btn-ghost btn-sm" onclick="createAndAdd()">Create</button>
+    </div>
+    <div class="modal-footer" style="padding:12px 24px;">
+      <button class="btn btn-ghost" onclick="closePlaylistModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveToPlaylists()">Done</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Edit Video Modal ── -->
+{% if request.user.is_authenticated %}
+<div class="modal-backdrop" id="editModal" onclick="closeEditBackdrop(event)">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        Edit Video
+      </div>
+      <button class="modal-close" onclick="closeEditModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body" style="display:block;padding:20px 24px;">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+
+        <div>
+          <label class="w-label">Title</label>
+          <input type="text" id="editTitle" class="w-input" value="{{ video.title|escapejs }}" style="width:100%;margin-top:5px;" />
+        </div>
+
+        <div>
+          <label class="w-label">Description</label>
+          <textarea id="editDesc" class="w-input" rows="4" style="width:100%;margin-top:5px;resize:vertical;">{{ video.description|escapejs }}</textarea>
+        </div>
+
+        <div>
+          <label class="w-label">Tags <span style="font-size:11px;color:var(--text-subtle);">(comma separated)</span></label>
+          <input type="text" id="editTags" class="w-input" value="{{ video.tags|escapejs }}" style="width:100%;margin-top:5px;" placeholder="tutorial, python, django" />
+        </div>
+
+        <div>
+          <label class="w-label">Category</label>
+          <select id="editCategory" class="w-input" style="width:100%;margin-top:5px;">
+            <option value="">— No category —</option>
+            {% for cat in all_categories %}
+            <option value="{{ cat.id }}" {% if video.category_id == cat.id %}selected{% endif %}>{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+          <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">
+            <input type="text" id="newCatName" class="w-input" placeholder="Or create new category…" style="flex:1;font-size:12px;" />
+            <button class="btn btn-ghost btn-sm" onclick="createCategory()" type="button" style="white-space:nowrap;">+ Add</button>
+          </div>
+        </div>
+
+        <div class="wizard-toggle-row" style="margin-top:0;">
+          <div class="wizard-toggle-info">
+            <div class="wtl">Public</div>
+            <div class="wts">Private videos are only accessible via direct URL</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="editPublic" {% if video.is_public %}checked{% endif %} />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="wizard-toggle-row">
+          <div class="wizard-toggle-info">
+            <div class="wtl">Comments enabled</div>
+            <div class="wts">Allow viewers to leave comments</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="editCommentsEnabled" {% if video.comments_enabled %}checked{% endif %} />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div id="editStatus" style="font-size:12px;min-height:18px;"></div>
+
+        {% if is_owner %}
+        <!-- ── End Screens section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <label class="w-label" style="margin:0;">
+              End Screens
+              <span style="font-size:11px;font-weight:400;color:var(--text-subtle);margin-left:6px;">shown in last N seconds of video</span>
+            </label>
+          </div>
+
+          <!-- Existing end screens list -->
+          <div id="endScreensList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+            {% for es in end_screens %}
+            <div style="display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;" id="es-row-{{ es.id }}">
+              {% if es.target_video and es.target_video.thumbnail_url %}
+              <img src="{{ es.target_video.thumbnail_url }}" style="width:48px;aspect-ratio:16/9;object-fit:cover;border-radius:4px;flex-shrink:0;" />
+              {% else %}
+              <div style="width:48px;aspect-ratio:16/9;background:var(--surface-3);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">▶</div>
+              {% endif %}
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ es.label }}</div>
+                <div style="font-size:11px;color:var(--text-muted);">
+                  {% if es.target_video %}{{ es.target_video.title }}{% else %}{{ es.target_url }}{% endif %}
+                  · shown {{ es.start_seconds_before_end|floatformat:0 }}s before end
+                </div>
+              </div>
+              <button onclick="deleteEndScreen({{ es.id }})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;padding:4px;border-radius:4px;flex-shrink:0;" title="Remove">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+              </button>
+            </div>
+            {% empty %}
+            <div id="esEmptyMsg" style="font-size:12px;color:var(--text-subtle);padding:4px 0;">No end screens yet.</div>
+            {% endfor %}
+          </div>
+
+          <!-- Add new end screen form -->
+          <details style="margin-top:4px;">
+            <summary style="font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add End Screen
+            </summary>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:8px;border:1px solid var(--border);">
+              <div>
+                <label class="w-label">Label</label>
+                <input type="text" id="esLabel" class="w-input" placeholder="e.g. Watch next" style="width:100%;margin-top:4px;" />
+              </div>
+              <div>
+                <label class="w-label">Target Video ID <span style="font-weight:400;color:var(--text-subtle);">(UUID, leave blank to use URL instead)</span></label>
+                <input type="text" id="esTargetVideo" class="w-input" placeholder="Paste video UUID…" style="width:100%;margin-top:4px;" />
+              </div>
+              <div>
+                <label class="w-label">OR Target URL</label>
+                <input type="url" id="esTargetUrl" class="w-input" placeholder="https://…" style="width:100%;margin-top:4px;" />
+              </div>
+              <div>
+                <label class="w-label">Show N seconds before end</label>
+                <input type="number" id="esSeconds" class="w-input" value="20" min="5" max="120" style="width:100px;margin-top:4px;" />
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="addEndScreen()" style="align-self:flex-start;">
+                Add End Screen
+              </button>
+              <div id="esStatus" style="font-size:12px;min-height:16px;"></div>
+            </div>
+          </details>
+        </div>
+        {% endif %}
+
+        {% if is_owner %}
+        <!-- ── Chapters section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+          <label class="w-label" style="display:block;margin-bottom:10px;">Chapters</label>
+
+          <div id="editChaptersList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
+            {% for ch in chapters %}
+            <div style="display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;" id="ech-row-{{ ch.id }}">
+              <span style="font-family:monospace;font-size:12px;color:var(--accent);flex-shrink:0;min-width:44px;">{{ ch.timestamp|floatformat:0 }}s</span>
+              <span style="flex:1;font-size:13px;font-weight:500;">{{ ch.title }}</span>
+              <button onclick="deleteChapterEdit({{ ch.id }})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;padding:4px;border-radius:4px;flex-shrink:0;" title="Remove">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+              </button>
+            </div>
+            {% empty %}
+            <div id="echEmptyMsg" style="font-size:12px;color:var(--text-subtle);padding:4px 0;">No chapters yet.</div>
+            {% endfor %}
+          </div>
+
+          <details>
+            <summary style="font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Chapter
+            </summary>
+            <div style="display:flex;gap:8px;margin-top:10px;padding:12px;background:var(--surface-2);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap;">
+              <input type="text" id="echTs" class="w-input" placeholder="0:00" style="width:80px;font-family:monospace;" title="m:ss or h:mm:ss" />
+              <input type="text" id="echTitle" class="w-input" placeholder="Chapter title" style="flex:1;min-width:140px;" />
+              <button class="btn btn-primary btn-sm" onclick="addChapterEdit()" type="button">Add</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">
+              Format: <code>m:ss</code> or <code>h:mm:ss</code>. First chapter must start at <strong>0:00</strong>.
+            </div>
+            <div id="echStatus" style="font-size:12px;min-height:16px;margin-top:4px;"></div>
+          </details>
+        </div>
+        {% endif %}
+
+        {% if is_owner %}
+        <!-- ── Visual Analysis (object detection) section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <label class="w-label" style="margin:0;">Visual Analysis</label>
+            <button class="btn btn-ghost btn-sm" onclick="triggerVisualAnalysis()" id="reanalysisBtn" title="Re-run YOLOv8 object detection">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              Re-analyse
+            </button>
+          </div>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px;">
+            Detects objects, people &amp; scenes in every frame. Makes this video searchable by what appears in it (e.g. "car", "laptop", "dog").
+          </p>
+        </div>
+
+        <!-- ── Subtitles / Captions section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <label class="w-label" style="margin:0;">Subtitles & Captions</label>
+            <button class="btn btn-ghost btn-sm" onclick="triggerCaptionRegen()" id="regenCcBtn" title="Re-run Whisper auto-transcription">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Auto-generate
+            </button>
+          </div>
+
+          <!-- Existing subtitles -->
+          <div id="subtitlesList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
+            {% for sub in subtitles %}
+            <div style="display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;" id="sub-row-{{ sub.id }}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="flex-shrink:0;color:var(--accent);">
+                <rect x="2" y="5" width="20" height="14" rx="2"/>
+                <line x1="6" y1="10" x2="10" y2="10"/><line x1="12" y1="10" x2="18" y2="10"/>
+                <line x1="6" y1="14" x2="12" y2="14"/><line x1="14" y1="14" x2="18" y2="14"/>
+              </svg>
+              <div style="flex:1;">
+                <div style="font-size:13px;font-weight:600;">{{ sub.language_label }}</div>
+                <div style="font-size:11px;color:var(--text-muted);">{{ sub.language }} · {{ sub.format|upper }}{% if sub.is_auto_generated %} · auto-generated{% endif %}</div>
+              </div>
+              <a href="{{ sub.url }}" target="_blank" style="font-size:11px;color:var(--accent);">Download</a>
+              <button onclick="deleteSubtitle({{ sub.id }})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;padding:4px;" title="Remove">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+              </button>
+            </div>
+            {% empty %}
+            <div id="subEmptyMsg" style="font-size:12px;color:var(--text-subtle);padding:4px 0;">No subtitles yet. Upload a file or click Auto-generate.</div>
+            {% endfor %}
+          </div>
+
+          <!-- Upload subtitle file -->
+          <details>
+            <summary style="font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload Subtitle File
+            </summary>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px;padding:12px;background:var(--surface-2);border-radius:8px;border:1px solid var(--border);">
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;">
+                  <label class="w-label">Language Code <span style="font-weight:400;">(e.g. en, fr, es)</span></label>
+                  <input type="text" id="subLang" class="w-input" value="en" style="width:100%;margin-top:4px;" />
+                </div>
+                <div style="flex:1;">
+                  <label class="w-label">Display Label</label>
+                  <input type="text" id="subLabel" class="w-input" placeholder="English" style="width:100%;margin-top:4px;" />
+                </div>
+              </div>
+              <div>
+                <label class="w-label">File (.vtt or .srt)</label>
+                <input type="file" id="subFile" accept=".vtt,.srt" style="margin-top:4px;font-size:13px;" />
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="uploadSubtitle()" style="align-self:flex-start;">Upload</button>
+              <div id="subUploadStatus" style="font-size:12px;min-height:16px;"></div>
+            </div>
+          </details>
+        </div>
+        {% endif %}
+
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+      <button class="btn btn-primary" id="editSaveBtn" onclick="saveVideoEdit()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+        Save Changes
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Embed Wizard Modal ── -->
+<div class="modal-backdrop" id="embedWizard" onclick="closeWizardBackdrop(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+        </svg>
+        Embed Video Wizard
+      </div>
+      <button class="modal-close" onclick="closeWizard()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Left: Options -->
+      <div class="wizard-options">
+
+        <div>
+          <div class="wizard-section-title">Appearance</div>
+          <div class="wizard-toggle-row">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Theme</div>
+            </div>
+            <div class="w-seg" style="width:130px;">
+              <button class="w-seg-btn active" id="wThemeDark" onclick="setTheme('dark')">Dark</button>
+              <button class="w-seg-btn" id="wThemeLight" onclick="setTheme('light')">Light</button>
+            </div>
+          </div>
+          <div class="w-input-row" style="margin-top:8px;">
+            <label>Title Override</label>
+            <input type="text" id="wTitleOverride" class="w-input" placeholder="Leave blank to use the video title" oninput="updateWizard()" />
+            <span style="font-size:11px;color:var(--text-subtle);margin-top:3px;">Shown at the top of the player</span>
+          </div>
+          <div class="wizard-toggle-row" style="margin-top:8px;">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Accent Colour</div>
+              <div class="wts">Progress bar & controls</div>
+            </div>
+            <div class="w-color-row">
+              <div class="w-color-swatch">
+                <input type="color" id="wColor" value="#6366f1" oninput="updateWizard()" />
+              </div>
+              <span style="font-size:12px;color:var(--text-muted);" id="wColorHex">#6366f1</span>
+            </div>
+          </div>
+          <div class="wizard-toggle-row">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Show Watermark</div>
+              <div class="wts">ClipLens logo overlay</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wLogo" checked onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="wizard-toggle-row">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Watch on ClipLens</div>
+              <div class="wts">Show link in player controls</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wWatchLink" checked onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <div class="wizard-section-title">Playback</div>
+          <div class="wizard-toggle-row">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Autoplay</div>
+              <div class="wts">Start playing on load</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wAutoplay" checked onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="wizard-toggle-row">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Loop</div>
+              <div class="wts">Repeat when finished</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wLoop" onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="w-input-row" style="margin-top:8px;">
+            <label>Start at (seconds)</label>
+            <input type="number" id="wStart" class="w-input" value="0" min="0" placeholder="0" oninput="updateWizard()" />
+          </div>
+          <div class="w-input-row" style="margin-top:10px;">
+            <label>Default speed</label>
+            <div class="w-seg" id="wSpeedSeg" style="flex-wrap:wrap;gap:4px;">
+              <button class="w-seg-btn" data-speed="0.5"  onclick="setWizSpeed(this)">0.5×</button>
+              <button class="w-seg-btn" data-speed="0.75" onclick="setWizSpeed(this)">0.75×</button>
+              <button class="w-seg-btn active" data-speed="1" onclick="setWizSpeed(this)">1×</button>
+              <button class="w-seg-btn" data-speed="1.25" onclick="setWizSpeed(this)">1.25×</button>
+              <button class="w-seg-btn" data-speed="1.5"  onclick="setWizSpeed(this)">1.5×</button>
+              <button class="w-seg-btn" data-speed="2"    onclick="setWizSpeed(this)">2×</button>
+            </div>
+          </div>
+          <div class="w-input-row" style="margin-top:10px;">
+            <label>Completion threshold (%)</label>
+            <input type="number" id="wThreshold" class="w-input" value="90" min="1" max="100" placeholder="90" oninput="updateWizard()" />
+          </div>
+          <div class="wizard-toggle-row" style="margin-top:10px;">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Seek Lock</div>
+              <div class="wts">Prevent skipping ahead — viewer must watch in order</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wSeekLock" onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="wizard-toggle-row" style="margin-top:10px;">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Picture in Picture</div>
+              <div class="wts">Allow viewer to pop the player into a floating window</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wPip" checked onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="wizard-toggle-row" style="margin-top:10px;">
+            <div class="wizard-toggle-info">
+              <div class="wtl">Pause on Tab Switch</div>
+              <div class="wts">Pause automatically when viewer switches tabs or minimises</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="wPauseOnBlur" onchange="updateWizard()" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <div class="wizard-section-title">LMS Integration</div>
+          <div class="w-input-row">
+            <label>LMS Origin (for postMessage)</label>
+            <input type="text" id="wLmsOrigin" class="w-input" placeholder="https://essaressentials.com" oninput="updateWizard()" />
+            <span style="font-size:11px;color:var(--text-subtle);margin-top:3px;">Leave blank to allow all origins (*)</span>
+          </div>
+          <div style="margin-top:10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--text-muted);line-height:1.6;">
+            <strong style="color:var(--accent);">postMessage events sent:</strong><br/>
+            <code style="color:var(--text);">ended</code> — video complete (drives LMS completion)<br/>
+            <code style="color:var(--text);">progress</code> — every 5s with % watched<br/>
+            <code style="color:var(--text);">play</code> / <code style="color:var(--text);">pause</code> — playback state
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right: Preview + Output -->
+      <div class="wizard-preview-panel">
+        <div>
+          <div class="wizard-preview-title">Live Preview</div>
+          <div class="wizard-iframe-preview" id="wizardPreviewBox">
+            <iframe id="wizardIframe" src="" allowfullscreen></iframe>
+          </div>
+        </div>
+
+        <div>
+          <div class="wizard-url-label">Embed URL</div>
+          <div class="wizard-url-box">
+            <div class="wizard-url-text" id="wizardUrl">—</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="wizard-url-label">iframe Code</div>
+          <div class="wizard-code-box" id="wizardCode">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeWizard()">Close</button>
+      <button class="btn btn-ghost" onclick="copyText(document.getElementById('wizardUrl').textContent, 'Embed URL copied!')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        Copy URL
+      </button>
+      <button class="btn btn-primary" onclick="copyText(document.getElementById('wizardCode').textContent, 'iframe code copied!')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Copy iframe Code
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  {% if video.status == 'ready' and video.hls_path %}
+  const hlsSrc = '{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}';
+  const videoEl = document.getElementById('videoEl');
+  const loader  = document.getElementById('loader');
+  let watchHls  = null;
+
+  if (typeof Hls === 'undefined') {
+    loader.style.display = 'none';
+  } else if (Hls.isSupported()) {
+    watchHls = new Hls({
+      enableWorker: false,
+      startLevel: -1,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      {% if seek_to %}startPosition: {{ seek_to }},{% endif %}
+    });
+    watchHls.loadSource(hlsSrc);
+    watchHls.attachMedia(videoEl);
+    window._hls = watchHls;
+
+    watchHls.on(Hls.Events.MANIFEST_PARSED, () => {
+      loader.style.display = 'none';
+      document.getElementById('bigPlay').classList.remove('hidden');
+      {% if seek_to %}
+      videoEl.currentTime = {{ seek_to }};
+      showToast('info', 'Jumped to {{ seek_to|floatformat:0 }}s', 'from search result');
+      {% endif %}
+      videoEl.play().catch(() => {});
+      buildQualityMenu(watchHls);
+    });
+
+    watchHls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+      if (watchHls.autoLevelEnabled) {
+        const lvl = watchHls.levels[data.level];
+        const label = lvl ? (lvl.name || lvl.height + 'p') : '?';
+        document.getElementById('qualityLabel').textContent = `Auto (${label})`;
+        console.log(`[ABR] → ${label}`, lvl ? `(${(lvl.bitrate/1000000).toFixed(1)} Mbps)` : '');
+      }
+      refreshQualityMenu();
+    });
+
+    watchHls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) loader.style.display = 'none'; });
+  } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+    // Native HLS (Safari / iOS) — no hls.js
+    videoEl.src = hlsSrc;
+    videoEl.addEventListener('loadedmetadata', () => {
+      loader.style.display = 'none';
+      document.getElementById('bigPlay').classList.remove('hidden');
+      {% if seek_to %}
+      videoEl.currentTime = {{ seek_to }};
+      showToast('info', 'Jumped to {{ seek_to|floatformat:0 }}s', 'from search result');
+      {% endif %}
+      videoEl.play().catch(() => {});
+    }, { once: true });
+  }
+
+  // ── Custom controls: Play / Pause ─────────────────────────────────────────
+  const videoWrap = document.getElementById('videoWrap');
+
+  function watchTogglePlay() {
+    if (videoEl.paused) videoEl.play().catch(() => {});
+    else videoEl.pause();
+  }
+
+  function watchSyncPlayIcon(paused) {
+    const play  = '<polygon points="5,3 19,12 5,21"/>';
+    const pause = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+    document.getElementById('watchPlayIcon').innerHTML = paused ? play : pause;
+    document.getElementById('watchBpIcon').innerHTML   = paused ? play : pause;
+    videoWrap.classList.toggle('paused', paused);
+  }
+
+  videoEl.addEventListener('play',  () => watchSyncPlayIcon(false));
+  videoEl.addEventListener('pause', () => watchSyncPlayIcon(true));
+
+  // Click video area to play/pause, double-click to fullscreen
+  videoWrap.addEventListener('click', e => {
+    if (e.target.closest('.watch-ctrl-bar, .quality-menu, .bp-btn')) return;
+    watchTogglePlay();
+  });
+  videoWrap.addEventListener('dblclick', e => {
+    if (e.target.closest('.watch-ctrl-bar')) return;
+    watchToggleFs();
+  });
+
+  // ── Custom controls: Volume ───────────────────────────────────────────────
+  function watchSetVol(v) {
+    videoEl.volume = parseFloat(v);
+    videoEl.muted  = parseFloat(v) === 0;
+    document.getElementById('wcVolSl').value = v;
+    document.getElementById('watchVolWave').style.display = videoEl.muted ? 'none' : '';
+  }
+  function watchToggleMute() {
+    videoEl.muted = !videoEl.muted;
+    document.getElementById('wcVolSl').value = videoEl.muted ? 0 : videoEl.volume;
+    document.getElementById('watchVolWave').style.display = videoEl.muted ? 'none' : '';
+  }
+
+  // ── Custom controls: Seek bar ─────────────────────────────────────────────
+  const wcSeek  = document.getElementById('wcSeek');
+  const wcSeekF = document.getElementById('wcSeekF');
+  const wcSeekT = document.getElementById('wcSeekT');
+  const wcTime  = document.getElementById('wcTime');
+  let wcDragging = false;
+
+  function wcFmtTime(s) {
+    if (!s || isNaN(s)) return '0:00';
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ':' + String(sec).padStart(2, '0');
+  }
+
+  function wcGetPos(e) {
+    const r = wcSeek.getBoundingClientRect();
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    return Math.max(0, Math.min(1, (x - r.left) / r.width));
+  }
+
+  function wcApplySeek(pos, commit) {
+    const dur = videoEl.duration;
+    if (!dur) return;
+    const t   = pos * dur;
+    const pct = (t / dur * 100).toFixed(2) + '%';
+    wcSeekF.style.width = pct;
+    wcSeekT.style.left  = pct;
+    wcTime.textContent  = wcFmtTime(t) + ' / ' + wcFmtTime(dur);
+    if (commit) videoEl.currentTime = t;
+  }
+
+  wcSeek.addEventListener('mousedown', e => {
+    wcDragging = true; wcSeek.classList.add('drag');
+    wcApplySeek(wcGetPos(e), false); e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => { if (wcDragging) wcApplySeek(wcGetPos(e), false); });
+  document.addEventListener('mouseup',   e => {
+    if (!wcDragging) return;
+    wcDragging = false; wcSeek.classList.remove('drag');
+    wcApplySeek(wcGetPos(e), true);
+  });
+  wcSeek.addEventListener('touchstart', e => {
+    wcDragging = true; wcSeek.classList.add('drag'); wcApplySeek(wcGetPos(e), false);
+  }, { passive: true });
+  document.addEventListener('touchmove', e => { if (wcDragging) wcApplySeek(wcGetPos(e), false); }, { passive: true });
+  document.addEventListener('touchend',  e => {
+    if (!wcDragging) return; wcDragging = false; wcSeek.classList.remove('drag'); wcApplySeek(wcGetPos(e), true);
+  });
+
+  // ── Chapter markers on seek bar ──────────────────────────────────────────
+  {% if chapters %}
+  const WC_CHAPTERS = [{% for ch in chapters %}{ ts: {{ ch.timestamp }}, title: "{{ ch.title|escapejs }}" }{% if not forloop.last %},{% endif %}{% endfor %}];
+  {% else %}
+  const WC_CHAPTERS = [];
+  {% endif %}
+
+  const wcChapterMarkers = document.getElementById('wcChapterMarkers');
+  const wcChTooltip      = document.getElementById('wcChTooltip');
+
+  function wcBuildChapterMarkers(dur) {
+    if (!dur || !WC_CHAPTERS.length) return;
+    wcChapterMarkers.innerHTML = '';
+    // Draw a tick at every chapter that doesn't start at exactly 0:00
+    WC_CHAPTERS.filter(ch => ch.ts > 0).forEach(ch => {
+      const pct = (ch.ts / dur * 100).toFixed(3) + '%';
+      const mark = document.createElement('div');
+      mark.className = 'wc-ch-mark';
+      mark.style.left = pct;
+      wcChapterMarkers.appendChild(mark);
+    });
+  }
+
+  function wcCurrentChapter(t) {
+    if (!WC_CHAPTERS.length) return null;
+    // Return null if before the first chapter's start time
+    if (t < WC_CHAPTERS[0].ts) return null;
+    let cur = WC_CHAPTERS[0];
+    for (const ch of WC_CHAPTERS) {
+      if (ch.ts <= t) cur = ch;
+      else break;
+    }
+    return cur;
+  }
+
+  // Build markers once duration is known
+  videoEl.addEventListener('loadedmetadata', () => wcBuildChapterMarkers(videoEl.duration));
+  // Also try immediately in case metadata already loaded
+  if (videoEl.duration) wcBuildChapterMarkers(videoEl.duration);
+
+  // Hover tooltip: show chapter name at cursor position
+  if (WC_CHAPTERS.length) {
+    wcSeek.addEventListener('mousemove', e => {
+      const dur = videoEl.duration;
+      if (!dur) return;
+      const pos = wcGetPos(e);
+      const t   = pos * dur;
+      const ch  = wcCurrentChapter(t);
+      if (ch) {
+        wcChTooltip.textContent = ch.title;
+        wcChTooltip.style.display = 'block';
+        // Clamp to stay within seek bar bounds
+        const r = wcSeek.getBoundingClientRect();
+        const raw = (e.clientX - r.left);
+        const half = wcChTooltip.offsetWidth / 2;
+        const clamped = Math.max(half, Math.min(r.width - half, raw));
+        wcChTooltip.style.left = clamped + 'px';
+      }
+    });
+    wcSeek.addEventListener('mouseleave', () => { wcChTooltip.style.display = 'none'; });
+  }
+
+  // timeupdate → keep seek bar in sync + 70 % view counting
+  let wcMaxWatched = 0, wcViewRecorded = false;
+  videoEl.addEventListener('timeupdate', () => {
+    const dur = videoEl.duration;
+    if (!dur || wcDragging) return;
+    const pct = (videoEl.currentTime / dur * 100).toFixed(2) + '%';
+    wcSeekF.style.width = pct;
+    wcSeekT.style.left  = pct;
+    wcTime.textContent  = wcFmtTime(videoEl.currentTime) + ' / ' + wcFmtTime(dur);
+
+    // Track furthest point watched (anti-scrub: only advance within 5 s window)
+    if (videoEl.currentTime > wcMaxWatched && videoEl.currentTime <= wcMaxWatched + 5)
+      wcMaxWatched = videoEl.currentTime;
+
+    // Count a view once ≥ 70 % has been genuinely watched
+    if (!wcViewRecorded && wcMaxWatched / dur >= 0.70) {
+      wcViewRecorded = true;
+      fetch(`{{ SITE_URL }}/api/videos/{{ video.id }}/view/`, { method: 'POST', credentials: 'include' })
+        .then(r => r.json())
+        .then(d => {
+          console.log('[ClipLens] View recorded — total views:', d.views);
+          // Update the views counter shown on the page without a reload
+          const el = document.getElementById('viewsCount');
+          if (el) el.textContent = d.views + ' views';
+        })
+        .catch(() => {});
+    }
+  });
+
+  // ── Custom controls: Fullscreen ───────────────────────────────────────────
+  function watchToggleFs() {
+    if (!document.fullscreenElement) videoWrap.requestFullscreen().catch(() => {});
+    else document.exitFullscreen();
+  }
+
+  // ── Picture in Picture ────────────────────────────────────────────────────
+  const watchPipBtn = document.getElementById('watchPipBtn');
+  if (document.pictureInPictureEnabled) watchPipBtn.style.display = '';
+  async function watchTogglePiP() {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await videoEl.requestPictureInPicture();
+    } catch(e) { console.warn('[ClipLens] PiP error:', e); }
+  }
+  videoEl.addEventListener('enterpictureinpicture', () => {
+    watchPipBtn.querySelector('svg rect:last-child').setAttribute('fill', 'var(--accent)');
+  });
+  videoEl.addEventListener('leavepictureinpicture', () => {
+    watchPipBtn.querySelector('svg rect:last-child').setAttribute('fill', 'currentColor');
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+    const inFs = !!document.fullscreenElement;
+    document.getElementById('watchFsIcon').innerHTML = inFs
+      ? '<polyline points="8 3 3 3 3 8"/><polyline points="21 8 21 3 16 3"/><polyline points="3 16 3 21 8 21"/><polyline points="16 21 21 21 21 16"/>'
+      : '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>';
+  });
+
+  // ── Custom controls: Auto-hide ────────────────────────────────────────────
+  let _wcHideTimer = null;
+  function wcShowControls() {
+    videoWrap.classList.add('sc');
+    clearTimeout(_wcHideTimer);
+    if (!videoEl.paused) _wcHideTimer = setTimeout(() => videoWrap.classList.remove('sc'), 3000);
+  }
+  videoWrap.addEventListener('mousemove',  wcShowControls);
+  videoWrap.addEventListener('mouseenter', wcShowControls);
+  videoWrap.addEventListener('mouseleave', () => {
+    clearTimeout(_wcHideTimer);
+    if (!videoEl.paused) videoWrap.classList.remove('sc');
+  });
+  // Keep visible while a menu is open
+  document.addEventListener('click', () => {
+    if (document.querySelector('#qualityMenu.open, #speedMenu.open')) {
+      clearTimeout(_wcHideTimer); videoWrap.classList.add('sc');
+    }
+  });
+
+  // ── Custom controls: Skip flash ───────────────────────────────────────────
+  let _sfTimers = {};
+  function wcFlash(dir) {
+    const el = document.getElementById(dir === 'l' ? 'wcSkipL' : 'wcSkipR');
+    el.classList.add('show');
+    clearTimeout(_sfTimers[dir]);
+    _sfTimers[dir] = setTimeout(() => el.classList.remove('show'), 550);
+  }
+
+  function fmtBitrate(bps) {
+    if (!bps) return '';
+    if (bps >= 1000000) return (bps/1000000).toFixed(1)+' Mbps';
+    return Math.round(bps/1000)+' kbps';
+  }
+
+  function buildQualityMenu(hls) {
+    const menu = document.getElementById('qualityMenu');
+    menu.innerHTML = '';
+    const autoOpt = document.createElement('div');
+    autoOpt.className = 'quality-opt active';
+    autoOpt.innerHTML = `<span>Auto</span><span class="q-check">✓</span>`;
+    autoOpt.onclick = () => setQuality(-1);
+    menu.appendChild(autoOpt);
+    hls.levels.forEach((lvl, idx) => {
+      const label = lvl.name || (lvl.height ? lvl.height+'p' : 'Level '+idx);
+      const opt = document.createElement('div');
+      opt.className = 'quality-opt';
+      opt.dataset.level = idx;
+      opt.innerHTML = `<span>${label}</span><span class="q-check">✓</span>`;
+      opt.onclick = () => setQuality(idx);
+      menu.appendChild(opt);
+    });
+    document.getElementById('qualityPickerWrap').style.display = 'block';
+  }
+
+  function setQuality(idx) {
+    if (!watchHls) return;
+    watchHls.currentLevel = idx;
+    const lvl = watchHls.levels[idx];
+    document.getElementById('qualityLabel').textContent =
+      idx === -1 ? 'Auto' : (lvl ? (lvl.name || lvl.height+'p') : '?');
+    refreshQualityMenu();
+    document.getElementById('qualityMenu').classList.remove('open');
+  }
+
+  function refreshQualityMenu() {
+    if (!watchHls) return;
+    document.querySelectorAll('#qualityMenu .quality-opt').forEach((opt, i) => {
+      opt.classList.toggle('active',
+        i === 0 ? watchHls.autoLevelEnabled
+                : (!watchHls.autoLevelEnabled && watchHls.currentLevel === parseInt(opt.dataset.level)));
+    });
+  }
+
+  function toggleQualityMenu(e) {
+    e.stopPropagation();
+    document.getElementById('qualityMenu').classList.toggle('open');
+  }
+  document.addEventListener('click', () => {
+    document.getElementById('qualityMenu')?.classList.remove('open');
+    document.getElementById('speedMenu')?.classList.remove('open');
+  });
+
+  // ── Speed picker ─────────────────────────────────────────────────────────────
+  const WATCH_SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+  (function buildSpeedMenu() {
+    const menu = document.getElementById('speedMenu');
+    WATCH_SPEEDS.forEach(s => {
+      const opt = document.createElement('div');
+      opt.className = 'quality-opt' + (s === 1 ? ' active' : '');
+      opt.dataset.speed = s;
+      opt.innerHTML = `<span>${s}×</span><span class="q-check">✓</span>`;
+      opt.onclick = () => setWatchSpeed(s);
+      menu.appendChild(opt);
+    });
+  })();
+
+  function setWatchSpeed(s) {
+    videoEl.playbackRate = s;
+    document.getElementById('speedLabel').textContent = s + '×';
+    document.querySelectorAll('#speedMenu .quality-opt').forEach(o => {
+      o.classList.toggle('active', parseFloat(o.dataset.speed) === s);
+    });
+    document.getElementById('speedMenu').classList.remove('open');
+  }
+
+  function toggleSpeedMenu(e) {
+    e.stopPropagation();
+    document.getElementById('qualityMenu')?.classList.remove('open');
+    document.getElementById('speedMenu').classList.toggle('open');
+  }
+
+  // ── Keyboard shortcuts (5 s seek, space, m, f) ───────────────────────────────
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    switch (e.key) {
+      case 'ArrowRight': case 'l':
+        e.preventDefault();
+        videoEl.currentTime = Math.min(videoEl.duration || 0, videoEl.currentTime + 5);
+        wcFlash('r'); break;
+      case 'ArrowLeft': case 'j':
+        e.preventDefault();
+        videoEl.currentTime = Math.max(0, videoEl.currentTime - 5);
+        wcFlash('l'); break;
+      case ' ': case 'k':
+        e.preventDefault(); watchTogglePlay(); break;
+      case 'm': case 'M':
+        e.preventDefault(); watchToggleMute(); break;
+      case 'f': case 'F':
+        e.preventDefault(); watchToggleFs(); break;
+      case 'p': case 'P':
+        e.preventDefault(); watchTogglePiP(); break;
+      case 'ArrowUp':
+        e.preventDefault(); watchSetVol(Math.min(1, videoEl.volume + 0.1)); break;
+      case 'ArrowDown':
+        e.preventDefault(); watchSetVol(Math.max(0, videoEl.volume - 0.1)); break;
+    }
+  });
+  {% endif %}
+
+  // ── Edit Video Modal ──────────────────────────────────────────────────────────
+  {% if request.user.is_authenticated %}
+  const VIDEO_API = '{{ SITE_URL }}/api/videos/{{ video.id }}/';
+
+  function openEditModal() {
+    document.getElementById('editModal').classList.add('open');
+    document.getElementById('editStatus').textContent = '';
+  }
+  function closeEditModal() {
+    document.getElementById('editModal').classList.remove('open');
+  }
+  function closeEditBackdrop(e) {
+    if (e.target === document.getElementById('editModal')) closeEditModal();
+  }
+
+  async function saveVideoEdit() {
+    const btn    = document.getElementById('editSaveBtn');
+    const status = document.getElementById('editStatus');
+    const title  = document.getElementById('editTitle').value.trim();
+    if (!title) { status.style.color = 'var(--danger, #ef4444)'; status.textContent = 'Title is required.'; return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    status.textContent = '';
+
+    try {
+      const res = await fetch(VIDEO_API, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          description: document.getElementById('editDesc').value,
+          tags:        document.getElementById('editTags').value,
+          is_public:        document.getElementById('editPublic').checked,
+          comments_enabled: document.getElementById('editCommentsEnabled').checked,
+          category:    document.getElementById('editCategory').value || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(Object.values(data).flat().join(' ') || 'Save failed.');
+
+      // Update the page UI without a reload
+      document.getElementById('watchVideoTitle').textContent = data.title;
+      document.title = data.title + ' — ClipLens';
+      status.style.color = 'var(--success, #22c55e)';
+      status.textContent = '✓ Saved successfully.';
+      setTimeout(closeEditModal, 1200);
+    } catch(err) {
+      status.style.color = 'var(--danger, #ef4444)';
+      status.textContent = err.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg> Save Changes';
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEditModal(); });
+  {% endif %}
+
+  // ── Watch Progress Heartbeat ─────────────────────────────────────────────────
+  {% if request.user.is_authenticated and video.status == 'ready' %}
+  const VIDEO_ID = '{{ video.id }}';
+  const VIDEO_DURATION = {{ video.duration|default:0 }};
+  let _progressTimer = null;
+
+  // Seek-to / resume — handled in MANIFEST_PARSED (hls.js) or native loadedmetadata (Safari).
+  // This fallback only runs if neither hls.js nor native HLS is available (e.g. direct mp4).
+  {% if seek_to %}
+  if (typeof Hls === 'undefined' || (!Hls.isSupported() && !videoEl.canPlayType('application/vnd.apple.mpegurl'))) {
+    videoEl.addEventListener('loadedmetadata', () => {
+      videoEl.currentTime = {{ seek_to }};
+      videoEl.play().catch(() => {});
+      showToast('info', 'Jumped to {{ seek_to|floatformat:0 }}s', 'from search result');
+    }, { once: true });
+  }
+  {% elif watch_progress %}
+  // Resume from saved watch-history position (hls.js path — fires after MANIFEST_PARSED)
+  if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+    videoEl.addEventListener('canplay', () => {
+      const resume = {{ watch_progress }};
+      if (resume > 10 && resume < (videoEl.duration || VIDEO_DURATION) - 5) {
+        videoEl.currentTime = resume;
+        showToast('info', 'Resuming where you left off', '');
+      }
+    }, { once: true });
+  } else {
+    videoEl.addEventListener('loadedmetadata', () => {
+      const resume = {{ watch_progress }};
+      if (resume > 10 && resume < (videoEl.duration || VIDEO_DURATION) - 5) {
+        videoEl.currentTime = resume;
+        showToast('info', 'Resuming where you left off', '');
+      }
+    }, { once: true });
+  }
+  {% endif %}
+
+  function sendProgress(force) {
+    const cur = videoEl.currentTime;
+    const dur = videoEl.duration || VIDEO_DURATION;
+    if (!cur || !dur) return;
+    const completed = (cur / dur) >= 0.92;
+    fetch(`/api/videos/${VIDEO_ID}/progress/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ seconds: Math.floor(cur), completed }),
+    }).catch(() => {});
+  }
+
+  // Send heartbeat every 15 seconds while playing
+  videoEl.addEventListener('play', () => {
+    clearInterval(_progressTimer);
+    _progressTimer = setInterval(sendProgress, 15000);
+  });
+  videoEl.addEventListener('pause', () => {
+    clearInterval(_progressTimer);
+    sendProgress();
+  });
+  videoEl.addEventListener('ended', () => {
+    clearInterval(_progressTimer);
+    sendProgress(true);
+    // Show end screen
+    const overlay = document.getElementById('endScreenOverlay');
+    if (overlay) { overlay.style.display = 'flex'; }
+  });
+  window.addEventListener('beforeunload', () => { clearInterval(_progressTimer); sendProgress(); });
+  {% endif %}
+
+  // ── End Screen ───────────────────────────────────────────────────────────────
+  {% if end_screens and video.status == 'ready' %}
+  // Show end screen in last {{ end_screens.0.start_seconds_before_end }} seconds
+  const END_SCREEN_START = {{ video.duration|default:0 }} - {{ end_screens.0.start_seconds_before_end|default:20 }};
+  let _endScreenShown = false;
+  if (typeof videoEl !== 'undefined') {
+    videoEl.addEventListener('timeupdate', () => {
+      const overlay = document.getElementById('endScreenOverlay');
+      if (!overlay) return;
+      const t = videoEl.currentTime;
+      const dur = videoEl.duration || {{ video.duration|default:0 }};
+      if (!_endScreenShown && t >= END_SCREEN_START && dur > 0) {
+        overlay.style.display = 'flex';
+        _endScreenShown = true;
+      } else if (t < END_SCREEN_START) {
+        overlay.style.display = 'none';
+        _endScreenShown = false;
+      }
+    });
+  }
+  {% endif %}
+
+  // ── Like ─────────────────────────────────────────────────────────────────────
+  {% if request.user.is_authenticated %}
+  async function toggleLike() {
+    const res = await fetch('/api/videos/{{ video.id }}/like/', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const btn = document.getElementById('likeBtn');
+    const icon = btn.querySelector('svg');
+    document.getElementById('likesCount').textContent = data.likes;
+    if (data.liked) {
+      btn.className = 'btn btn-sm btn-danger';
+      icon.setAttribute('fill', 'currentColor');
+    } else {
+      btn.className = 'btn btn-sm btn-ghost';
+      icon.setAttribute('fill', 'none');
+    }
+  }
+  {% else %}
+  function toggleLike() {
+    showToast('info', 'Sign in to like', 'Create an account or sign in to like videos.');
+  }
+  {% endif %}
+
+  // ── Comment likes ────────────────────────────────────────────────────────────
+  async function likeComment(commentId, btn) {
+    const res = await fetch(`/api/comments/${commentId}/like/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const span = btn.querySelector('.comment-likes-count');
+      if (span) span.textContent = data.likes;
+      if (data.liked) {
+        btn.querySelector('svg').setAttribute('fill', 'var(--accent)');
+        btn.style.color = 'var(--accent)';
+      } else {
+        btn.querySelector('svg').setAttribute('fill', 'none');
+        btn.style.color = '';
+      }
+    }
+  }
+
+  // ── Pin comment ──────────────────────────────────────────────────────────────
+  async function pinComment(commentId, btn) {
+    const res = await fetch(`/api/comments/${commentId}/pin/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (res.ok) {
+      showToast('success', 'Pin updated — reload to see change');
+      setTimeout(() => location.reload(), 1000);
+    }
+  }
+
+  // ── Comment replies ──────────────────────────────────────────────────────────
+  function showReplyBox(commentId) {
+    const box = document.getElementById(`replyBox-${commentId}`);
+    if (box) {
+      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+      if (box.style.display === 'block') box.querySelector('textarea').focus();
+    }
+  }
+
+  async function postReply(parentId) {
+    const input = document.getElementById(`replyInput-${parentId}`);
+    const text = input?.value.trim();
+    if (!text) return;
+
+    const res = await fetch('/api/videos/{{ video.id }}/comments/', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ text, parent: parentId }),
+    });
+    if (!res.ok) { showToast('error', 'Failed to post reply'); return; }
+    const reply = await res.json();
+    input.value = '';
+    document.getElementById(`replyBox-${parentId}`).style.display = 'none';
+
+    // Add the reply to the DOM
+    const repliesDiv = document.getElementById(`replies-${parentId}`);
+    if (repliesDiv) {
+      repliesDiv.style.display = 'flex';
+      repliesDiv.style.flexDirection = 'column';
+      repliesDiv.style.gap = '12px';
+      repliesDiv.style.marginTop = '12px';
+      repliesDiv.style.paddingLeft = '14px';
+      repliesDiv.style.borderLeft = '2px solid var(--border)';
+      const username = '{{ request.user.username }}';
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;gap:8px;';
+      div.id = `comment-${reply.id}`;
+      div.innerHTML = `
+        <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${username.charAt(0).toUpperCase()}</div>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+            <span style="font-size:12px;font-weight:600;">${username}</span>
+            <span style="font-size:10px;color:var(--text-muted);">just now</span>
+          </div>
+          <div style="font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap;">${reply.text.replace(/</g,'&lt;')}</div>
+          <div style="display:flex;gap:8px;margin-top:6px;">
+            <button onclick="likeComment(${reply.id}, this)" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:11px;display:flex;align-items:center;gap:3px;padding:1px 0;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+              <span class="comment-likes-count">0</span>
+            </button>
+            <button onclick="deleteComment(${reply.id}, this)" style="margin-left:auto;background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:10px;padding:1px 4px;">Delete</button>
+          </div>
+        </div>`;
+      repliesDiv.appendChild(div);
+    }
+    showToast('success', 'Reply posted');
+  }
+
+  // ── Timestamp comment ────────────────────────────────────────────────────────
+  function seekToTimestamp(seconds) {
+    const vid = document.getElementById('videoEl');
+    if (vid) { vid.currentTime = seconds; vid.play().catch(() => {}); }
+  }
+
+  // ── Save / Bookmark ──────────────────────────────────────────────────────────
+  {% if request.user.is_authenticated %}
+  async function toggleSave() {
+    const res = await fetch('/api/videos/{{ video.id }}/save/', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const btn = document.getElementById('saveBtn');
+    const icon = document.getElementById('saveIcon');
+    const text = document.getElementById('saveBtnText');
+    if (data.saved) {
+      btn.className = 'btn btn-sm btn-success';
+      icon.setAttribute('fill', 'currentColor');
+      text.textContent = 'Saved';
+      showToast('success', 'Saved to bookmarks');
+    } else {
+      btn.className = 'btn btn-sm btn-ghost';
+      icon.setAttribute('fill', 'none');
+      text.textContent = 'Save';
+      showToast('info', 'Removed from bookmarks');
+    }
+  }
+
+  // ── Add to Playlist ──────────────────────────────────────────────────────────
+  function openPlaylistModal() {
+    document.getElementById('playlistModal').classList.add('open');
+  }
+  function closePlaylistModal() {
+    document.getElementById('playlistModal').classList.remove('open');
+  }
+
+  async function saveToPlaylists() {
+    const checkboxes = document.querySelectorAll('.pl-checkbox');
+    const VIDEO_UUID = '{{ video.id }}';
+    const promises = [];
+    checkboxes.forEach(cb => {
+      if (cb.checked) {
+        promises.push(fetch(`/api/playlists/${cb.dataset.plId}/videos/${VIDEO_UUID}/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'X-CSRFToken': getCsrfToken() },
+        }));
+      }
+    });
+    if (promises.length === 0) { closePlaylistModal(); return; }
+    await Promise.all(promises);
+    showToast('success', `Added to ${promises.length} playlist${promises.length > 1 ? 's' : ''}`);
+    closePlaylistModal();
+  }
+
+  async function createAndAdd() {
+    const title = document.getElementById('newPlTitle').value.trim();
+    if (!title) { showToast('error', 'Enter a playlist name'); return; }
+    const res = await fetch('/api/playlists/', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ title, is_public: false }),
+    });
+    if (!res.ok) { showToast('error', 'Failed to create playlist'); return; }
+    const pl = await res.json();
+    document.getElementById('newPlTitle').value = '';
+    // Add video to it immediately
+    await fetch(`/api/playlists/${pl.id}/videos/{{ video.id }}/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    showToast('success', `Created "${pl.title}" and added video`);
+    closePlaylistModal();
+  }
+  {% endif %}
+
+  // ── Chapters / Timestamp seek ─────────────────────────────────────────────────
+  function seekToChapter(timestamp) {
+    const vid = document.getElementById('videoEl');
+    if (vid) {
+      vid.currentTime = timestamp;
+      vid.play();
+    }
+  }
+
+  function getCsrfToken() {
+    const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+    return v ? v[2] : '';
+  }
+
+  // ── Post comment (updated with timestamp support) ─────────────────────────────
+  // (override the earlier postComment to send timestamp)
+  {% if request.user.is_authenticated %}
+  async function postComment() {
+    const input = document.getElementById('commentInput');
+    const text = input.value.trim();
+    if (!text) return;
+
+    let timestamp_seconds = null;
+    if (document.getElementById('commentTimestamp')?.checked) {
+      const vid = document.getElementById('videoEl');
+      if (vid) timestamp_seconds = Math.floor(vid.currentTime);
+    }
+
+    const body = { text };
+    if (timestamp_seconds !== null) body.timestamp_seconds = timestamp_seconds;
+
+    const res = await fetch('/api/videos/{{ video.id }}/comments/', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      showToast('error', 'Error', err.error || 'Could not post comment.');
+      return;
+    }
+    const comment = await res.json();
+    input.value = '';
+    if (document.getElementById('commentTimestamp')) document.getElementById('commentTimestamp').checked = false;
+
+    const noComments = document.getElementById('noComments');
+    if (noComments) noComments.remove();
+
+    const list = document.getElementById('commentsList');
+    const username = '{{ request.user.username }}';
+    const initial = username.charAt(0).toUpperCase();
+    const div = document.createElement('div');
+    div.className = 'comment-item';
+    div.id = `comment-${comment.id}`;
+    let tsBtn = '';
+    if (comment.timestamp_seconds !== null && comment.timestamp_seconds !== undefined) {
+      const m = Math.floor(comment.timestamp_seconds / 60);
+      const s = String(Math.floor(comment.timestamp_seconds % 60)).padStart(2,'0');
+      tsBtn = `<button onclick="seekToTimestamp(${comment.timestamp_seconds})" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:none;border-radius:4px;padding:1px 8px;cursor:pointer;">${m}:${s}</button>`;
+    }
+    div.innerHTML = `
+      <div style="display:flex;gap:10px;">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initial}</div>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+            <span style="font-size:13px;font-weight:600;">${username}</span>
+            <span style="font-size:11px;color:var(--text-muted);">just now</span>
+            ${tsBtn}
+          </div>
+          <div style="font-size:14px;color:var(--text);line-height:1.6;white-space:pre-wrap;">${comment.text.replace(/</g,'&lt;')}</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+            <button onclick="likeComment(${comment.id}, this)" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;padding:2px 0;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+              <span class="comment-likes-count">0</span>
+            </button>
+            <button onclick="showReplyBox(${comment.id})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:12px;font-weight:600;padding:2px 0;">Reply</button>
+            <button onclick="deleteComment(${comment.id}, this)" style="margin-left:auto;background:none;border:none;color:var(--text-subtle);cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px;">Delete</button>
+          </div>
+          <div id="replyBox-${comment.id}" style="display:none;margin-top:10px;">
+            <textarea id="replyInput-${comment.id}" placeholder="Write a reply…" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);border-radius:6px;padding:8px 10px;font-size:13px;color:var(--text);outline:none;font-family:inherit;resize:vertical;min-height:60px;"></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('replyBox-${comment.id}').style.display='none'">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="postReply(${comment.id})">Reply</button>
+            </div>
+          </div>
+          <div id="replies-${comment.id}" style="display:none;margin-top:0;padding-left:14px;border-left:2px solid var(--border);flex-direction:column;gap:12px;"></div>
+        </div>
+      </div>`;
+    list.insertBefore(div, list.firstChild);
+
+    const badge = document.getElementById('commentsCountBadge');
+    if (badge) {
+      const current = parseInt(badge.textContent.replace(/\D/g, '')) || 0;
+      badge.textContent = `(${current + 1})`;
+    }
+    showToast('success', 'Comment posted');
+  }
+  {% endif %}
+
+  // ── Embed Wizard ─────────────────────────────────────────────────────────────
+  const EMBED_BASE = '{{ request.scheme }}://{{ request.get_host }}{% url "embed" video.id %}';
+
+  function openWizard() {
+    document.getElementById('embedWizard').classList.add('open');
+    updateWizard();
+  }
+
+  function closeWizard() {
+    document.getElementById('embedWizard').classList.remove('open');
+    // Pause the preview iframe to stop audio
+    const iframe = document.getElementById('wizardIframe');
+    if (iframe) iframe.src = iframe.src;
+  }
+
+  function closeWizardBackdrop(e) {
+    if (e.target === document.getElementById('embedWizard')) closeWizard();
+  }
+
+  function setTheme(t) {
+    document.getElementById('wThemeDark').classList.toggle('active', t === 'dark');
+    document.getElementById('wThemeLight').classList.toggle('active', t === 'light');
+    updateWizard();
+  }
+
+  function setWizSpeed(btn) {
+    document.querySelectorAll('#wSpeedSeg .w-seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    updateWizard();
+  }
+
+  function updateWizard() {
+    const params = new URLSearchParams();
+
+    // Theme
+    const isDark = document.getElementById('wThemeDark').classList.contains('active');
+    params.set('theme', isDark ? 'dark' : 'light');
+
+    // Autoplay (default=on — only add param when OFF)
+    if (!document.getElementById('wAutoplay').checked) params.set('autoplay', '0');
+
+    // Logo / watermark (default=on — only add param when OFF)
+    if (!document.getElementById('wLogo').checked) params.set('logo', '0');
+
+    // Watch on ClipLens link (default=on — only add param when OFF)
+    if (!document.getElementById('wWatchLink').checked) params.set('watch_link', '0');
+
+    // Loop (default=off)
+    if (document.getElementById('wLoop').checked) params.set('loop', '1');
+
+    // Start time
+    const start = parseInt(document.getElementById('wStart').value || '0', 10);
+    if (start > 0) params.set('start', start);
+
+    // Completion threshold (default=90)
+    const pct = parseInt(document.getElementById('wThreshold').value || '90', 10);
+    if (pct !== 90) params.set('threshold', (pct / 100).toFixed(2));
+
+    // Accent colour (default #6366f1)
+    const rawColor = document.getElementById('wColor').value.replace('#', '');
+    document.getElementById('wColorHex').textContent = '#' + rawColor;
+    if (rawColor.toLowerCase() !== '6366f1') params.set('color', rawColor);
+
+    // Default playback speed (default=1)
+    const activeSpeedBtn = document.querySelector('#wSpeedSeg .w-seg-btn.active');
+    const wizSpeed = activeSpeedBtn ? parseFloat(activeSpeedBtn.dataset.speed) : 1;
+    if (wizSpeed !== 1) params.set('speed', wizSpeed);
+
+    // Seek lock (default=off)
+    if (document.getElementById('wSeekLock').checked) params.set('seek_lock', '1');
+
+    // Title override (default=blank → uses video title)
+    const titleOverride = document.getElementById('wTitleOverride').value.trim();
+    if (titleOverride) params.set('title', titleOverride);
+
+    // Picture in Picture (default=on — only add param when OFF)
+    if (!document.getElementById('wPip').checked) params.set('pip', '0');
+
+    // Pause on tab switch (default=off)
+    if (document.getElementById('wPauseOnBlur').checked) params.set('pause_on_blur', '1');
+
+    // LMS origin
+    const lmsOrigin = document.getElementById('wLmsOrigin').value.trim();
+    if (lmsOrigin) params.set('lms_origin', lmsOrigin);
+
+    const url  = EMBED_BASE + '?' + params.toString();
+    const code = `<iframe src="${url}" width="100%" style="aspect-ratio:16/9;border:none;" allowfullscreen></iframe>`;
+
+    document.getElementById('wizardUrl').textContent  = url;
+    document.getElementById('wizardCode').textContent = code;
+
+    // Update live preview (debounced so we don't reload on every keystroke)
+    clearTimeout(updateWizard._timer);
+    updateWizard._timer = setTimeout(() => {
+      document.getElementById('wizardIframe').src = url;
+    }, 600);
+  }
+
+  // Close wizard on Escape key
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeWizard();
+  });
+
+  // ── Shared constants (available to all users) ────────────────────────────────
+  const VIDEO_ID_FOR_SUBS = '{{ video.id }}';
+  const IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+  const FRAME_INTERVAL = {{ frame_interval }};
+
+  // ── Subtitle management (Edit modal) ─────────────────────────────────────────
+  {% if is_owner %}
+
+  async function uploadSubtitle() {
+    const lang      = document.getElementById('subLang').value.trim() || 'en';
+    const label     = document.getElementById('subLabel').value.trim() || lang;
+    const fileInput = document.getElementById('subFile');
+    const statusEl  = document.getElementById('subUploadStatus');
+    if (!fileInput.files.length) { statusEl.style.color='var(--red)'; statusEl.textContent='Select a file.'; return; }
+
+    statusEl.style.color = 'var(--text-muted)'; statusEl.textContent = 'Uploading…';
+    const fd = new FormData();
+    fd.append('language', lang);
+    fd.append('language_label', label);
+    fd.append('file', fileInput.files[0]);
+
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/subtitles/upload/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      body: fd,
+    });
+    if (!res.ok) { statusEl.style.color='var(--red)'; statusEl.textContent='Upload failed.'; return; }
+    const sub = await res.json();
+    statusEl.style.color = 'var(--green,#22c55e)'; statusEl.textContent = 'Uploaded! Reload to activate in player.';
+
+    const list = document.getElementById('subtitlesList');
+    const empty= document.getElementById('subEmptyMsg');
+    if (empty) empty.remove();
+    const row = document.createElement('div');
+    row.id = `sub-row-${sub.id}`;
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;';
+    row.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="flex-shrink:0;color:var(--accent);"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="10" x2="10" y2="10"/><line x1="12" y1="10" x2="18" y2="10"/><line x1="6" y1="14" x2="12" y2="14"/><line x1="14" y1="14" x2="18" y2="14"/></svg>
+      <div style="flex:1;"><div style="font-size:13px;font-weight:600;">${sub.language_label}</div><div style="font-size:11px;color:var(--text-muted);">${sub.language} · ${sub.format.toUpperCase()}</div></div>
+      <a href="${sub.url}" target="_blank" style="font-size:11px;color:var(--accent);">Download</a>
+      <button onclick="deleteSubtitle(${sub.id})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;padding:4px;" title="Remove">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+      </button>`;
+    list.appendChild(row);
+    showToast('success', 'Subtitle uploaded');
+  }
+
+  async function deleteSubtitle(subId) {
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/subtitles/${subId}/`, {
+      method: 'DELETE', credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (res.ok || res.status === 204) {
+      const row = document.getElementById(`sub-row-${subId}`);
+      if (row) row.remove();
+      const list = document.getElementById('subtitlesList');
+      if (list && list.children.length === 0) {
+        list.innerHTML = '<div id="subEmptyMsg" style="font-size:12px;color:var(--text-subtle);padding:4px 0;">No subtitles yet.</div>';
+      }
+      showToast('info', 'Subtitle removed');
+    } else { showToast('error', 'Failed to remove subtitle'); }
+  }
+
+  // ── Face Recognition (public — available to all users) ──────────────────────
+
+  async function toggleFaces() {
+    const panel = document.getElementById('faceIdentitiesPanel');
+    const btn   = document.getElementById('facesToggleBtn');
+    if (panel.style.display !== 'none') {
+      panel.style.display = 'none';
+      btn.textContent = 'Show';
+    } else {
+      panel.style.display = '';
+      btn.textContent = 'Hide';
+      if (!panel._loaded) await loadFaces();
+    }
+  }
+
+  async function loadFaces() {
+    const panel = document.getElementById('faceIdentitiesPanel');
+    panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0;">Loading…</div>';
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/faces/`, { credentials: 'include' });
+    if (!res.ok) { panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load faces.</div>'; return; }
+    const faces = await res.json();
+    if (!faces.length) {
+      panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No faces detected yet.</div>';
+      return;
+    }
+    panel.innerHTML = '';
+    faces.forEach(identity => {
+      const card = document.createElement('div');
+      card.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);';
+      const thumb = identity.thumbnail_url
+        ? `<img src="${identity.thumbnail_url}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">`
+        : `<div style="width:44px;height:44px;border-radius:50%;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;">👤</div>`;
+      const appearances = identity.appearances.slice(0, 5).map(t => {
+        const m = Math.floor(t/60), s = Math.floor(t%60);
+        return `<span onclick="seekTo(${t})" style="cursor:pointer;font-size:10px;background:var(--bg-elevated);border-radius:4px;padding:2px 5px;">${m}:${String(s).padStart(2,'0')}</span>`;
+      }).join(' ');
+      // Count distinct appearance segments: a new segment starts when gap > 1.5× interval
+      const allTs = identity.appearances;
+      let appearanceCount = allTs.length > 0 ? 1 : 0;
+      for (let i = 1; i < allTs.length; i++) {
+        if (allTs[i] - allTs[i-1] > FRAME_INTERVAL * 1.5) appearanceCount++;
+      }
+      const ownerControls = IS_OWNER ? `
+        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
+          <button class="btn btn-ghost btn-sm" onclick="tagFace(${identity.id})" style="font-size:11px;padding:3px 8px;">Tag</button>
+          <button class="btn btn-ghost btn-sm" onclick="mergeFace(${identity.id})" style="font-size:11px;padding:3px 8px;">Merge</button>
+          <button class="btn btn-ghost btn-sm" onclick="removeFace(${identity.id}, this)" style="font-size:11px;padding:3px 8px;color:var(--danger,#ef4444);">Remove</button>
+        </div>` : '';
+      card.innerHTML = `
+        ${thumb}
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <span id="fname-${identity.id}" style="font-size:13px;font-weight:500;">${identity.name}</span>
+            ${identity.is_auto_named ? '<span style="font-size:10px;color:var(--text-muted);background:var(--bg-elevated);border-radius:3px;padding:1px 5px;">untagged</span>' : ''}
+          </div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">${appearances}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${appearanceCount} appearance${appearanceCount !== 1 ? 's' : ''} · ~${identity.face_count * FRAME_INTERVAL}s on screen</div>
+        </div>
+        ${ownerControls}`;
+      panel.appendChild(card);
+    });
+    panel._faces = faces;
+    panel._loaded = true;
+  }
+
+  async function seekTo(t) {
+    const video = document.getElementById('videoEl');
+    if (video) { video.currentTime = t; video.play(); }
+  }
+
+  async function tagFace(identityId) {
+    const name = prompt('Enter name for this person:');
+    if (!name || !name.trim()) return;
+    const res = await fetch(`/api/faces/${identityId}/tag/`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      const el = document.getElementById(`fname-${identityId}`);
+      if (el) el.textContent = updated.name;
+      showToast('success', 'Face tagged', `Now labelled "${updated.name}"`);
+    } else {
+      showToast('error', 'Failed to tag face');
+    }
+  }
+
+  async function removeFace(identityId, btn) {
+    if (!confirm('Remove this person from the video? This only affects this video.')) return;
+    btn.disabled = true;
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/faces/${identityId}/remove/`, {
+      method: 'DELETE', credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (res.ok) {
+      btn.closest('div[style*="border-bottom"]').remove();
+      showToast('info', 'Person removed from this video');
+    } else {
+      btn.disabled = false;
+      showToast('error', 'Failed to remove');
+    }
+  }
+
+  async function mergeFace(sourceId) {
+    const panel = document.getElementById('faceIdentitiesPanel');
+    const faces = panel._faces || [];
+    const others = faces.filter(f => f.id !== sourceId);
+    if (!others.length) { showToast('info', 'No other identities to merge into'); return; }
+    const opts = others.map(f => `${f.id}: ${f.name}`).join('\n');
+    const choice = prompt(`Enter the ID of the identity to merge INTO:\n\n${opts}`);
+    const targetId = parseInt(choice, 10);
+    if (!targetId || isNaN(targetId)) return;
+    const res = await fetch(`/api/faces/${sourceId}/merge/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ into: targetId }),
+    });
+    if (res.ok) {
+      showToast('success', 'Identities merged');
+      panel._loaded = false;
+      loadFaces();
+    } else {
+      showToast('error', 'Merge failed');
+    }
+  }
+
+  async function createCategory() {
+    const input = document.getElementById('newCatName');
+    const name  = input.value.trim();
+    if (!name) return;
+    const res = await fetch('/api/categories/', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) { showToast('error', 'Could not create category'); return; }
+    const cat = await res.json();
+    const sel = document.getElementById('editCategory');
+    const opt = document.createElement('option');
+    opt.value = cat.id; opt.textContent = cat.name; opt.selected = true;
+    sel.appendChild(opt);
+    input.value = '';
+    showToast('success', `Category "${cat.name}" created`);
+  }
+
+  async function triggerVisualAnalysis() {
+    const btn = document.getElementById('reanalysisBtn');
+    btn.disabled = true; btn.textContent = 'Queuing…';
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/frames/analyze/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    });
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Re-analyse`;
+    if (res.ok) {
+      showToast('success', 'Visual analysis queued', 'Object labels will be ready in a few minutes.');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('error', 'Could not queue analysis', err.error || '');
+    }
+  }
+
+  async function triggerCaptionRegen() {
+    const btn = document.getElementById('regenCcBtn');
+    btn.disabled = true; btn.textContent = 'Queuing…';
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/subtitles/regenerate/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ language: 'en' }),
+    });
+    btn.disabled = false; btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Auto-generate`;
+    if (res.ok) {
+      showToast('success', 'Caption generation queued', 'Captions will appear in a few minutes.');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('error', 'Could not queue captions', err.error || '');
+    }
+  }
+  {% endif %}
+
+  // ── Subtitle (CC) picker ──────────────────────────────────────────────────────
+  function toggleCcMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('ccMenu');
+    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  }
+  function selectCc(trackIndex) {
+    const vid = document.getElementById('videoEl');
+    if (!vid) return;
+    for (let i = 0; i < vid.textTracks.length; i++) {
+      vid.textTracks[i].mode = (i === trackIndex) ? 'showing' : 'hidden';
+    }
+    document.getElementById('ccMenu').style.display = 'none';
+    // Update active state in menu
+    document.querySelectorAll('#ccMenu .quality-option').forEach((btn, i) => {
+      // i=0 is "Off" (trackIndex -1), i=1+ are tracks 0,1,2...
+      btn.classList.toggle('active', i - 1 === trackIndex);
+    });
+  }
+  document.addEventListener('click', () => {
+    const m = document.getElementById('ccMenu');
+    if (m) m.style.display = 'none';
+  });
+
+  // ── Subtitle style panel ──────────────────────────────────────────────────────
+  (function initSubStyle() {
+    const saved = JSON.parse(localStorage.getItem('fs-sub-style') || '{}');
+    if (saved.fontSize)  { const el = document.getElementById('subFontSize');  if (el) { el.value = saved.fontSize;  document.getElementById('subFontSizeVal').textContent = saved.fontSize + '%'; } }
+    if (saved.color)     { const el = document.getElementById('subColor');     if (el) el.value = saved.color; }
+    if (saved.bg)        { const el = document.getElementById('subBg');        if (el) el.value = saved.bg; }
+    if (saved.font)      { const el = document.getElementById('subFont');      if (el) el.value = saved.font; }
+    if (saved.position)  { const el = document.getElementById('subPosition');  if (el) el.value = saved.position; }
+    if (Object.keys(saved).length) applySubStyle();
+  })();
+
+  function toggleSubStylePanel(e) {
+    e.stopPropagation();
+    document.getElementById('subStylePanel').classList.toggle('open');
+  }
+  document.addEventListener('click', e => {
+    const wrap = document.getElementById('subStyleWrap');
+    if (wrap && !wrap.contains(e.target)) {
+      const panel = document.getElementById('subStylePanel');
+      if (panel) panel.classList.remove('open');
+    }
+  });
+
+  function applySubStyle() {
+    const fontSize = document.getElementById('subFontSize')?.value || '100';
+    const color    = document.getElementById('subColor')?.value    || '#ffffff';
+    const bg       = document.getElementById('subBg')?.value       || 'rgba(0,0,0,0.75)';
+    const font     = document.getElementById('subFont')?.value     || 'inherit';
+    const position = document.getElementById('subPosition')?.value || 'bottom';
+
+    // Apply via dynamic <style> tag using ::cue
+    let styleEl = document.getElementById('subCueStyle');
+    if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = 'subCueStyle'; document.head.appendChild(styleEl); }
+    styleEl.textContent = `::cue { font-size: ${fontSize}%; color: ${color}; background: ${bg}; font-family: ${font}; }`;
+
+    // Position via track line property
+    const vid = document.getElementById('videoEl');
+    if (vid) {
+      const lineVal = position === 'top' ? 5 : position === 'middle' ? 50 : 90;
+      for (let i = 0; i < vid.textTracks.length; i++) {
+        const track = vid.textTracks[i];
+        if (track.mode === 'showing' && track.cues) {
+          for (let j = 0; j < track.cues.length; j++) {
+            try { track.cues[j].line = lineVal; track.cues[j].snapToLines = true; } catch(e) {}
+          }
+        }
+      }
+    }
+
+    localStorage.setItem('fs-sub-style', JSON.stringify({ fontSize, color, bg, font, position }));
+  }
+
+  function resetSubStyle() {
+    const el = (id, val) => { const e = document.getElementById(id); if (e) e.value = val; };
+    el('subFontSize', '100'); el('subColor', '#ffffff'); el('subBg', 'rgba(0,0,0,0.75)');
+    el('subFont', 'inherit'); el('subPosition', 'bottom');
+    document.getElementById('subFontSizeVal').textContent = '100%';
+    localStorage.removeItem('fs-sub-style');
+    const styleEl = document.getElementById('subCueStyle');
+    if (styleEl) styleEl.textContent = '';
+  }
+
+  // ── Audio track switcher ──────────────────────────────────────────────────────
+  function toggleAudioMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('audioMenu');
+    if (menu) menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  }
+  function selectAudioTrack(hlsPath, btn) {
+    // Audio track switching via HLS.js — load the audio-only playlist
+    // and switch the audio. This uses the hls instance exposed globally.
+    if (typeof hls !== 'undefined' && hls) {
+      const mediaUrl = '/media/' + hlsPath;
+      // Find matching audio track in hls.audioTracks
+      const tracks = hls.audioTracks || [];
+      const idx = tracks.findIndex(t => t.url && t.url.includes(hlsPath.split('/').pop()));
+      if (idx >= 0) {
+        hls.audioTrack = idx;
+      }
+    }
+    document.querySelectorAll('#audioMenu .quality-option').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('audioMenu').style.display = 'none';
+    showToast('info', 'Switched audio track');
+  }
+  document.addEventListener('click', () => {
+    const m = document.getElementById('audioMenu');
+    if (m) m.style.display = 'none';
+  });
+
+  // Description expand
+  function expandDesc() {
+    document.getElementById('descBox').classList.add('expanded');
+    document.getElementById('descFade').classList.add('hidden');
+  }
+
+  // ── End Screens management ────────────────────────────────────────────────────
+  {% if is_owner %}
+  const VIDEO_ID_FOR_ES = '{{ video.id }}';
+
+  async function addEndScreen() {
+    const label       = document.getElementById('esLabel').value.trim();
+    const targetVideo = document.getElementById('esTargetVideo').value.trim();
+    const targetUrl   = document.getElementById('esTargetUrl').value.trim();
+    const seconds     = parseFloat(document.getElementById('esSeconds').value) || 20;
+    const statusEl    = document.getElementById('esStatus');
+
+    if (!label) { statusEl.style.color='var(--red)'; statusEl.textContent='Label is required.'; return; }
+    if (!targetVideo && !targetUrl) { statusEl.style.color='var(--red)'; statusEl.textContent='Provide a target video ID or URL.'; return; }
+
+    const body = { label, start_seconds_before_end: seconds };
+    if (targetVideo) body.target_video = targetVideo;
+    if (targetUrl)   body.target_url   = targetUrl;
+
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = 'Saving…';
+
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_ES}/end-screens/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = err.error || JSON.stringify(err) || 'Failed to add end screen.';
+      return;
+    }
+
+    const es = await res.json();
+    statusEl.style.color = 'var(--green, #22c55e)';
+    statusEl.textContent = 'End screen added! Reload to see it on the player.';
+
+    // Reset form
+    document.getElementById('esLabel').value = '';
+    document.getElementById('esTargetVideo').value = '';
+    document.getElementById('esTargetUrl').value = '';
+    document.getElementById('esSeconds').value = '20';
+
+    // Add row to list
+    const list = document.getElementById('endScreensList');
+    const emptyMsg = document.getElementById('esEmptyMsg');
+    if (emptyMsg) emptyMsg.remove();
+
+    const row = document.createElement('div');
+    row.id = `es-row-${es.id}`;
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;';
+    row.innerHTML = `
+      <div style="width:48px;aspect-ratio:16/9;background:var(--surface-3);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">▶</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;">${es.label}</div>
+        <div style="font-size:11px;color:var(--text-muted);">${es.target_url || 'Video: ' + (es.target_video || '')} · shown ${es.start_seconds_before_end}s before end</div>
+      </div>
+      <button onclick="deleteEndScreen(${es.id})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;padding:4px;border-radius:4px;" title="Remove">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+      </button>`;
+    list.appendChild(row);
+    showToast('success', 'End screen added');
+  }
+
+  async function deleteEndScreen(esId) {
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_ES}/end-screens/${esId}/`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (res.ok || res.status === 204) {
+      const row = document.getElementById(`es-row-${esId}`);
+      if (row) row.remove();
+      const list = document.getElementById('endScreensList');
+      if (list && list.children.length === 0) {
+        list.innerHTML = '<div id="esEmptyMsg" style="font-size:12px;color:var(--text-subtle);padding:4px 0;">No end screens yet.</div>';
+      }
+      showToast('info', 'End screen removed');
+    } else {
+      showToast('error', 'Failed to remove end screen');
+    }
+  }
+
+  // ── Chapters (edit modal) ─────────────────────────────────────────────────
+  function _chTsToSeconds(ts) {
+    const parts = ts.trim().split(':').map(Number);
+    if (parts.some(isNaN)) return null;
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return null;
+  }
+
+  function _chSecondsToLabel(s) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  }
+
+  async function addChapterEdit() {
+    const tsRaw  = document.getElementById('echTs').value.trim();
+    const title  = document.getElementById('echTitle').value.trim();
+    const status = document.getElementById('echStatus');
+    if (!tsRaw || !title) { status.style.color = 'var(--red)'; status.textContent = 'Enter both a timestamp and a title.'; return; }
+    const seconds = _chTsToSeconds(tsRaw);
+    if (seconds === null || seconds < 0) { status.style.color = 'var(--red)'; status.textContent = 'Invalid timestamp — use m:ss or h:mm:ss.'; return; }
+
+    const res = await fetch(`/api/videos/${VIDEO_ID}/chapters/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ title, timestamp: seconds }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      status.style.color = 'var(--red)';
+      status.textContent = err.timestamp?.[0] || err.title?.[0] || 'Failed to add chapter.';
+      return;
+    }
+    const ch = await res.json();
+
+    // Remove empty-state message if present
+    const emptyMsg = document.getElementById('echEmptyMsg');
+    if (emptyMsg) emptyMsg.remove();
+
+    // Append new row to list, sorted by inserting in timestamp order
+    const list = document.getElementById('editChaptersList');
+    const newRow = document.createElement('div');
+    newRow.id = `ech-row-${ch.id}`;
+    newRow.dataset.ts = ch.timestamp;
+    newRow.style.cssText = 'display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;';
+    newRow.innerHTML = `
+      <span style="font-family:monospace;font-size:12px;color:var(--accent);flex-shrink:0;min-width:44px;">${_chSecondsToLabel(ch.timestamp)}</span>
+      <span style="flex:1;font-size:13px;font-weight:500;">${ch.title}</span>
+      <button onclick="deleteChapterEdit(${ch.id})" style="background:none;border:none;color:var(--text-subtle);cursor:pointer;padding:4px;border-radius:4px;flex-shrink:0;" title="Remove">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+      </button>`;
+
+    // Insert in timestamp order
+    const existing = [...list.querySelectorAll('[data-ts]')];
+    const after = existing.find(r => parseFloat(r.dataset.ts) > ch.timestamp);
+    if (after) list.insertBefore(newRow, after);
+    else list.appendChild(newRow);
+
+    // Clear inputs
+    document.getElementById('echTs').value = '';
+    document.getElementById('echTitle').value = '';
+    status.textContent = '';
+    showToast('success', 'Chapter added');
+  }
+
+  async function deleteChapterEdit(chapterId) {
+    const res = await fetch(`/api/chapters/${chapterId}/`, {
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    if (res.ok || res.status === 204) {
+      const row = document.getElementById(`ech-row-${chapterId}`);
+      if (row) row.remove();
+      const list = document.getElementById('editChaptersList');
+      if (list && !list.querySelector('[data-ts]')) {
+        list.innerHTML = '<div id="echEmptyMsg" style="font-size:12px;color:var(--text-subtle);padding:4px 0;">No chapters yet.</div>';
+      }
+      showToast('info', 'Chapter removed');
+    } else {
+      showToast('error', 'Failed to remove chapter');
+    }
+  }
+  {% endif %}
+</script>
+{% endblock %}

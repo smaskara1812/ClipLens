@@ -1,0 +1,59 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Set Up Your Channel — ClipStream{% endblock %}
+
+{% block content %}
+<div style="max-width:480px;margin:60px auto;padding:0 24px;">
+  <div class="card">
+
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" width="28" height="28">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+        </svg>
+      </div>
+      <h1 style="font-size:22px;font-weight:800;letter-spacing:-.3px;">Set up your channel</h1>
+      <p style="color:var(--text-muted);font-size:14px;margin-top:6px;">Choose a name for your channel to start uploading.</p>
+    </div>
+
+    {% if errors %}
+    <div style="background:var(--red-bg);border:1px solid var(--red);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:20px;line-height:1.8;">
+      {% for error in errors %}{{ error }}<br/>{% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:20px;">
+        <label class="form-label">Channel Name <span style="color:var(--red);">*</span></label>
+        <input type="text" name="channel_name" class="form-input"
+               placeholder="e.g. My Tutorials"
+               value="{{ request.POST.channel_name|default:'' }}"
+               autofocus required />
+        <span class="form-hint" style="margin-top:5px;display:block;">This will be your public channel name. You can change it later.</span>
+      </div>
+
+      {% if suggestions %}
+      <div style="margin-bottom:20px;">
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Suggestions:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          {% for s in suggestions %}
+          <button type="button" onclick="document.querySelector('[name=channel_name]').value='{{ s }}'"
+            style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:5px 14px;font-size:13px;color:var(--accent);font-weight:600;cursor:pointer;transition:all .15s;"
+            onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border-2)'">
+            {{ s }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <button type="submit" class="btn btn-primary btn-full" style="margin-top:4px;">
+        Create Channel →
+      </button>
+    </form>
+
+  </div>
+</div>
+{% endblock %}

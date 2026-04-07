@@ -1,0 +1,311 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Duplicate Photos — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .dup-wrap { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+
+  /* Page header */
+  .dup-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; flex-wrap: wrap; gap: 12px;
+  }
+  .dup-header h1 { font-size: 22px; font-weight: 800; }
+  .dup-tabs {
+    display: flex; gap: 4px;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: 999px; padding: 3px;
+  }
+  .dup-tab {
+    padding: 5px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    text-decoration: none; color: var(--text-muted);
+    transition: all var(--transition);
+  }
+  .dup-tab:hover { color: var(--text); }
+  .dup-tab.active { background: var(--accent); color: #fff; }
+
+  .dup-summary {
+    font-size: 13px; color: var(--text-muted); margin-bottom: 24px;
+  }
+
+  /* Each duplicate group */
+  .dup-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 20px; overflow: hidden;
+  }
+  .dup-group-head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px; background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    font-size: 13px; font-weight: 600;
+  }
+  .dup-group-head .badge {
+    background: rgba(239,68,68,.12); color: var(--red);
+    padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  }
+  .dup-group-head .muted { color: var(--text-muted); font-weight: 400; margin-left: auto; font-size: 12px; }
+
+  /* Row of photos in a group */
+  .dup-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    padding: 14px;
+  }
+
+  /* Individual photo card */
+  .dup-card {
+    border: 2px solid var(--border);
+    border-radius: var(--radius-sm); overflow: hidden;
+    position: relative; cursor: pointer;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .dup-card.original { border-color: var(--green, #22c55e); }
+  .dup-card.selected-keep { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .dup-card-thumb {
+    width: 100%; aspect-ratio: 4/3; background: var(--surface-3); overflow: hidden;
+  }
+  .dup-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dup-card-body { padding: 8px 10px; }
+  .dup-card-title { font-size: 12px; font-weight: 600; line-height: 1.3; margin-bottom: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dup-card-meta { font-size: 11px; color: var(--text-muted); }
+
+  /* Labels */
+  .dup-label {
+    position: absolute; top: 6px; left: 6px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 999px; letter-spacing: .5px;
+  }
+  .dup-label.original { background: rgba(34,197,94,.85); color: #fff; }
+  .dup-label.duplicate { background: rgba(239,68,68,.85); color: #fff; }
+
+  /* Action bar per group */
+  .dup-actions {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-top: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .dup-actions .hint { font-size: 12px; color: var(--text-muted); flex: 1; }
+
+  /* Orphaned section */
+  .orphan-section { margin-top: 32px; }
+  .orphan-section h2 { font-size: 15px; font-weight: 700; margin-bottom: 12px; color: var(--text-muted); }
+  .orphan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .orphan-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .orphan-card-thumb { aspect-ratio: 4/3; background: var(--surface-3); overflow: hidden; }
+  .orphan-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .orphan-card-body { padding: 8px; flex: 1; }
+  .orphan-card-title { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .orphan-card-actions { padding: 6px 8px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
+
+  /* Empty state */
+  .dup-empty {
+    text-align: center; padding: 80px 24px; color: var(--text-muted);
+  }
+  .dup-empty svg { width: 56px; height: 56px; opacity: .3; margin-bottom: 16px; }
+  .dup-empty h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+  .dup-empty p { font-size: 14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dup-wrap">
+
+  <div class="dup-header">
+    <h1>Photo Duplicates</h1>
+    <div class="dup-tabs">
+      <a href="{% url 'photo_library' %}" class="dup-tab">Library</a>
+      <a href="{% url 'photo_duplicates' %}" class="dup-tab active">Duplicates <span style="background:rgba(239,68,68,.2);color:var(--red);border-radius:999px;padding:0 6px;font-size:10px;margin-left:3px;">{{ total_dupes }}</span></a>
+      <a href="{% url 'albums' %}" class="dup-tab">Albums</a>
+    </div>
+  </div>
+
+  {% if total_groups %}
+  <p class="dup-summary">
+    {{ total_groups }} duplicate group{{ total_groups|pluralize }} · {{ total_dupes }} photo{{ total_dupes|pluralize }} flagged.
+    Click a photo to mark it as the one to <strong>keep</strong>, then delete the rest.
+  </p>
+
+  {% for group in groups %}
+  {% with orig=group.original dupes=group.duplicates %}
+  <div class="dup-group" id="grp-{{ orig.id }}">
+    <div class="dup-group-head">
+      <span>Group</span>
+      <span class="badge">{{ dupes|length }} duplicate{{ dupes|length|pluralize }}</span>
+      {% if orig.channel %}<span style="color:var(--text-muted);font-size:12px;">{{ orig.channel.name }}</span>{% endif %}
+      <span class="muted">Original: <a href="{% url 'photo_detail' orig.id %}" style="color:var(--accent);">{{ orig.title|truncatechars:40 }}</a></span>
+    </div>
+
+    <div class="dup-row" id="row-{{ orig.id }}">
+
+      <!-- Original card -->
+      <div class="dup-card original" id="card-{{ orig.id }}" onclick="toggleKeep('{{ orig.id }}', '{{ orig.id }}')">
+        <div class="dup-card-thumb">
+          {% if orig.thumbnail_url %}
+            <img src="{{ orig.thumbnail_url }}" alt="{{ orig.title }}" loading="lazy" />
+          {% endif %}
+        </div>
+        <span class="dup-label original">Original</span>
+        <div class="dup-card-body">
+          <div class="dup-card-title" title="{{ orig.title }}">{{ orig.title }}</div>
+          <div class="dup-card-meta">{{ orig.created_at|date:"M j, Y" }}{% if orig.width and orig.height %} · {{ orig.width }}×{{ orig.height }}{% endif %}</div>
+        </div>
+      </div>
+
+      <!-- Duplicate cards -->
+      {% for dup in dupes %}
+      <div class="dup-card" id="card-{{ dup.id }}" onclick="toggleKeep('{{ orig.id }}', '{{ dup.id }}')">
+        <div class="dup-card-thumb">
+          {% if dup.thumbnail_url %}
+            <img src="{{ dup.thumbnail_url }}" alt="{{ dup.title }}" loading="lazy" />
+          {% endif %}
+        </div>
+        <span class="dup-label duplicate">Duplicate</span>
+        <div class="dup-card-body">
+          <div class="dup-card-title" title="{{ dup.title }}">{{ dup.title }}</div>
+          <div class="dup-card-meta">{{ dup.created_at|date:"M j, Y" }}{% if dup.width and dup.height %} · {{ dup.width }}×{{ dup.height }}{% endif %}</div>
+        </div>
+      </div>
+      {% endfor %}
+
+    </div>
+
+    <div class="dup-actions">
+      <span class="hint" id="hint-{{ orig.id }}">Click a photo above to mark the one you want to <strong>keep</strong>.</span>
+      <button class="btn btn-ghost btn-sm" onclick="viewGroup('{{ orig.id }}')">View all</button>
+      <button class="btn btn-danger btn-sm" id="del-btn-{{ orig.id }}" style="display:none"
+              onclick="deleteGroup('{{ orig.id }}', [{% for d in dupes %}'{{ d.id }}'{% if not forloop.last %},{% endif %}{% endfor %}, '{{ orig.id }}'])">
+        Delete others &amp; keep selected
+      </button>
+    </div>
+  </div>
+  {% endwith %}
+  {% endfor %}
+
+  {% else %}
+
+  <div class="dup-empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/>
+    </svg>
+    <h2>No duplicates found</h2>
+    <p>All photos look unique. Duplicates are detected automatically when photos are uploaded and analysed.</p>
+    <a href="{% url 'photo_library' %}" class="btn" style="margin-top:16px;display:inline-block;">Back to Library</a>
+  </div>
+
+  {% endif %}
+
+  {% if orphaned %}
+  <div class="orphan-section">
+    <h2>Orphaned flags ({{ orphaned|length }}) — original was deleted</h2>
+    <div class="orphan-grid">
+      {% for photo in orphaned %}
+      <div class="orphan-card" id="orphan-{{ photo.id }}">
+        <div class="orphan-card-thumb">
+          {% if photo.thumbnail_url %}<img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />{% endif %}
+        </div>
+        <div class="orphan-card-body">
+          <div class="orphan-card-title" title="{{ photo.title }}">{{ photo.title }}</div>
+        </div>
+        <div class="orphan-card-actions">
+          <button class="btn btn-ghost btn-sm" style="flex:1" onclick="clearOrphan('{{ photo.id }}')">Clear flag</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteOrphan('{{ photo.id }}')">Delete</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+// Map: group original id → id of the card chosen to keep
+const _keepMap = {};
+
+function toggleKeep(groupId, cardId) {
+  _keepMap[groupId] = cardId;
+  // Update visual selection
+  document.querySelectorAll(`#row-${groupId} .dup-card`).forEach(el => {
+    el.classList.toggle('selected-keep', el.id === 'card-' + cardId);
+  });
+  const hint = document.getElementById('hint-' + groupId);
+  const btn  = document.getElementById('del-btn-' + groupId);
+  if (hint) hint.innerHTML = `Will keep <strong>${cardId === groupId ? 'the original' : 'the selected duplicate'}</strong>. Others will be deleted.`;
+  if (btn)  btn.style.display = '';
+}
+
+function viewGroup(origId) {
+  // Open the original's detail page in a new tab for reference
+  window.open(`/photos/${origId}/`, '_blank');
+}
+
+async function deleteGroup(groupId, allIds) {
+  const keepId = _keepMap[groupId];
+  if (!keepId) { showToast('error', 'Select a photo to keep first'); return; }
+  const toDelete = allIds.filter(id => id !== keepId);
+  if (!toDelete.length) { showToast('info', 'Nothing to delete'); return; }
+  if (!confirm(`Delete ${toDelete.length} photo(s) and keep the selected one?`)) return;
+
+  const res = await fetch('/api/photos/bulk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({ action: 'delete', photo_ids: toDelete }),
+  });
+  if (res.ok) {
+    const d = await res.json();
+    showToast('success', `Deleted ${d.deleted} photo(s)`);
+    // Remove group card from DOM
+    document.getElementById('grp-' + groupId)?.remove();
+    // Check if all groups gone
+    if (!document.querySelector('.dup-group')) location.reload();
+  } else {
+    showToast('error', 'Delete failed');
+  }
+}
+
+async function clearOrphan(photoId) {
+  const res = await fetch('/api/photos/bulk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({ action: 'clear_duplicate_flag', photo_ids: [photoId] }),
+  });
+  if (res.ok) {
+    document.getElementById('orphan-' + photoId)?.remove();
+    showToast('success', 'Flag cleared');
+  } else showToast('error', 'Failed');
+}
+
+async function deleteOrphan(photoId) {
+  if (!confirm('Delete this photo?')) return;
+  const res = await fetch('/api/photos/bulk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({ action: 'delete', photo_ids: [photoId] }),
+  });
+  if (res.ok) {
+    document.getElementById('orphan-' + photoId)?.remove();
+    showToast('success', 'Photo deleted');
+  } else showToast('error', 'Delete failed');
+}
+
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim())
+    .find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,178 @@
+{% load static %}
+{% with url_name=request.resolver_match.url_name %}
+
+<!-- Home -->
+<div class="sidebar-section">
+  <a href="{% url 'player' %}" class="sidebar-item {% if url_name == 'player' and not request.GET.q and not request.GET.channel %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+    Home
+  </a>
+</div>
+
+<div class="sidebar-divider"></div>
+
+{% if request.user.is_authenticated %}
+
+<!-- Discover -->
+<div class="sidebar-section">
+  <div class="sidebar-heading">Discover</div>
+  <a href="{% url 'trending' %}" class="sidebar-item {% if url_name == 'trending' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+    Trending
+  </a>
+  <a href="{% url 'photo_library' %}" class="sidebar-item {% if url_name == 'photo_library' or url_name == 'photo_detail' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+      <polyline points="21 15 16 10 5 21"/>
+    </svg>
+    Photos
+  </a>
+  <a href="{% url 'albums' %}" class="sidebar-item {% if url_name == 'albums' or url_name == 'album_detail' or url_name == 'album_shared' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+    </svg>
+    Albums
+  </a>
+  <a href="{% url 'saved' %}" class="sidebar-item {% if url_name == 'saved' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+    Saved
+  </a>
+  <a href="{% url 'history' %}" class="sidebar-item {% if url_name == 'history' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    History
+  </a>
+  <a href="{% url 'playlists' %}" class="sidebar-item {% if url_name == 'playlists' or url_name == 'playlist_detail' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+    Playlists
+  </a>
+</div>
+<div class="sidebar-divider"></div>
+
+{% if is_editor %}
+<!-- Studio -->
+<div class="sidebar-section">
+  <div class="sidebar-heading">Studio</div>
+
+  {% for ch in owned_channels %}
+  <a href="{% url 'channel' ch.slug %}" class="sidebar-item">
+    <div class="ch-avatar">
+      {% if ch.avatar %}<img src="{{ ch.avatar_url }}" alt="" />
+      {% else %}{{ ch.name|first|upper }}{% endif %}
+    </div>
+    {{ ch.name }}
+  </a>
+  {% empty %}
+  <a href="{% url 'channels_manage' %}" class="sidebar-item" style="color:var(--text-subtle);font-style:italic;">
+    No channels yet
+  </a>
+  {% endfor %}
+
+  <a href="{% url 'channels_manage' %}" class="sidebar-item {% if url_name == 'channels_manage' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    </svg>
+    Manage Channels
+  </a>
+  <a href="{% url 'upload' %}" class="sidebar-item {% if url_name == 'upload' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    Upload Video
+  </a>
+  <a href="{% url 'photo_upload' %}" class="sidebar-item {% if url_name == 'photo_upload' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+      <polyline points="21 15 16 10 5 21"/>
+    </svg>
+    Upload Photo
+  </a>
+  <a href="{% url 'analytics' %}" class="sidebar-item {% if url_name == 'analytics' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+    </svg>
+    Analytics
+  </a>
+  <a href="{% url 'faces' %}" class="sidebar-item {% if url_name == 'faces' or url_name == 'face_identity' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.418 4.03-8 9-8s9 3.582 9 8"/>
+    </svg>
+    People
+  </a>
+</div>
+<div class="sidebar-divider"></div>
+{% endif %}
+
+{% if is_editor %}
+<div class="sidebar-section">
+  <div class="sidebar-heading">Admin</div>
+  {% if is_superadmin %}
+  <a href="{% url 'user_management' %}" class="sidebar-item {% if url_name == 'user_management' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+    Users
+  </a>
+  <a href="{% url 'admin_commands' %}" class="sidebar-item {% if url_name == 'admin_commands' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+    </svg>
+    Commands
+  </a>
+  {% endif %}
+  <a href="{% url 'categories_manage' %}" class="sidebar-item {% if url_name == 'categories_manage' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+      <line x1="7" y1="7" x2="7.01" y2="7"/>
+    </svg>
+    Categories
+  </a>
+</div>
+<div class="sidebar-divider"></div>
+{% endif %}
+
+<!-- Subscriptions -->
+<div class="sidebar-section">
+  <div class="sidebar-heading">Subscriptions</div>
+  {% for ch in subscribed_channels %}
+  <a href="{% url 'player' %}?channel={{ ch.slug }}" class="sidebar-item {% if request.GET.channel == ch.slug %}active{% endif %}">
+    <div class="ch-avatar">
+      {% if ch.avatar %}<img src="{{ ch.avatar_url }}" alt="" />{% else %}{{ ch.name|first|upper }}{% endif %}
+    </div>
+    {{ ch.name }}
+  </a>
+  {% empty %}
+  <div style="padding:8px 12px;font-size:12px;color:var(--text-subtle);line-height:1.6;">
+    No subscriptions yet.<br/>Browse channels and click Subscribe.
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<!-- Guest -->
+<div class="sidebar-section">
+  <a href="{% url 'trending' %}" class="sidebar-item">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+    Trending
+  </a>
+</div>
+<div class="sidebar-divider"></div>
+<div class="sidebar-section">
+  <div style="padding:10px 12px;">
+    <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">
+      Sign in to subscribe to channels and personalise your feed.
+    </p>
+    <a href="{% url 'login' %}" class="btn btn-ghost btn-sm btn-full" style="justify-content:center;">Sign In</a>
+    <a href="{% url 'register' %}" class="btn btn-primary btn-sm btn-full" style="justify-content:center;margin-top:8px;">Create Account</a>
+  </div>
+</div>
+{% endif %}
+
+{% endwith %}

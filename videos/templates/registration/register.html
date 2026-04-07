@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Create Account — ClipLens</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:       #09090e;
+      --surface:  #111118;
+      --surface-2:#16161f;
+      --border:   rgba(255,255,255,.08);
+      --border-2: rgba(255,255,255,.13);
+      --accent:   #6366f1;
+      --accent-h: #4f46e5;
+      --text:     #f0f0f8;
+      --text-muted:#9191aa;
+      --radius:   12px;
+      --shadow:   0 20px 60px rgba(0,0,0,.6);
+    }
+    [data-theme="light"] {
+      --bg:       #f2f2f7;
+      --surface:  #ffffff;
+      --surface-2:#f6f6fb;
+      --border:   rgba(0,0,0,.08);
+      --border-2: rgba(0,0,0,.13);
+      --text:     #0f0f14;
+      --text-muted:#6b6b80;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%; font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+    .page {
+      min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; padding: 24px;
+    }
+    .page::before {
+      content: ''; position: fixed; top: -200px; left: 50%;
+      transform: translateX(-50%);
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, rgba(99,102,241,.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .card {
+      background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 40px 40px 36px;
+      width: 100%; max-width: 420px;
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 20px; font-weight: 800; letter-spacing: -.4px;
+      color: var(--text); text-decoration: none; margin-bottom: 32px;
+    }
+    .logo svg { width: 32px; height: 32px; flex-shrink: 0; }
+    .logo span { color: var(--accent); }
+    .heading { font-size: 22px; font-weight: 800; letter-spacing: -.3px; }
+    .subhead  { font-size: 14px; color: var(--text-muted); margin-top: 5px; }
+    .form { margin-top: 28px; display: flex; flex-direction: column; gap: 16px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+    .field input {
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: 8px; padding: 11px 14px; font-size: 14px;
+      color: var(--text); outline: none; font-family: inherit;
+      transition: border-color .15s;
+    }
+    .field input:focus { border-color: var(--accent); }
+    .field input::placeholder { color: var(--text-muted); opacity: .6; }
+    .field-hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .divider {
+      height: 1px; background: var(--border-2);
+      margin: 4px 0;
+    }
+    .section-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--text-muted);
+    }
+    .submit-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: background .15s;
+      margin-top: 4px;
+    }
+    .submit-btn:hover { background: var(--accent-h); }
+    .errors {
+      background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3);
+      border-radius: 8px; padding: 10px 14px;
+      font-size: 13px; color: #f87171; line-height: 1.8;
+    }
+    .signin-link {
+      text-align: center; font-size: 13px; color: var(--text-muted);
+      margin-top: 20px;
+    }
+    .signin-link a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .signin-link a:hover { text-decoration: underline; }
+    .theme-row {
+      display: flex; justify-content: center; margin-top: 24px;
+    }
+    .theme-btn {
+      background: none; border: 1px solid var(--border-2); color: var(--text-muted);
+      border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer;
+      font-family: inherit; transition: all .15s; display: flex; align-items: center; gap: 6px;
+    }
+    .theme-btn:hover { border-color: var(--accent); color: var(--text); }
+    .theme-btn svg { width: 13px; height: 13px; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="card">
+
+    <a href="/player/" class="logo">
+      <svg viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="7" fill="#6366f1"/>
+        <polygon points="11,8 21,14 11,20" fill="white"/>
+      </svg>
+      Free<span>Stream</span>
+    </a>
+
+    <div class="heading">Create your account</div>
+    <div class="subhead">Sign up to browse, comment, and build your personal library.</div>
+
+    {% if errors %}
+    <div class="errors" style="margin-top:20px;">
+      {% for error in errors %}{{ error }}<br/>{% endfor %}
+    </div>
+    {% endif %}
+
+    <form class="form" method="post">
+      {% csrf_token %}
+
+      <div class="section-label">Account</div>
+
+      <div class="field">
+        <label for="id_username">Username</label>
+        <input type="text" name="username" id="id_username"
+               placeholder="your_username" autocomplete="username" autofocus
+               value="{{ request.POST.username|default:'' }}" />
+        {% if username_suggestions %}
+        <div style="margin-top:8px;">
+          <span style="font-size:11px;color:var(--text-muted);">Available:</span>
+          {% for s in username_suggestions %}
+          <button type="button" onclick="document.getElementById('id_username').value='{{ s }}'"
+            style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:3px 12px;font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-left:6px;transition:all .15s;"
+            onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border-2)'">{{ s }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="id_password1">Password</label>
+        <input type="password" name="password1" id="id_password1"
+               placeholder="••••••••" autocomplete="new-password" />
+        <div class="field-hint">At least 8 characters</div>
+      </div>
+
+      <div class="field">
+        <label for="id_password2">Confirm Password</label>
+        <input type="password" name="password2" id="id_password2"
+               placeholder="••••••••" autocomplete="new-password" />
+      </div>
+
+      <button type="submit" class="submit-btn">Create Account →</button>
+    </form>
+
+    <div class="signin-link">
+      Already have an account? <a href="/login/">Sign in</a>
+    </div>
+
+    <div class="theme-row">
+      <button class="theme-btn" onclick="toggleTheme()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        Toggle theme
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  (function() {
+    const t = localStorage.getItem('fs-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('fs-theme', next);
+  }
+</script>
+</body>
+</html>

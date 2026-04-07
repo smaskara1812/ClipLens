@@ -1,0 +1,710 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}{{ identity.name }} — People — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .fi-layout {
+    max-width: 1100px; margin: 0 auto;
+    padding: 28px 24px 80px;
+  }
+
+  /* ── Header ── */
+  .fi-header {
+    display: flex; align-items: flex-start; gap: 20px;
+    margin-bottom: 32px;
+  }
+  .fi-avatar {
+    width: 80px; height: 80px; border-radius: 50%;
+    background: var(--surface-3); flex-shrink: 0;
+    overflow: hidden; border: 3px solid var(--border-2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted);
+  }
+  .fi-avatar img { width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+  .fi-header-info { flex: 1; min-width: 0; }
+  .fi-name {
+    font-size: 26px; font-weight: 800; line-height: 1.2;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .fi-auto-badge {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 6px; background: var(--surface-3); color: var(--text-muted);
+  }
+  .fi-meta {
+    font-size: 13px; color: var(--text-muted); margin-top: 5px;
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .fi-meta span { display: flex; align-items: center; gap: 5px; }
+  .fi-header-actions {
+    display: flex; gap: 8px; align-items: center; flex-shrink: 0;
+  }
+
+  /* ── Rename modal ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.65); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 24px; width: 360px;
+    box-shadow: var(--shadow);
+  }
+  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 14px; }
+  .modal input {
+    width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 14px; box-sizing: border-box;
+    outline: none; margin-bottom: 14px;
+  }
+  .modal input:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ── Merge modal ── */
+  .merge-select {
+    width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; box-sizing: border-box;
+    outline: none; margin-bottom: 14px;
+  }
+
+  /* ── Filter bar ── */
+  .fi-filter-bar {
+    display: flex; gap: 8px; margin-bottom: 20px;
+    flex-wrap: wrap; align-items: center;
+  }
+  .fi-filter-btn {
+    padding: 5px 12px; border-radius: 99px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border-2); background: var(--surface);
+    color: var(--text-muted); cursor: pointer; transition: all .15s;
+  }
+  .fi-filter-btn.active, .fi-filter-btn:hover {
+    border-color: var(--accent); color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .fi-confirm-all-btn {
+    margin-left: auto; padding: 5px 14px; border-radius: 99px;
+    font-size: 12px; font-weight: 600;
+    border: 1px solid var(--green); background: var(--green-bg);
+    color: var(--green); cursor: pointer; transition: all .15s;
+  }
+  .fi-confirm-all-btn:hover { background: var(--green); color: #fff; }
+
+  /* ── Video section ── */
+  .fi-video-section { margin-bottom: 36px; }
+  .fi-video-heading {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 14px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .fi-video-thumb-sm {
+    width: 48px; aspect-ratio: 16/9; border-radius: 4px;
+    background: var(--surface-3); overflow: hidden; flex-shrink: 0;
+  }
+  .fi-video-thumb-sm img { width: 100%; height: 100%; object-fit: cover; }
+  .fi-video-title { font-size: 13px; font-weight: 700; }
+  .fi-video-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .fi-video-link {
+    margin-left: auto; font-size: 11px; color: var(--accent);
+    text-decoration: none; font-weight: 600;
+  }
+  .fi-video-link:hover { text-decoration: underline; }
+
+  /* ── Photos section ── */
+  .fi-photos-section { margin: 8px 0 36px; }
+  .fi-photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .fi-photo-card {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--surface);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color .15s, transform .15s;
+  }
+  .fi-photo-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .fi-photo-thumb {
+    aspect-ratio: 1/1;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+  .fi-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .fi-photo-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 8px 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Crop grid ── */
+  .crop-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+  }
+
+  /* ── Crop card ── */
+  .crop-card {
+    position: relative; border-radius: var(--radius-sm);
+    overflow: hidden; background: var(--surface-3);
+    aspect-ratio: 1/1; cursor: pointer;
+    border: 2px solid transparent;
+    transition: border-color .15s, transform .15s;
+  }
+  .crop-card:hover { transform: scale(1.03); }
+  .crop-card.confirmed { border-color: var(--green); }
+  .crop-card.rejected  { border-color: var(--red); opacity: .55; }
+  .crop-card img {
+    width: 100%; height: 100%; object-fit: cover; object-position: center top;
+    display: block;
+  }
+
+  /* Overlay: shows on hover (and always for confirmed/rejected) */
+  .crop-overlay {
+    position: absolute; inset: 0;
+    background: linear-gradient(to top, rgba(0,0,0,.8) 0%, transparent 50%);
+    display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: 8px; gap: 8px;
+    opacity: 0; transition: opacity .15s;
+  }
+  .crop-card:hover .crop-overlay,
+  .crop-card.confirmed .crop-overlay,
+  .crop-card.rejected  .crop-overlay { opacity: 1; }
+
+  /* Status badge top-right */
+  .crop-status-badge {
+    position: absolute; top: 6px; right: 6px;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .crop-status-badge.confirmed { background: var(--green); color: #fff; }
+  .crop-status-badge.rejected  { background: var(--red);   color: #fff; }
+
+  /* Action buttons in overlay */
+  .crop-action {
+    width: 30px; height: 30px; border-radius: 50%;
+    border: none; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .1s;
+  }
+  .crop-action:hover { transform: scale(1.15); }
+  .crop-action.confirm   { background: var(--green); color: #fff; }
+  .crop-action.reject    { background: var(--red);   color: #fff; }
+  .crop-action.unset     { background: rgba(255,255,255,.15); color: #fff; }
+  .crop-action.thumb-set { background: var(--accent); color: #fff; }
+
+  /* Thumbnail indicator badge */
+  .crop-thumb-badge {
+    position: absolute; top: 6px; left: 6px;
+    background: var(--accent); color: #fff;
+    font-size: 9px; font-weight: 700; letter-spacing: .3px;
+    padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
+    pointer-events: none;
+  }
+
+  /* Timestamp chip */
+  .crop-timestamp {
+    position: absolute; bottom: 6px; left: 6px;
+    font-size: 10px; font-weight: 700;
+    background: rgba(0,0,0,.7); color: #fff;
+    padding: 1px 5px; border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    padding: 10px 18px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 500; box-shadow: var(--shadow);
+    z-index: 300; opacity: 0; transition: opacity .25s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; border: none; cursor: pointer;
+    text-decoration: none; transition: all .15s; }
+  .btn-ghost { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-h); }
+  .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+
+  /* ── Empty ── */
+  .no-crops {
+    color: var(--text-muted); font-size: 13px; padding: 24px 0;
+    text-align: center;
+  }
+
+  /* ── Pagination ── */
+  .fi-pagination {
+    display: flex; align-items: center; justify-content: center;
+    gap: 16px; padding: 32px 0 8px; flex-wrap: wrap;
+  }
+  .fi-page-btn {
+    padding: 7px 18px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    color: var(--text); text-decoration: none;
+    transition: border-color .15s, color .15s;
+  }
+  .fi-page-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .fi-page-btn.disabled {
+    opacity: .4; pointer-events: none; cursor: default;
+  }
+  .fi-page-info {
+    font-size: 13px; color: var(--text-muted);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fi-layout">
+
+  <!-- Header -->
+  <div class="fi-header">
+    <div class="fi-avatar">
+      {% if identity.thumbnail_url %}
+      <img src="{{ identity.thumbnail_url }}" alt="{{ identity.name }}" />
+      {% else %}
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/>
+      </svg>
+      {% endif %}
+    </div>
+    <div class="fi-header-info">
+      <div class="fi-name">
+        {{ identity.name }}
+        {% if identity.is_auto_named %}
+        <span class="fi-auto-badge">Auto-detected</span>
+        {% endif %}
+      </div>
+      <div class="fi-meta">
+        <span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
+          {{ total_video_count }} video{{ total_video_count|pluralize }}
+        </span>
+        <span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          {{ total_faces_count }} appearance{{ total_faces_count|pluralize }}
+        </span>
+        <span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.2"/><path d="M21 16l-5-5-8 8"/></svg>
+          {{ total_photo_count }} photo{{ total_photo_count|pluralize }}
+        </span>
+      </div>
+    </div>
+    <div class="fi-header-actions">
+      <a href="{{ back_url }}" class="btn btn-ghost">← All People</a>
+      {% if can_edit %}
+      <button class="btn btn-ghost" onclick="openRename()">Rename</button>
+      {% if all_identities %}
+      <button class="btn btn-ghost" onclick="openMerge()">Merge into…</button>
+      {% endif %}
+      {% if can_delete %}
+      <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+      {% else %}
+      <button class="btn btn-danger" onclick="confirmRemoveFromMyVideos()" title="Remove from your videos only (identity exists in other channels too)">Remove from my videos</button>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="fi-filter-bar">
+    <button class="fi-filter-btn active" onclick="filterCrops('all', this)">All</button>
+    <button class="fi-filter-btn" onclick="filterCrops('unreviewed', this)">Unreviewed</button>
+    <button class="fi-filter-btn" onclick="filterCrops('confirmed', this)">Confirmed</button>
+    <button class="fi-filter-btn" onclick="filterCrops('rejected', this)">Rejected</button>
+    {% if can_edit %}
+    <button class="fi-confirm-all-btn" onclick="confirmAll()">✓ Confirm all unreviewed</button>
+    {% endif %}
+  </div>
+  {% if not can_edit %}
+  <div style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-muted);margin-bottom:20px;">
+    You don't have a channel yet — <a href="{% url 'setup_channel' %}" style="color:var(--accent)">create one</a> to manage face identities.
+  </div>
+  {% endif %}
+
+  <!-- Photos containing this person -->
+  <!-- Face crops grouped by source (videos/photos) -->
+  {% for grp in video_groups %}
+  <div class="fi-video-section" data-video-id="{% if grp.kind == 'video' %}{{ grp.video.id }}{% else %}{{ grp.photo.id }}{% endif %}">
+    <div class="fi-video-heading">
+      <div class="fi-video-thumb-sm">
+        {% if grp.kind == 'video' and grp.video.thumbnail_url %}<img src="{{ grp.video.thumbnail_url }}" alt="" />{% endif %}
+        {% if grp.kind == 'photo' and grp.photo.thumbnail_url %}<img src="{{ grp.photo.thumbnail_url }}" alt="" />{% endif %}
+      </div>
+      <div>
+        <div class="fi-video-title">{% if grp.kind == 'video' %}{{ grp.video.title }}{% else %}{{ grp.photo.title|default:"Untitled photo" }}{% endif %}</div>
+        <div class="fi-video-sub">{{ grp.faces|length }} appearance{{ grp.faces|length|pluralize }}</div>
+      </div>
+      {% if grp.kind == 'video' %}
+      <a href="{% url 'watch' grp.video.id %}" class="fi-video-link">Watch →</a>
+      {% else %}
+      <a href="{% url 'photo_detail' grp.photo.id %}" class="fi-video-link">Open photo →</a>
+      {% endif %}
+    </div>
+
+    <div class="crop-grid">
+      {% for face in grp.faces %}
+      {% if face.crop_path %}
+      <div class="crop-card {{ face.status }}"
+           id="crop-{{ face.pk }}"
+           data-id="{{ face.pk }}"
+           data-status="{{ face.status }}"
+           data-crop-path="{{ face.crop_path }}">
+        <img src="{{ face.crop_url }}" alt="" loading="lazy" />
+        {% if grp.kind == 'video' %}
+        <div class="crop-timestamp">{{ face.timestamp|floatformat:0 }}s</div>
+        {% endif %}
+
+        <!-- Thumbnail indicator -->
+        {% if face.crop_path == identity.thumbnail %}
+        <div class="crop-thumb-badge" id="thumb-badge-{{ face.pk }}">Thumbnail</div>
+        {% else %}
+        <div class="crop-thumb-badge" id="thumb-badge-{{ face.pk }}" style="display:none;">Thumbnail</div>
+        {% endif %}
+
+        <!-- Status badge -->
+        {% if face.status == 'confirmed' %}
+        <div class="crop-status-badge confirmed">✓</div>
+        {% elif face.status == 'rejected' %}
+        <div class="crop-status-badge rejected">✕</div>
+        {% endif %}
+
+        <!-- Hover actions (only for own channel's videos) -->
+        {% if can_edit %}
+        <div class="crop-overlay">
+          <button class="crop-action confirm" title="Confirm — this is {{ identity.name }}"
+                  onclick="setStatus(event, {{ face.pk }}, 'confirmed')">✓</button>
+          <button class="crop-action reject"  title="Reject — this is NOT {{ identity.name }}"
+                  onclick="setStatus(event, {{ face.pk }}, 'rejected')">✕</button>
+          {% if face.status != 'unreviewed' %}
+          <button class="crop-action unset" title="Reset to unreviewed"
+                  onclick="setStatus(event, {{ face.pk }}, 'unreviewed')">↺</button>
+          {% endif %}
+          <button class="crop-action thumb-set" title="Use as profile thumbnail"
+                  onclick="setThumbnail(event, {{ face.pk }})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
+              <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+            </svg>
+          </button>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% empty %}
+  <div class="no-crops">No face crops found for this identity.</div>
+  {% endfor %}
+
+  <!-- ── Pagination ── -->
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="fi-pagination">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}" class="fi-page-btn">← Previous</a>
+    {% else %}
+    <span class="fi-page-btn disabled">← Previous</span>
+    {% endif %}
+
+    <span class="fi-page-info">
+      Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+      &nbsp;·&nbsp;
+      {{ total_video_count }} video{{ total_video_count|pluralize }}
+    </span>
+
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}" class="fi-page-btn">Next →</a>
+    {% else %}
+    <span class="fi-page-btn disabled">Next →</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Rename Modal -->
+<div class="modal-overlay" id="renameModal">
+  <div class="modal">
+    <h3>Rename Identity</h3>
+    <input type="text" id="renameInput" placeholder="Enter name…" value="{{ identity.name }}" />
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('renameModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRename()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Merge Modal -->
+<div class="modal-overlay" id="mergeModal">
+  <div class="modal">
+    <h3>Merge "{{ identity.name }}" into…</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+      All face crops will be moved to the selected identity. This cannot be undone.
+    </p>
+    <select class="merge-select" id="mergeTarget">
+      {% for other in all_identities %}
+      <option value="{{ other.pk }}">{{ other.name }}{% if other.is_auto_named %} (auto){% endif %}</option>
+      {% endfor %}
+    </select>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('mergeModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitMerge()">Merge</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const IDENTITY_ID = {{ identity.pk }};
+const CSRF = '{{ csrf_token }}';
+
+/* ── Status filtering ─────────────────────────────────────────────────────── */
+let activeFilter = 'all';
+
+function filterCrops(filter, btn) {
+  activeFilter = filter;
+  document.querySelectorAll('.fi-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  document.querySelectorAll('.crop-card').forEach(card => {
+    const s = card.dataset.status;
+    const show = filter === 'all' || s === filter;
+    card.style.display = show ? '' : 'none';
+  });
+
+  // Hide video section headings if all crops in them are hidden
+  document.querySelectorAll('.fi-video-section').forEach(section => {
+    const visible = [...section.querySelectorAll('.crop-card')]
+      .some(c => c.style.display !== 'none');
+    section.style.display = visible ? '' : 'none';
+  });
+}
+
+/* ── Set crop status ──────────────────────────────────────────────────────── */
+async function setStatus(evt, faceId, newStatus) {
+  evt.stopPropagation();
+  const card = document.getElementById('crop-' + faceId);
+  const prevStatus = card.dataset.status;
+  if (prevStatus === newStatus) {
+    // Toggle: clicking same action resets to unreviewed
+    newStatus = 'unreviewed';
+  }
+
+  try {
+    const res = await fetch(`/api/faces/crops/${faceId}/status/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (!res.ok) throw new Error('Request failed');
+    const data = await res.json();
+
+    // Update card classes + badge
+    card.classList.remove('confirmed', 'rejected');
+    card.dataset.status = newStatus;
+    if (newStatus !== 'unreviewed') card.classList.add(newStatus);
+
+    // Update/remove status badge
+    let badge = card.querySelector('.crop-status-badge');
+    if (newStatus === 'confirmed') {
+      if (!badge) { badge = document.createElement('div'); badge.className = 'crop-status-badge'; card.appendChild(badge); }
+      badge.className = 'crop-status-badge confirmed';
+      badge.textContent = '✓';
+    } else if (newStatus === 'rejected') {
+      if (!badge) { badge = document.createElement('div'); badge.className = 'crop-status-badge'; card.appendChild(badge); }
+      badge.className = 'crop-status-badge rejected';
+      badge.textContent = '✕';
+    } else {
+      if (badge) badge.remove();
+    }
+
+    // Re-apply current filter
+    if (activeFilter !== 'all' && card.dataset.status !== activeFilter) {
+      card.style.display = 'none';
+    }
+
+    showToast(newStatus === 'confirmed' ? '✓ Confirmed' : newStatus === 'rejected' ? '✕ Rejected' : '↺ Reset');
+  } catch (e) {
+    showToast('Error saving — try again', true);
+  }
+}
+
+/* ── Set thumbnail ───────────────────────────────────────────────────────── */
+async function setThumbnail(evt, faceId) {
+  evt.stopPropagation();
+  try {
+    const res = await fetch(`/api/faces/crops/${faceId}/set-thumbnail/`, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': CSRF },
+    });
+    if (!res.ok) throw new Error('Request failed');
+    const data = await res.json();
+
+    // Update header avatar
+    const avatar = document.querySelector('.fi-avatar');
+    if (avatar) {
+      avatar.innerHTML = `<img src="${data.thumbnail_url}?t=${Date.now()}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:center top;" />`;
+    }
+
+    // Update thumbnail badges — hide all, show only this one
+    document.querySelectorAll('.crop-thumb-badge').forEach(b => b.style.display = 'none');
+    const badge = document.getElementById('thumb-badge-' + faceId);
+    if (badge) badge.style.display = '';
+
+    showToast('✓ Thumbnail updated');
+  } catch (e) {
+    showToast('Error updating thumbnail', true);
+  }
+}
+
+/* ── Confirm all unreviewed ───────────────────────────────────────────────── */
+async function confirmAll() {
+  const cards = [...document.querySelectorAll('.crop-card[data-status="unreviewed"]')];
+  if (!cards.length) { showToast('Nothing to confirm'); return; }
+  let done = 0;
+  for (const card of cards) {
+    const faceId = card.dataset.id;
+    try {
+      await fetch(`/api/faces/crops/${faceId}/status/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ status: 'confirmed' }),
+      });
+      card.classList.add('confirmed');
+      card.dataset.status = 'confirmed';
+      let badge = card.querySelector('.crop-status-badge');
+      if (!badge) { badge = document.createElement('div'); badge.className = 'crop-status-badge confirmed'; badge.textContent = '✓'; card.appendChild(badge); }
+      else { badge.className = 'crop-status-badge confirmed'; badge.textContent = '✓'; }
+      done++;
+    } catch {}
+  }
+  showToast(`✓ Confirmed ${done} crop${done !== 1 ? 's' : ''}`);
+}
+
+/* ── Rename ───────────────────────────────────────────────────────────────── */
+function openRename() {
+  document.getElementById('renameModal').classList.add('open');
+  setTimeout(() => document.getElementById('renameInput').focus(), 50);
+}
+
+async function submitRename() {
+  const name = document.getElementById('renameInput').value.trim();
+  if (!name) return;
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/rename/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error();
+    document.querySelector('.fi-name').childNodes[0].textContent = name + ' ';
+    closeModal('renameModal');
+    showToast('✓ Renamed to "' + name + '"');
+  } catch { showToast('Error renaming', true); }
+}
+
+/* ── Merge ────────────────────────────────────────────────────────────────── */
+function openMerge() {
+  document.getElementById('mergeModal').classList.add('open');
+}
+
+async function submitMerge() {
+  const targetId = document.getElementById('mergeTarget').value;
+  if (!targetId) return;
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/merge/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ into: parseInt(targetId) }),
+    });
+    if (!res.ok) throw new Error();
+    showToast('✓ Merged — redirecting…');
+    setTimeout(() => window.location.href = '{% url "faces" %}', 1000);
+  } catch { showToast('Error merging', true); }
+}
+
+/* ── Delete ───────────────────────────────────────────────────────────────── */
+async function confirmDelete() {
+  if (!confirm('Delete "{{ identity.name }}" and all its face data? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/delete/`, {
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': CSRF },
+    });
+    if (res.status === 204) {
+      window.location.href = '{% url "faces" %}';
+    } else {
+      const data = await res.json();
+      if (data.partial) {
+        showToast(data.message);
+        setTimeout(() => window.location.href = '{% url "faces" %}', 1500);
+      } else {
+        showToast(data.error || 'Error deleting', true);
+      }
+    }
+  } catch { showToast('Error deleting', true); }
+}
+
+async function confirmRemoveFromMyVideos() {
+  if (!confirm('Remove "{{ identity.name }}" from your videos only?\n\nThis identity appears in other channels too — it will NOT be fully deleted.')) return;
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/delete/`, {
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': CSRF },
+    });
+    const data = res.status === 204 ? {} : await res.json();
+    showToast(data.message || '✓ Removed from your videos');
+    setTimeout(() => window.location.href = '{% url "faces" %}', 1500);
+  } catch { showToast('Error removing', true); }
+}
+
+/* ── Utilities ────────────────────────────────────────────────────────────── */
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+// Close modal on backdrop click
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+});
+// Rename on Enter
+document.getElementById('renameInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitRename();
+});
+
+let toastTimer;
+function showToast(msg, isError = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = isError ? 'var(--red-bg)' : 'var(--surface-2)';
+  t.style.borderColor = isError ? 'var(--red)' : 'var(--border-2)';
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+</script>
+{% endblock %}

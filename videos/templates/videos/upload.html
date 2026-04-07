@@ -1,0 +1,532 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Upload — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .upload-wrap {
+    max-width: 700px; margin: 36px auto; padding: 0 24px 60px;
+  }
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+  .page-header p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  /* Drop zone */
+  .dropzone {
+    border: 2px dashed var(--border-2); border-radius: var(--radius-lg);
+    padding: 48px 24px; text-align: center; cursor: pointer;
+    position: relative; margin-bottom: 24px;
+    transition: border-color var(--transition), background var(--transition);
+  }
+  .dropzone:hover, .dropzone.drag-over {
+    border-color: var(--accent); background: var(--accent-soft);
+  }
+  .dropzone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .dz-icon {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--accent-soft); display: flex; align-items: center;
+    justify-content: center; margin: 0 auto 16px;
+  }
+  .dz-icon svg { width: 28px; height: 28px; color: var(--accent); }
+  .dz-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .dz-sub { font-size: 13px; color: var(--text-muted); }
+  .dz-sub span { color: var(--accent); font-weight: 600; }
+
+  .file-chosen {
+    display: none; align-items: center; gap: 12px;
+    background: var(--green-bg); border: 1px solid var(--green);
+    border-radius: var(--radius-sm); padding: 12px 16px; margin-bottom: 24px;
+  }
+  .file-chosen svg { width: 18px; height: 18px; color: var(--green); flex-shrink: 0; }
+  .file-name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-size { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+
+  /* Form grid */
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 540px) { .form-grid-2 { grid-template-columns: 1fr; } }
+  .form-section { margin-bottom: 22px; }
+
+  /* Progress */
+  .progress-wrap { display: none; margin-bottom: 20px; }
+  .progress-track {
+    background: var(--surface-3); border-radius: 999px; height: 6px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: linear-gradient(90deg, var(--accent), #818cf8);
+    border-radius: 999px; width: 0%; transition: width .3s;
+  }
+  .progress-label { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+  /* Result */
+  .result-card {
+    display: none; background: var(--green-bg);
+    border: 1px solid var(--green); border-radius: var(--radius);
+    padding: 20px; margin-top: 20px;
+  }
+  .result-title { font-weight: 700; color: var(--green); margin-bottom: 14px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .result-title svg { width: 16px; height: 16px; }
+  .result-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .result-table td { padding: 5px 0; vertical-align: top; }
+  .result-table td:first-child { color: var(--text-muted); width: 110px; font-weight: 500; }
+  .result-table a { color: var(--accent); }
+  .result-table .copy-btn {
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--accent); padding: 2px 8px; border-radius: 4px;
+    cursor: pointer; font-size: 11px; margin-left: 8px; font-weight: 600;
+  }
+  .result-table .copy-btn:hover { background: var(--accent-soft); }
+
+  /* Chapters editor */
+  .chapters-section { margin-top: 20px; border-top: 1px solid rgba(34,197,94,.25); padding-top: 16px; }
+  .chapters-section-title { font-size: 12px; font-weight: 700; color: var(--green); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+  .chapter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+  .chapter-ts { font-family: monospace; font-size: 12px; color: var(--text-muted); min-width: 48px; }
+  .chapter-name { flex: 1; color: var(--text); }
+  .chapter-del { background: none; border: none; color: var(--text-subtle); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 13px; line-height: 1; }
+  .chapter-del:hover { background: var(--red-bg); color: var(--red); }
+  .chapter-add-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .chapter-ts-input { width: 80px; font-family: monospace; }
+  .chapter-title-input { flex: 1; min-width: 120px; }
+
+  /* Status badge for polling */
+  .poll-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  }
+  .poll-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .poll-badge.pending  { background: var(--surface-3); color: var(--text-muted); }
+  .poll-badge.processing { background: var(--accent-soft); color: var(--accent); }
+  .poll-badge.processing .dot { animation: pulse 1.2s ease-in-out infinite; }
+  .poll-badge.ready    { background: var(--green-bg); color: var(--green); }
+  .poll-badge.failed   { background: var(--red-bg); color: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="upload-wrap">
+  <div class="page-header">
+    <h1>Upload Video</h1>
+    <p>Drop a file and it'll be automatically converted to adaptive HLS (multi-quality).</p>
+  </div>
+
+  {% if not channels %}
+  <div class="card" style="text-align:center;padding:32px;color:var(--text-muted);">
+    <p style="font-size:15px;font-weight:600;margin-bottom:8px;">No channel found</p>
+    <p style="font-size:13px;"><a href="{% url 'channels_manage' %}" style="color:var(--accent);">Create a channel</a> before uploading.</p>
+  </div>
+  {% else %}
+  <div class="card">
+    <form id="uploadForm">
+
+      <!-- Drop zone -->
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="videoFile" accept="video/*" required />
+        <div class="dz-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <div class="dz-title">Drop your video here</div>
+        <div class="dz-sub">or <span>click to browse</span> &nbsp;·&nbsp; MP4 · MOV · MKV · AVI · WebM</div>
+      </div>
+
+      <div class="file-chosen" id="fileChosen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+        <span class="file-name" id="fileName">—</span>
+        <span class="file-size" id="fileSize">—</span>
+      </div>
+
+      <!-- Channel selector (only shown when editor owns more than one) -->
+      {% if channels|length > 1 %}
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Channel <span class="req">*</span></label>
+          <select id="channelSelect" class="form-select" required>
+            {% for ch in channels %}
+            <option value="{{ ch.id }}">{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {% else %}
+      <input type="hidden" id="channelSelect" value="{{ channels.0.id }}" />
+      {% endif %}
+
+      <!-- Title -->
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Title <span class="req">*</span></label>
+          <input type="text" id="title" class="form-input" placeholder="Give your video a title" required />
+        </div>
+      </div>
+
+      <!-- Description -->
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="description" class="form-textarea" placeholder="What's this video about?"></textarea>
+        </div>
+      </div>
+
+      <!-- Category + Tags -->
+      <div class="form-grid-2 form-section">
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <select id="category" class="form-select">
+            <option value="">— No category —</option>
+            {% for cat in categories %}
+            <option value="{{ cat.id }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tags</label>
+          <input type="text" id="tags" class="form-input" placeholder="tutorial, demo, review" />
+          <span class="form-hint">Separate tags with commas</span>
+        </div>
+      </div>
+
+      <!-- Thumbnail -->
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Custom Thumbnail <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-subtle);">(optional — auto-generated if left blank)</span></label>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div id="thumbPreviewWrap" style="display:none;">
+              <img id="thumbPreviewImg" src="" alt="" style="width:120px;height:68px;object-fit:cover;border-radius:8px;display:block;" />
+            </div>
+            <label for="thumbnailFile" class="btn btn-secondary btn-sm" style="cursor:pointer;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9l4-4 4 4 4-4 4 4"/></svg>
+              Choose Image
+            </label>
+            <input type="file" id="thumbnailFile" accept="image/*" style="display:none;" onchange="previewThumbnail(this)" />
+            <span id="thumbName" style="font-size:12px;color:var(--text-muted);"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Visibility toggle -->
+      <div class="form-section">
+        <div class="card" style="padding:14px 16px;">
+          <div class="toggle-wrap">
+            <div class="toggle-info">
+              <div class="toggle-label">Public</div>
+              <div class="toggle-hint">Private videos are only accessible via direct URL — not shown in search or channel pages</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="isPublic" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-track">
+          <div class="progress-fill" id="progressBar"></div>
+        </div>
+        <div class="progress-label" id="progressLabel">Preparing…</div>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-full btn-lg" id="submitBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload Video
+      </button>
+    </form>
+
+    <!-- Result card -->
+    <div class="result-card" id="resultCard">
+      <div class="result-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Upload successful — HLS conversion started
+      </div>
+      <table class="result-table">
+        <tr><td>Video ID</td><td id="rId">—</td></tr>
+        <tr>
+          <td>Status</td>
+          <td>
+            <span class="poll-badge pending" id="rStatus">
+              <span class="dot"></span>
+              <span id="rStatusText">pending</span>
+            </span>
+          </td>
+        </tr>
+        <tr>
+          <td>Watch URL</td>
+          <td>
+            <a id="rWatchLink" href="#" target="_blank">—</a>
+            <button class="copy-btn" onclick="copyWatchUrl()">copy</button>
+          </td>
+        </tr>
+        <tr><td>HLS URL</td><td id="rHlsUrl" style="color:var(--text-muted);">— processing…</td></tr>
+      </table>
+
+      <!-- Chapters editor -->
+      <div class="chapters-section">
+        <div class="chapters-section-title">Chapters</div>
+        <div id="chapterList" style="display:flex;flex-direction:column;gap:2px;"></div>
+        <div class="chapter-add-row">
+          <input type="text" id="newChapterTs" class="form-input chapter-ts-input" placeholder="0:00" title="Timestamp (m:ss or h:mm:ss)" />
+          <input type="text" id="newChapterTitle" class="form-input chapter-title-input" placeholder="Chapter title" />
+          <button type="button" class="btn btn-secondary btn-sm" onclick="addChapter()">+ Add</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">
+          First chapter must start at <strong>0:00</strong>. Format: <code>m:ss</code> or <code>h:mm:ss</code>.
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Same origin as the page so the session cookie is always sent (SITE_URL can
+  // differ from the browser host, e.g. localhost vs 127.0.0.1 — that caused 401).
+  const API = `${location.origin}/api`;
+  let pollTimer = null;
+  let uploadedId = null;
+
+  // Drop zone
+  const dz = document.getElementById('dropzone');
+  const fileInput = document.getElementById('videoFile');
+  const fileChosen = document.getElementById('fileChosen');
+
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) { fileInput.files = e.dataTransfer.files; showFile(e.dataTransfer.files[0]); }
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) showFile(fileInput.files[0]); });
+
+  function showFile(f) {
+    document.getElementById('fileName').textContent = f.name;
+    document.getElementById('fileSize').textContent = fmtBytes(f.size);
+    fileChosen.style.display = 'flex';
+    if (!document.getElementById('title').value)
+      document.getElementById('title').value = f.name.replace(/\.[^.]+$/, '');
+  }
+
+  function previewThumbnail(input) {
+    if (!input.files[0]) return;
+    document.getElementById('thumbName').textContent = input.files[0].name;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = document.getElementById('thumbPreviewImg');
+      img.src = e.target.result;
+      document.getElementById('thumbPreviewWrap').style.display = 'block';
+    };
+    reader.readAsDataURL(input.files[0]);
+  }
+
+  function fmtBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1073741824).toFixed(2) + ' GB';
+  }
+
+  // Upload
+  document.getElementById('uploadForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const file = fileInput.files[0];
+    if (!file) return showToast('error', 'No file selected', 'Pick a video file first.');
+    const title = document.getElementById('title').value.trim();
+    if (!title) return showToast('error', 'Title required', 'Enter a title for the video.');
+
+    const fd = new FormData();
+    fd.append('video_file', file);
+    fd.append('title', title);
+    fd.append('description', document.getElementById('description').value);
+    fd.append('tags', document.getElementById('tags').value);
+    fd.append('is_public', document.getElementById('isPublic').checked ? 'true' : 'false');
+    const cat = document.getElementById('category').value;
+    if (cat) fd.append('category', cat);
+    const thumbFile = document.getElementById('thumbnailFile').files[0];
+    if (thumbFile) fd.append('thumbnail_file', thumbFile);
+    const chSel = document.getElementById('channelSelect');
+    if (chSel && chSel.value) fd.append('channel_id', chSel.value);
+
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true; btn.textContent = 'Uploading…';
+
+    const pw = document.getElementById('progressWrap');
+    const pb = document.getElementById('progressBar');
+    const pl = document.getElementById('progressLabel');
+    pw.style.display = 'block';
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API}/videos/upload/`);
+      xhr.withCredentials = true;   // send session cookie so Django recognises the logged-in user
+
+      xhr.upload.addEventListener('progress', ev => {
+        if (ev.lengthComputable) {
+          const pct = Math.round(ev.loaded / ev.total * 100);
+          pb.style.width = pct + '%';
+          pl.textContent = `Uploading… ${pct}%`;
+        }
+      });
+
+      const result = await new Promise((resolve, reject) => {
+        xhr.onload = () => {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch { reject(new Error('Invalid server response')); }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(fd);
+      });
+
+      if (xhr.status !== 201) throw new Error(result.detail || result.error || JSON.stringify(result));
+
+      pb.style.width = '100%';
+      pl.textContent = 'Upload complete — converting to HLS…';
+      uploadedId = result.id;
+      showResult(result);
+      showToast('success', 'Uploaded!', 'HLS conversion running in background.');
+      startPolling(result.id);
+
+    } catch(err) {
+      showToast('error', 'Upload failed', err.message);
+      pw.style.display = 'none';
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Upload Video`;
+  });
+
+  function showResult(data) {
+    document.getElementById('rId').textContent = data.id;
+    setStatus(data.status);
+    const watchUrl = `${location.origin}/watch/${data.id}/`;
+    document.getElementById('rWatchLink').href = watchUrl;
+    document.getElementById('rWatchLink').textContent = watchUrl;
+    document.getElementById('rHlsUrl').textContent = '— processing…';
+    document.getElementById('resultCard').style.display = 'block';
+  }
+
+  function setStatus(s) {
+    const el = document.getElementById('rStatus');
+    el.className = `poll-badge ${s}`;
+    document.getElementById('rStatusText').textContent = s;
+  }
+
+  function startPolling(id) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/videos/${id}/status/`, { credentials: 'include' });
+        const data = await res.json();
+        setStatus(data.status);
+        if (data.hls_url)
+          document.getElementById('rHlsUrl').textContent = `{{ SITE_URL }}${data.hls_url}`;
+        if (data.status === 'ready') {
+          clearInterval(pollTimer);
+          showToast('success', 'Ready to stream!', 'Your video is live.');
+        }
+        if (data.status === 'failed') {
+          clearInterval(pollTimer);
+          showToast('error', 'Processing failed', data.processing_error || 'Unknown error');
+        }
+      } catch {}
+    }, 3000);
+  }
+
+  function copyWatchUrl() {
+    if (uploadedId) copyText(`${location.origin}/watch/${uploadedId}/`, 'Watch URL copied!');
+  }
+
+  // ── Chapters ──────────────────────────────────────────────────────────────
+  const _chapters = [];   // { id, title, timestamp } — id is null until saved
+
+  function _tsToSeconds(ts) {
+    // Accepts "m:ss", "mm:ss", "h:mm:ss"
+    const parts = ts.trim().split(':').map(Number);
+    if (parts.some(isNaN)) return null;
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return null;
+  }
+
+  function _secondsToTs(s) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = Math.floor(s % 60);
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  }
+
+  function _renderChapters() {
+    const list = document.getElementById('chapterList');
+    if (!list) return;
+    list.innerHTML = _chapters
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map((ch, i) => `
+        <div class="chapter-row" data-idx="${i}">
+          <span class="chapter-ts">${_secondsToTs(ch.timestamp)}</span>
+          <span class="chapter-name">${ch.title}</span>
+          <button class="chapter-del" onclick="removeChapter(${i})" title="Remove">✕</button>
+        </div>
+      `).join('');
+  }
+
+  async function addChapter() {
+    if (!uploadedId) { showToast('error', 'Upload a video first'); return; }
+    const tsRaw   = document.getElementById('newChapterTs').value.trim();
+    const title   = document.getElementById('newChapterTitle').value.trim();
+    if (!tsRaw || !title) { showToast('error', 'Enter both a timestamp and a title'); return; }
+    const seconds = _tsToSeconds(tsRaw);
+    if (seconds === null || seconds < 0) { showToast('error', 'Invalid timestamp — use m:ss or h:mm:ss'); return; }
+
+    const res = await fetch(`/api/videos/${uploadedId}/chapters/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ title, timestamp: seconds }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('error', err.timestamp?.[0] || err.title?.[0] || 'Failed to add chapter');
+      return;
+    }
+    const saved = await res.json();
+    _chapters.push({ id: saved.id, title: saved.title, timestamp: saved.timestamp });
+    _renderChapters();
+    document.getElementById('newChapterTs').value = '';
+    document.getElementById('newChapterTitle').value = '';
+    document.getElementById('newChapterTs').focus();
+    showToast('success', 'Chapter added');
+  }
+
+  async function removeChapter(idx) {
+    const ch = _chapters[idx];
+    if (!ch) return;
+    if (ch.id) {
+      const res = await fetch(`/api/chapters/${ch.id}/`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      if (!res.ok && res.status !== 204) { showToast('error', 'Failed to remove chapter'); return; }
+    }
+    _chapters.splice(idx, 1);
+    _renderChapters();
+  }
+
+  // Allow Enter key in chapter title input to add
+  document.addEventListener('DOMContentLoaded', () => {
+    const titleInput = document.getElementById('newChapterTitle');
+    if (titleInput) titleInput.addEventListener('keydown', e => { if (e.key === 'Enter') addChapter(); });
+  });
+</script>
+{% endblock %}

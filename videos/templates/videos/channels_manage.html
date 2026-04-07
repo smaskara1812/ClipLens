@@ -1,0 +1,460 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Channels — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .channels-wrap {
+    max-width: 880px; margin: 36px auto; padding: 0 24px 60px;
+  }
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+  .page-header p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  /* Create form */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 540px) { .form-grid { grid-template-columns: 1fr; } }
+  .span-2 { grid-column: 1 / -1; }
+
+  /* Channel list */
+  .channels-grid {
+    display: flex; flex-direction: column; gap: 12px;
+    margin-top: 28px;
+  }
+  .channel-row {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    transition: border-color var(--transition);
+  }
+  .channel-row:hover { border-color: var(--border-2); }
+  .channel-row-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 20px; cursor: pointer;
+  }
+  .ch-avatar-md {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--accent); display: flex; align-items: center;
+    justify-content: center; font-size: 18px; font-weight: 700;
+    color: #fff; overflow: hidden; flex-shrink: 0;
+  }
+  .ch-avatar-md img { width: 100%; height: 100%; object-fit: cover; }
+  .ch-row-info { flex: 1; overflow: hidden; }
+  .ch-row-name { font-size: 15px; font-weight: 700; }
+  .ch-row-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .ch-row-actions { display: flex; gap: 6px; }
+
+  /* Edit panel */
+  .channel-edit {
+    display: none; border-top: 1px solid var(--border);
+    padding: 20px; background: var(--surface-2);
+  }
+  .channel-edit.open { display: block; }
+  .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 540px) { .edit-grid { grid-template-columns: 1fr; } }
+  .edit-actions { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* Empty */
+  .channels-empty {
+    text-align: center; padding: 60px 24px;
+    color: var(--text-muted); font-size: 14px;
+  }
+  .channels-empty svg { width: 48px; height: 48px; margin: 0 auto 14px; color: var(--text-subtle); display: block; }
+
+  /* Video count badge */
+  .video-count-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface-3); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; color: var(--text-muted);
+  }
+
+  /* Delete confirm */
+  .delete-confirm {
+    display: none; align-items: center; gap: 10px;
+    background: var(--red-bg); border: 1px solid var(--red);
+    border-radius: var(--radius-sm); padding: 10px 14px;
+    font-size: 13px; margin-top: 10px;
+  }
+  .delete-confirm.show { display: flex; }
+  .delete-confirm span { flex: 1; color: var(--red); font-weight: 500; }
+
+  /* Slug hint */
+  .slug-preview {
+    font-size: 11px; color: var(--text-subtle); margin-top: 3px;
+  }
+  .slug-preview strong { color: var(--accent); }
+
+  /* Editor pills */
+  .editor-pill {
+    display: inline-flex; align-items: center;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: 999px; padding: 3px 10px 3px 12px;
+    font-size: 12px; color: var(--accent);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="channels-wrap">
+
+  <div class="page-header">
+    <h1>Channels</h1>
+    <p>Organise your videos into channels — like YouTube channels for your private platform.</p>
+  </div>
+
+  <!-- Create channel card -->
+  <div class="card">
+    <div class="card-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+      </svg>
+      Create New Channel
+    </div>
+
+    <form id="createForm">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Channel Name <span class="req">*</span></label>
+          <input type="text" id="newName" class="form-input" placeholder="e.g. Company Training" required />
+          <div class="slug-preview" id="slugPreview">URL: <strong>/channel/—</strong></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Custom Slug <span class="form-hint" style="text-transform:none;font-weight:400;">(optional)</span></label>
+          <input type="text" id="newSlug" class="form-input" placeholder="company-training" />
+        </div>
+        <div class="form-group span-2">
+          <label class="form-label">Description</label>
+          <textarea id="newDesc" class="form-textarea" placeholder="What kind of videos live in this channel?"></textarea>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;">
+        <button type="submit" class="btn btn-primary" id="createBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Create Channel
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Channel list -->
+  <div class="channels-grid" id="channelList">
+    {% for ch in channels %}
+    <div class="channel-row" id="chrow-{{ ch.id }}" data-id="{{ ch.id }}">
+      <div class="channel-row-header" onclick="toggleEdit('{{ ch.id }}')">
+        <div class="ch-avatar-md" style="background:{{ ch.color|default:'#6366f1' }}">
+          {% if ch.avatar %}
+            <img src="{{ ch.avatar_url }}" alt="" />
+          {% else %}
+            {{ ch.name|first|upper }}
+          {% endif %}
+        </div>
+        <div class="ch-row-info">
+          <div class="ch-row-name">
+            {{ ch.name }}
+            {% if ch.owner != request.user %}
+            <span style="font-size:10px;font-weight:600;background:var(--surface-3);color:var(--text-muted);border-radius:99px;padding:2px 8px;margin-left:6px;vertical-align:middle;">co-editor</span>
+            {% endif %}
+          </div>
+          <div class="ch-row-sub">
+            /channel/{{ ch.slug }}/
+            {% if ch.description %} · {{ ch.description|truncatechars:50 }}{% endif %}
+          </div>
+        </div>
+        <span class="video-count-badge">{{ ch.videos.count }} video{{ ch.videos.count|pluralize }}</span>
+        <div class="ch-row-actions" onclick="event.stopPropagation()">
+          <a href="/channel/{{ ch.slug }}/" class="btn btn-ghost btn-sm" target="_blank">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            View
+          </a>
+          <button class="btn btn-ghost btn-sm" onclick="toggleEdit('{{ ch.id }}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Edit
+          </button>
+        </div>
+      </div>
+      <!-- Edit panel -->
+      <div class="channel-edit" id="edit-{{ ch.id }}">
+        <div class="edit-grid">
+          <div class="form-group">
+            <label class="form-label">Channel Name</label>
+            <input type="text" class="form-input edit-name" value="{{ ch.name }}" placeholder="Channel name" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Slug</label>
+            <input type="text" class="form-input edit-slug" value="{{ ch.slug }}" placeholder="channel-slug" />
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Description</label>
+            <textarea class="form-textarea edit-desc" placeholder="Channel description…">{{ ch.description }}</textarea>
+          </div>
+        </div>
+
+        <!-- Editors section — only the primary owner sees this -->
+        {% if ch.owner == request.user %}
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+          <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">
+            Co-Editors
+            <span style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;color:var(--text-subtle);">— other editors who can upload &amp; manage this channel</span>
+          </div>
+
+          <!-- Current editors list -->
+          <div id="editors-{{ ch.id }}" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+            {% for editor in ch.editors.all %}
+            <span class="editor-pill" data-channel="{{ ch.id }}" data-uid="{{ editor.id }}">
+              <span style="font-size:11px;font-weight:600;">{{ editor.username }}</span>
+              <button onclick="removeEditor('{{ ch.id }}', {{ editor.id }}, this.parentElement)"
+                style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--text-muted);line-height:1;font-size:13px;" title="Remove">×</button>
+            </span>
+            {% empty %}
+            <span style="font-size:12px;color:var(--text-subtle);font-style:italic;">No co-editors yet.</span>
+            {% endfor %}
+          </div>
+
+          <!-- Add editor input -->
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" class="form-input editor-username-input" id="addEditorInput-{{ ch.id }}"
+              placeholder="Username to add as editor" style="max-width:240px;" />
+            <button class="btn btn-ghost btn-sm" onclick="addEditor('{{ ch.id }}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add
+            </button>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="delete-confirm" id="del-{{ ch.id }}">
+          <span>Delete "{{ ch.name }}"? This cannot be undone.</span>
+          <button class="btn btn-danger btn-sm" onclick="deleteChannel('{{ ch.id }}')">Yes, delete</button>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('del-{{ ch.id }}').classList.remove('show')">Cancel</button>
+        </div>
+        <div class="edit-actions">
+          {% if ch.owner == request.user %}
+          <button class="btn btn-danger btn-sm" onclick="document.getElementById('del-{{ ch.id }}').classList.toggle('show')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            Delete
+          </button>
+          {% endif %}
+          <button class="btn btn-secondary btn-sm" onclick="toggleEdit('{{ ch.id }}')">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="saveChannel('{{ ch.id }}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+    {% empty %}
+    <div class="channels-empty" id="emptyState">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+      No channels yet — create your first one above.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const API = '{{ SITE_URL }}/api';
+
+  // Auto-generate slug from name
+  const newName = document.getElementById('newName');
+  const newSlug = document.getElementById('newSlug');
+  const slugPreview = document.getElementById('slugPreview');
+
+  newName.addEventListener('input', () => {
+    if (!newSlug.value || newSlug.dataset.manualEdit !== 'true') {
+      const auto = newName.value.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+      newSlug.value = auto;
+      slugPreview.innerHTML = `URL: <strong>/channel/${auto || '—'}/</strong>`;
+    }
+  });
+  newSlug.addEventListener('input', () => {
+    newSlug.dataset.manualEdit = 'true';
+    slugPreview.innerHTML = `URL: <strong>/channel/${newSlug.value || '—'}/</strong>`;
+  });
+
+  // Create channel
+  document.getElementById('createForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = document.getElementById('newName').value.trim();
+    if (!name) return showToast('error', 'Name required', 'Enter a channel name.');
+
+    const btn = document.getElementById('createBtn');
+    btn.disabled = true; btn.textContent = 'Creating…';
+
+    try {
+      const res = await fetch(`${API}/channels/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          slug: document.getElementById('newSlug').value.trim() || undefined,
+          description: document.getElementById('newDesc').value.trim(),
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.slug?.[0] || data.name?.[0] || JSON.stringify(data));
+
+      showToast('success', 'Channel created!', data.name);
+      document.getElementById('createForm').reset();
+      slugPreview.innerHTML = `URL: <strong>/channel/—</strong>`;
+      newSlug.dataset.manualEdit = 'false';
+      addChannelRow(data);
+      document.getElementById('emptyState')?.remove();
+
+    } catch(err) {
+      showToast('error', 'Failed to create', err.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Create Channel`;
+  });
+
+  function toggleEdit(id) {
+    const panel = document.getElementById('edit-' + id);
+    panel.classList.toggle('open');
+  }
+
+  async function saveChannel(id) {
+    const row = document.getElementById('chrow-' + id);
+    const name = row.querySelector('.edit-name').value.trim();
+    const slug = row.querySelector('.edit-slug').value.trim();
+    const desc = row.querySelector('.edit-desc').value.trim();
+    if (!name) return showToast('error', 'Name required', '');
+
+    try {
+      const res = await fetch(`${API}/channels/${id}/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, slug, description: desc })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.slug?.[0] || data.name?.[0] || JSON.stringify(data));
+
+      showToast('success', 'Saved!', `"${data.name}" updated.`);
+      // Update display
+      row.querySelector('.ch-row-name').textContent = data.name;
+      row.querySelector('.ch-row-sub').textContent = `/channel/${data.slug}/` + (data.description ? ` · ${data.description.substring(0,50)}` : '');
+      row.querySelector('.ch-avatar-md').textContent = data.name[0].toUpperCase();
+      toggleEdit(id);
+    } catch(err) {
+      showToast('error', 'Save failed', err.message);
+    }
+  }
+
+  async function deleteChannel(id) {
+    try {
+      const res = await fetch(`${API}/channels/${id}/`, { method: 'DELETE', credentials: 'include' });
+      if (!res.ok) throw new Error('Delete failed');
+      document.getElementById('chrow-' + id).remove();
+      showToast('success', 'Channel deleted', '');
+      if (!document.querySelector('.channel-row'))
+        document.getElementById('channelList').innerHTML = `<div class="channels-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;color:var(--text-subtle);display:block;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>No channels yet.</div>`;
+    } catch(err) {
+      showToast('error', 'Delete failed', err.message);
+    }
+  }
+
+  function addChannelRow(ch) {
+    const list = document.getElementById('channelList');
+    const initial = ch.name[0].toUpperCase();
+    list.insertAdjacentHTML('afterbegin', `
+      <div class="channel-row" id="chrow-${ch.id}" data-id="${ch.id}">
+        <div class="channel-row-header" onclick="toggleEdit('${ch.id}')">
+          <div class="ch-avatar-md">${initial}</div>
+          <div class="ch-row-info">
+            <div class="ch-row-name">${ch.name}</div>
+            <div class="ch-row-sub">/channel/${ch.slug}/</div>
+          </div>
+          <span class="video-count-badge">0 videos</span>
+          <div class="ch-row-actions" onclick="event.stopPropagation()">
+            <a href="/channel/${ch.slug}/" class="btn btn-ghost btn-sm" target="_blank">View</a>
+            <button class="btn btn-ghost btn-sm" onclick="toggleEdit('${ch.id}')">Edit</button>
+          </div>
+        </div>
+        <div class="channel-edit" id="edit-${ch.id}">
+          <div class="edit-grid">
+            <div class="form-group">
+              <label class="form-label">Channel Name</label>
+              <input type="text" class="form-input edit-name" value="${ch.name}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Slug</label>
+              <input type="text" class="form-input edit-slug" value="${ch.slug}" />
+            </div>
+            <div class="form-group" style="grid-column:1/-1;">
+              <label class="form-label">Description</label>
+              <textarea class="form-textarea edit-desc">${ch.description||''}</textarea>
+            </div>
+          </div>
+          <div class="delete-confirm" id="del-${ch.id}">
+            <span>Delete "${ch.name}"? Cannot be undone.</span>
+            <button class="btn btn-danger btn-sm" onclick="deleteChannel('${ch.id}')">Yes, delete</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('del-${ch.id}').classList.remove('show')">Cancel</button>
+          </div>
+          <div class="edit-actions">
+            <button class="btn btn-danger btn-sm" onclick="document.getElementById('del-${ch.id}').classList.toggle('show')">Delete</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleEdit('${ch.id}')">Cancel</button>
+            <button class="btn btn-primary btn-sm" onclick="saveChannel('${ch.id}')">Save Changes</button>
+          </div>
+        </div>
+      </div>`);
+  }
+
+  // ── Editor management ────────────────────────────────────────────────────
+  function getCsrf() {
+    return document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('csrftoken='))?.split('=')[1]||'';
+  }
+
+  async function addEditor(channelId) {
+    const input = document.getElementById(`addEditorInput-${channelId}`);
+    const username = input.value.trim();
+    if (!username) return showToast('error', 'Enter a username', '');
+
+    const res = await fetch(`${API}/channels/${channelId}/editors/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf() },
+      body: JSON.stringify({ username }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast('error', 'Could not add editor', data.error || JSON.stringify(data));
+      return;
+    }
+
+    // Append pill to list
+    const container = document.getElementById(`editors-${channelId}`);
+    // Remove "no co-editors" placeholder if present
+    container.querySelectorAll('span[style*="italic"]').forEach(el => el.remove());
+    const pill = document.createElement('span');
+    pill.className = 'editor-pill';
+    pill.dataset.uid = data.id;
+    pill.innerHTML = `<span style="font-size:11px;font-weight:600;">${data.username}</span>
+      <button onclick="removeEditor('${channelId}', ${data.id}, this.parentElement)"
+        style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--text-muted);line-height:1;font-size:13px;" title="Remove">×</button>`;
+    container.appendChild(pill);
+    input.value = '';
+    showToast('success', `${data.username} added as editor`, '');
+  }
+
+  async function removeEditor(channelId, userId, pillEl) {
+    const res = await fetch(`${API}/channels/${channelId}/editors/${userId}/`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrf() },
+    });
+    if (res.ok || res.status === 204) {
+      pillEl.remove();
+      showToast('success', 'Editor removed', '');
+    } else {
+      showToast('error', 'Could not remove editor', '');
+    }
+  }
+</script>
+{% endblock %}

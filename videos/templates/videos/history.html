@@ -1,0 +1,323 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}Watch History — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .page-content { max-width: 1000px; margin: 0 auto; padding: 28px 24px; }
+
+  .page-hero { margin-bottom: 24px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .page-hero h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+  .page-hero h1 svg { width: 24px; height: 24px; color: var(--accent); }
+  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  .history-list { display: flex; flex-direction: column; gap: 12px; }
+
+  .history-row {
+    display: flex; align-items: center; gap: 0;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    transition: border-color var(--transition), box-shadow var(--transition);
+    position: relative;
+  }
+  .history-row:hover { border-color: var(--border-2); box-shadow: var(--shadow-sm); }
+
+  .hist-link {
+    display: flex; align-items: center; gap: 16px;
+    flex: 1; min-width: 0; padding: 12px; text-decoration: none; color: inherit;
+  }
+
+  .hist-thumb { width: 160px; flex-shrink: 0; aspect-ratio: 16/9; border-radius: var(--radius-sm); background: var(--surface-3); position: relative; overflow: hidden; }
+  .hist-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .hist-thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); font-size: 24px; }
+  .hist-dur { position: absolute; bottom: 5px; right: 6px; background: rgba(0,0,0,.78); color: #fff; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+  .hist-progress { position: absolute; bottom: 0; left: 0; height: 3px; background: var(--red); border-radius: 0 0 0 var(--radius-sm); }
+  .hist-info { flex: 1; min-width: 0; }
+  .hist-title { font-size: 15px; font-weight: 600; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-meta { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hist-completed { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-size: 11px; font-weight: 600; }
+
+  /* 3-dot menu */
+  .hist-menu-wrap { padding: 0 12px 0 0; flex-shrink: 0; position: relative; }
+  .hist-menu-btn {
+    width: 32px; height: 32px; border-radius: var(--radius-sm);
+    background: none; border: 1px solid transparent; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), color var(--transition);
+  }
+  .hist-menu-btn:hover { background: var(--surface-3); border-color: var(--border-2); color: var(--text); }
+  .hist-menu-btn svg { width: 14px; height: 14px; }
+
+  /* Dropdown */
+  .hist-dropdown {
+    position: fixed; z-index: 150;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow);
+    min-width: 180px; padding: 4px 0;
+    display: none;
+  }
+  .hist-dropdown.open { display: block; }
+  .hist-dropdown-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px; font-size: 13px; font-weight: 500;
+    color: var(--text-muted); background: none; border: none;
+    cursor: pointer; width: 100%; text-align: left;
+    transition: background var(--transition), color var(--transition);
+  }
+  .hist-dropdown-item:hover { background: var(--surface-3); color: var(--text); }
+  .hist-dropdown-item.danger:hover { background: var(--red-bg); color: var(--red); }
+  .hist-dropdown-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .hist-dropdown-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* Playlist picker modal */
+  .pl-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(4px); z-index: 200; display: none; align-items: center; justify-content: center; }
+  .pl-modal-overlay.open { display: flex; }
+  .pl-modal { background: var(--surface); border: 1px solid var(--border-2); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 360px; }
+  .pl-modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .pl-modal-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; margin-bottom: 16px; }
+  .pl-modal-item { padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13px; cursor: pointer; background: none; border: 1px solid transparent; text-align: left; color: var(--text); transition: background var(--transition), border-color var(--transition); }
+  .pl-modal-item:hover { background: var(--surface-3); border-color: var(--border-2); }
+  .pl-modal-empty { font-size: 13px; color: var(--text-muted); text-align: center; padding: 20px 0; }
+  .pl-modal-actions { display: flex; justify-content: flex-end; }
+
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; gap: 14px; text-align: center; }
+  .empty-state svg { width: 56px; height: 56px; color: var(--text-subtle); }
+  .empty-state h3 { font-size: 18px; font-weight: 700; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+
+  @media (max-width: 640px) { .hist-thumb { width: 110px; } .hist-title { font-size: 13px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-content">
+    <div class="page-hero">
+      <div>
+        <h1>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Watch History
+        </h1>
+        <p id="histCount">{{ history|length }} video{{ history|length|pluralize }} watched</p>
+      </div>
+      {% if history %}
+      <button class="btn btn-ghost btn-sm" onclick="clearAllHistory()">Clear all history</button>
+      {% endif %}
+    </div>
+
+    {% if history %}
+    <div class="history-list" id="historyList">
+      {% for item in history %}
+      <div class="history-row" id="hrow-{{ item.video.id }}">
+        <a href="{{ item.video.watch_url }}{% if item.progress_seconds and not item.completed %}?t={{ item.progress_seconds|floatformat:0 }}{% endif %}" class="hist-link">
+          <div class="hist-thumb">
+            {% if item.video.thumbnail_url %}<img src="{{ item.video.thumbnail_url }}" alt="" loading="lazy" />
+            {% else %}<div class="hist-thumb-ph">▶</div>{% endif %}
+            {% if item.video.duration %}<span class="hist-dur">{{ item.video.duration|format_duration }}</span>{% endif %}
+            {% if item.progress_seconds and item.video.duration %}
+            <div class="hist-progress" style="width:0" data-progress="{{ item.progress_seconds }}" data-duration="{{ item.video.duration }}"></div>
+            {% endif %}
+          </div>
+          <div class="hist-info">
+            <div class="hist-title">{{ item.video.title }}</div>
+            <div class="hist-meta">
+              <span>{{ item.video.channel.name }}</span>
+              <span>·</span>
+              <span>{{ item.video.views_count }} views</span>
+              <span>·</span>
+              <span>Watched {{ item.watched_at|timesince }} ago</span>
+              {% if item.completed %}
+              <span class="hist-completed">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                Watched
+              </span>
+              {% elif item.progress_seconds %}
+              <span style="color:var(--text-subtle);">{{ item.progress_seconds|floatformat:0 }}s in</span>
+              {% endif %}
+            </div>
+          </div>
+        </a>
+        <div class="hist-menu-wrap">
+          <button class="hist-menu-btn" onclick="toggleHistMenu(event, '{{ item.video.id }}')" title="More options">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <h3>No watch history</h3>
+      <p>Videos you watch will appear here so you can pick up where you left off.</p>
+      <a href="{% url 'player' %}" class="btn btn-primary">Browse Videos</a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Shared dropdown portal -->
+<div class="hist-dropdown" id="histDropdown">
+  <button class="hist-dropdown-item" onclick="addToSaved()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+    Save video
+  </button>
+  <button class="hist-dropdown-item" onclick="openPlaylistPicker()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/></svg>
+    Add to playlist
+  </button>
+  <div class="hist-dropdown-sep"></div>
+  <button class="hist-dropdown-item danger" onclick="removeFromHistory()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+    Remove from history
+  </button>
+</div>
+
+<!-- Playlist picker modal -->
+<div class="pl-modal-overlay" id="plModal">
+  <div class="pl-modal">
+    <div class="pl-modal-title">Add to playlist</div>
+    <div class="pl-modal-list" id="plModalList">
+      <div class="pl-modal-empty">Loading…</div>
+    </div>
+    <div class="pl-modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closePlModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Fix progress bar widths
+document.querySelectorAll('.hist-progress').forEach(bar => {
+  const p = parseFloat(bar.dataset.progress), d = parseFloat(bar.dataset.duration);
+  if (d > 0) bar.style.width = Math.min(100, (p / d) * 100) + '%';
+});
+
+function getCsrf() {
+  return document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+// ── Dropdown state ────────────────────────────────────────────────────────────
+const _dropdown = document.getElementById('histDropdown');
+let _activeVideoId = null;
+
+function toggleHistMenu(evt, videoId) {
+  evt.stopPropagation();
+  if (_dropdown.classList.contains('open') && _activeVideoId === videoId) {
+    _dropdown.classList.remove('open'); return;
+  }
+  _activeVideoId = videoId;
+  const btn = evt.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  const menuW = 180;
+  let left = rect.right - menuW;
+  if (left < 8) left = 8;
+  _dropdown.style.top  = (rect.bottom + 4) + 'px';
+  _dropdown.style.left = left + 'px';
+  _dropdown.classList.add('open');
+}
+
+document.addEventListener('click', e => { if (!_dropdown.contains(e.target)) _dropdown.classList.remove('open'); });
+document.addEventListener('scroll', () => _dropdown.classList.remove('open'), true);
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+async function addToSaved() {
+  _dropdown.classList.remove('open');
+  const res = await fetch(`/api/videos/${_activeVideoId}/save/`, {
+    method: 'POST', headers: { 'X-CSRFToken': getCsrf() },
+  });
+  const data = await res.json();
+  showToast('success', data.saved ? 'Saved' : 'Removed from saved');
+}
+
+async function removeFromHistory() {
+  _dropdown.classList.remove('open');
+  const id = _activeVideoId;
+  const res = await fetch(`/api/videos/${id}/history/`, {
+    method: 'DELETE', headers: { 'X-CSRFToken': getCsrf() },
+  });
+  if (res.ok) {
+    const row = document.getElementById('hrow-' + id);
+    if (row) row.remove();
+    showToast('success', 'Removed from history');
+    // Update count
+    const remaining = document.querySelectorAll('.history-row').length;
+    const el = document.getElementById('histCount');
+    if (el) el.textContent = `${remaining} video${remaining !== 1 ? 's' : ''} watched`;
+  } else {
+    showToast('error', 'Failed to remove');
+  }
+}
+
+// ── Playlist picker ───────────────────────────────────────────────────────────
+let _playlists = null;
+
+async function openPlaylistPicker() {
+  _dropdown.classList.remove('open');
+  const list = document.getElementById('plModalList');
+  document.getElementById('plModal').classList.add('open');
+
+  if (!_playlists) {
+    list.innerHTML = '<div class="pl-modal-empty">Loading…</div>';
+    try {
+      const res = await fetch('/api/playlists/');
+      _playlists = await res.json();
+    } catch {
+      list.innerHTML = '<div class="pl-modal-empty">Failed to load playlists.</div>';
+      return;
+    }
+  }
+
+  if (!_playlists.length) {
+    list.innerHTML = '<div class="pl-modal-empty">No playlists yet. <a href="/playlists/" style="color:var(--accent)">Create one</a>.</div>';
+    return;
+  }
+
+  list.innerHTML = _playlists.map(pl => `
+    <button class="pl-modal-item" onclick="addToPlaylist('${pl.id}', this)">
+      ${pl.title}
+    </button>
+  `).join('');
+}
+
+async function addToPlaylist(playlistId, btn) {
+  btn.disabled = true;
+  const res = await fetch(`/api/playlists/${playlistId}/videos/${_activeVideoId}/`, {
+    method: 'POST', headers: { 'X-CSRFToken': getCsrf() },
+  });
+  closePlModal();
+  if (res.ok || res.status === 200) {
+    showToast('success', 'Added to playlist');
+  } else {
+    const d = await res.json().catch(() => ({}));
+    showToast('error', d.error || 'Failed to add to playlist');
+  }
+}
+
+function closePlModal() {
+  document.getElementById('plModal').classList.remove('open');
+}
+
+document.getElementById('plModal').addEventListener('click', function(e) {
+  if (e.target === this) closePlModal();
+});
+
+// ── Clear all ─────────────────────────────────────────────────────────────────
+async function clearAllHistory() {
+  if (!confirm('Remove all videos from watch history?')) return;
+  const rows = [...document.querySelectorAll('.history-row')];
+  let removed = 0;
+  for (const row of rows) {
+    const id = row.id.replace('hrow-', '');
+    const res = await fetch(`/api/videos/${id}/history/`, {
+      method: 'DELETE', headers: { 'X-CSRFToken': getCsrf() },
+    });
+    if (res.ok) { row.remove(); removed++; }
+  }
+  showToast('success', `Cleared ${removed} item${removed !== 1 ? 's' : ''}`);
+  const el = document.getElementById('histCount');
+  if (el) el.textContent = '0 videos watched';
+}
+</script>
+{% endblock %}

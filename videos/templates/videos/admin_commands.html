@@ -1,0 +1,529 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Management Commands — ClipStream Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .cmd-wrap { max-width: 960px; margin: 0 auto; padding: 24px 24px 80px; }
+
+  /* Admin nav tabs */
+  .admin-nav {
+    display: flex; gap: 4px; margin-bottom: 28px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); padding-bottom: 2px;
+  }
+  .admin-nav a {
+    padding: 7px 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    font-size: 13px; font-weight: 600; text-decoration: none;
+    color: var(--text-muted); border: 1px solid transparent;
+    transition: all var(--transition);
+  }
+  .admin-nav a:hover { color: var(--text); background: var(--surface-2); }
+  .admin-nav a.active {
+    color: var(--accent); border-color: var(--border) var(--border) var(--surface);
+    background: var(--surface); margin-bottom: -1px;
+  }
+
+  /* Page header */
+  .cmd-header { margin-bottom: 24px; }
+  .cmd-header h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .cmd-header p  { font-size: 13px; color: var(--text-muted); }
+
+  /* Command cards grid */
+  .cmd-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 900px) { .cmd-grid { grid-template-columns: 1fr; } }
+
+  .cmd-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .cmd-card-head {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; gap: 12px;
+  }
+  .cmd-icon {
+    width: 36px; height: 36px; border-radius: var(--radius-sm);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-size: 18px;
+  }
+  .cmd-title { font-size: 14px; font-weight: 700; }
+  .cmd-desc  { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
+  .cmd-badge {
+    margin-left: auto; flex-shrink: 0;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; padding: 2px 8px; border-radius: 999px;
+  }
+  .cmd-badge.simple   { background: rgba(34,197,94,.12); color: var(--green, #22c55e); }
+  .cmd-badge.custom   { background: var(--accent-soft); color: var(--accent); }
+
+  /* Fields area */
+  .cmd-fields { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+  .field-row { display: flex; flex-direction: column; gap: 4px; }
+  .field-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted);
+  }
+  .field-hint { font-size: 11px; color: var(--text-subtle); margin-top: 2px; }
+
+  .form-input, .form-select {
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); padding: 7px 10px;
+    font-size: 13px; color: var(--text); outline: none; width: 100%;
+    transition: border-color var(--transition);
+  }
+  .form-input:focus, .form-select:focus { border-color: var(--accent); }
+
+  /* Toggle / checkbox row */
+  .toggle-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--text-muted); cursor: pointer;
+  }
+  .toggle-row input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+
+  /* Range slider */
+  .range-row { display: flex; align-items: center; gap: 10px; }
+  .range-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .range-val {
+    min-width: 38px; text-align: center; font-size: 12px; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 4px; padding: 2px 6px;
+  }
+
+  /* Run button area */
+  .cmd-footer {
+    padding: 12px 16px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .cmd-run-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 18px; border-radius: var(--radius-sm);
+    background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+    border: none; cursor: pointer; transition: opacity .15s;
+  }
+  .cmd-run-btn:hover { opacity: .88; }
+  .cmd-run-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .cmd-run-btn svg { width: 14px; height: 14px; }
+
+  .cmd-dryrun-hint { font-size: 12px; color: var(--text-subtle); flex: 1; }
+
+  /* Output terminal */
+  .cmd-output {
+    display: none; margin: 0 16px 14px;
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: var(--radius-sm);
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+    line-height: 1.6; color: #c9d1d9;
+    max-height: 240px; overflow-y: auto;
+    padding: 12px 14px; white-space: pre-wrap; word-break: break-all;
+  }
+  .cmd-output.show { display: block; }
+  .cmd-output .out-success { color: #3fb950; }
+  .cmd-output .out-error   { color: #f85149; }
+  .cmd-output .out-info    { color: #79c0ff; }
+
+  /* Spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #fff; border-radius: 50%;
+    animation: spin .6s linear infinite; flex-shrink: 0;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cmd-wrap">
+
+  <nav class="admin-nav">
+    <a href="{% url 'user_management' %}">Users</a>
+    <a href="{% url 'categories_manage' %}">Categories</a>
+    <a href="{% url 'admin_commands' %}" class="active">Commands</a>
+  </nav>
+
+  <div class="cmd-header">
+    <h1>⚙️ Management Commands</h1>
+    <p>Run background operations and maintenance tasks. All commands are executed synchronously and output is shown inline. Use <strong>Dry Run</strong> to preview changes before applying.</p>
+  </div>
+
+  <div class="cmd-grid">
+
+    <!-- ── assign_role ──────────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-assign_role">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(99,102,241,.12);">👤</div>
+        <div>
+          <div class="cmd-title">Assign Role</div>
+          <div class="cmd-desc">Grant or change a user's role (viewer / editor / superadmin).</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">User</label>
+          <select class="form-select" id="assign_role-username">
+            <option value="">— select user —</option>
+            {% for u in users %}
+            <option value="{{ u.username }}">{{ u.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Role</label>
+          <select class="form-select" id="assign_role-role">
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="superadmin">Super Admin</option>
+          </select>
+        </div>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('assign_role', {
+          usernames: [document.getElementById('assign_role-username').value],
+          role: document.getElementById('assign_role-role').value
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+        <span class="cmd-dryrun-hint">Changes are applied immediately.</span>
+      </div>
+      <pre class="cmd-output" id="out-assign_role"></pre>
+    </div>
+
+    <!-- ── reanalyse_videos ─────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-reanalyse_videos">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(245,158,11,.12);">🎬</div>
+        <div>
+          <div class="cmd-title">Re-analyse Videos</div>
+          <div class="cmd-desc">Re-queue YOLO + BLIP + CLIP + face analysis for all or a single video.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(UUID — leave blank for all)</span></label>
+          <input class="form-input" id="reanalyse_videos-video_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" />
+        </div>
+        <div class="field-row">
+          <label class="field-label">Include status</label>
+          <input class="form-input" id="reanalyse_videos-include_status" value="ready" placeholder="ready,processing" />
+          <span class="field-hint">Comma-separated statuses.</span>
+        </div>
+        <label class="toggle-row">
+          <input type="checkbox" id="reanalyse_videos-dry_run" /> Dry Run (preview only)
+        </label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('reanalyse_videos', {
+          video_id: document.getElementById('reanalyse_videos-video_id').value || undefined,
+          include_status: document.getElementById('reanalyse_videos-include_status').value,
+          dry_run: document.getElementById('reanalyse_videos-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-reanalyse_videos"></pre>
+    </div>
+
+    <!-- ── ingest_videos ────────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-ingest_videos">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(34,197,94,.12);">📥</div>
+        <div>
+          <div class="cmd-title">Ingest Videos</div>
+          <div class="cmd-desc">Scan <code>media/originals/</code> and create Video records for new files.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Channel <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="ingest_videos-channel">
+            <option value="">— all / no channel —</option>
+            {% for ch in channels %}
+            <option value="{{ ch.name }}">{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Subdirectory <span style="font-weight:400;text-transform:none;">(inside originals/)</span></label>
+          <input class="form-input" id="ingest_videos-subdir" placeholder="leave blank for root" />
+        </div>
+        <div class="field-row">
+          <label class="field-label">Visibility</label>
+          <select class="form-select" id="ingest_videos-visibility">
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+            <option value="unlisted">Unlisted</option>
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="ingest_videos-dry_run" /> Dry Run</label>
+        <label class="toggle-row"><input type="checkbox" id="ingest_videos-reprocess" /> Reprocess existing records</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('ingest_videos', {
+          channel: document.getElementById('ingest_videos-channel').value || undefined,
+          subdir:  document.getElementById('ingest_videos-subdir').value  || undefined,
+          visibility: document.getElementById('ingest_videos-visibility').value,
+          dry_run:    document.getElementById('ingest_videos-dry_run').checked,
+          reprocess:  document.getElementById('ingest_videos-reprocess').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-ingest_videos"></pre>
+    </div>
+
+    <!-- ── regenerate_captions ──────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-regenerate_captions">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(139,92,246,.12);">💬</div>
+        <div>
+          <div class="cmd-title">Regenerate Captions</div>
+          <div class="cmd-desc">Re-queue Whisper transcription for all or a single video.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(leave blank for all)</span></label>
+          <input class="form-input" id="regenerate_captions-video_id" placeholder="UUID" />
+        </div>
+        <div class="field-row">
+          <label class="field-label">Language</label>
+          <input class="form-input" id="regenerate_captions-language" value="en" placeholder="en" style="max-width:80px;" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="regenerate_captions-force" /> Force (delete &amp; re-generate existing)</label>
+        <label class="toggle-row"><input type="checkbox" id="regenerate_captions-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('regenerate_captions', {
+          video_id: document.getElementById('regenerate_captions-video_id').value || undefined,
+          language: document.getElementById('regenerate_captions-language').value,
+          force:    document.getElementById('regenerate_captions-force').checked,
+          dry_run:  document.getElementById('regenerate_captions-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-regenerate_captions"></pre>
+    </div>
+
+    <!-- ── propagate_identities ─────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-propagate_identities">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(236,72,153,.12);">🧑‍🤝‍🧑</div>
+        <div>
+          <div class="cmd-title">Propagate Identities</div>
+          <div class="cmd-desc">Re-match auto-named faces against named identities across all videos.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Similarity threshold</label>
+          <div class="range-row">
+            <input type="range" min="0.3" max="0.9" step="0.05" value="0.45"
+                   id="propagate_identities-threshold"
+                   oninput="document.getElementById('prop-thresh-val').textContent=this.value" />
+            <span class="range-val" id="prop-thresh-val">0.45</span>
+          </div>
+          <span class="field-hint">Higher = stricter matching (fewer merges).</span>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="propagate_identities-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('propagate_identities', {
+          threshold: parseFloat(document.getElementById('propagate_identities-threshold').value),
+          dry_run:   document.getElementById('propagate_identities-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-propagate_identities"></pre>
+    </div>
+
+    <!-- ── auto_confirm_similar ─────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-auto_confirm_similar">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(20,184,166,.12);">✅</div>
+        <div>
+          <div class="cmd-title">Auto-confirm Faces</div>
+          <div class="cmd-desc">Automatically confirm high-confidence unreviewed face crops.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Confidence threshold</label>
+          <div class="range-row">
+            <input type="range" min="0.5" max="0.99" step="0.01" value="0.75"
+                   id="auto_confirm_similar-threshold"
+                   oninput="document.getElementById('auto-thresh-val').textContent=this.value" />
+            <span class="range-val" id="auto-thresh-val">0.75</span>
+          </div>
+          <span class="field-hint">Higher = only confirm very strong matches.</span>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(optional scope)</span></label>
+          <input class="form-input" id="auto_confirm_similar-video_id" placeholder="UUID or blank for all" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="auto_confirm_similar-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('auto_confirm_similar', {
+          threshold: parseFloat(document.getElementById('auto_confirm_similar-threshold').value),
+          video_id:  document.getElementById('auto_confirm_similar-video_id').value || undefined,
+          dry_run:   document.getElementById('auto_confirm_similar-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-auto_confirm_similar"></pre>
+    </div>
+
+    <!-- ── patch_master_playlists ────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-patch_master_playlists">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(99,102,241,.12);">🔧</div>
+        <div>
+          <div class="cmd-title">Patch Master Playlists</div>
+          <div class="cmd-desc">Add RESOLUTION attribute to all HLS master.m3u8 files. No re-encoding.</div>
+        </div>
+        <span class="cmd-badge simple">Simple</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(leave blank for all ready videos)</span></label>
+          <input class="form-input" id="patch_master_playlists-video_id" placeholder="UUID or blank for all" />
+        </div>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('patch_master_playlists', {
+          video_id: document.getElementById('patch_master_playlists-video_id').value || undefined
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-patch_master_playlists"></pre>
+    </div>
+
+    <!-- ── rename_auto_identities ────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-rename_auto_identities">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(234,179,8,.12);">🏷️</div>
+        <div>
+          <div class="cmd-title">Rename Auto Identities</div>
+          <div class="cmd-desc">Rename "Person N" identities to globally unique "Person #&lt;pk&gt;" names.</div>
+        </div>
+        <span class="cmd-badge simple">Simple</span>
+      </div>
+      <div class="cmd-fields">
+        <label class="toggle-row"><input type="checkbox" id="rename_auto_identities-dry_run" /> Dry Run (preview only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('rename_auto_identities', {
+          dry_run: document.getElementById('rename_auto_identities-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-rename_auto_identities"></pre>
+    </div>
+
+    <!-- ── fill_blip_descriptions ────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-fill_blip_descriptions">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(16,185,129,.12);">🖼️</div>
+        <div>
+          <div class="cmd-title">Fill Scene Descriptions</div>
+          <div class="cmd-desc">Re-queue frame analysis for videos missing BLIP/Florence-2 scene descriptions.</div>
+        </div>
+        <span class="cmd-badge simple">Simple</span>
+      </div>
+      <div class="cmd-fields">
+        <label class="toggle-row"><input type="checkbox" id="fill_blip_descriptions-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('fill_blip_descriptions', {
+          dry_run: document.getElementById('fill_blip_descriptions-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-fill_blip_descriptions"></pre>
+    </div>
+
+  </div><!-- /.cmd-grid -->
+</div>
+
+<script>
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim())
+    .find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+async function runCommand(cmd, rawArgs) {
+  // Strip undefined values
+  const args = {};
+  for (const [k, v] of Object.entries(rawArgs)) {
+    if (v !== undefined && v !== '') args[k] = v;
+  }
+
+  const outEl = document.getElementById('out-' + cmd);
+  const btn   = document.querySelector(`#card-${cmd} .cmd-run-btn`);
+
+  // Show terminal
+  outEl.className = 'cmd-output show';
+  outEl.innerHTML = '<span class="out-info">Running ' + cmd + '…</span>\n';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running…';
+
+  try {
+    const res = await fetch('/api/admin/commands/run/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      credentials: 'include',
+      body: JSON.stringify({ command: cmd, args }),
+    });
+    const d = await res.json();
+
+    let html = '';
+    if (d.output) html += esc(d.output);
+    if (d.errors) html += '\n<span class="out-error">' + esc(d.errors) + '</span>';
+    if (d.exception) html += '\n<span class="out-error">Exception: ' + esc(d.exception) + '</span>';
+
+    if (res.ok && d.ok) {
+      outEl.innerHTML = '<span class="out-success">✓ Done</span>\n\n' + html;
+    } else {
+      outEl.innerHTML = '<span class="out-error">✗ Failed</span>\n\n' + html;
+    }
+  } catch (err) {
+    outEl.innerHTML = '<span class="out-error">Network error: ' + esc(String(err)) + '</span>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M5 12h14M12 5l7 7-7 7"/></svg> Run';
+    // Scroll output to bottom
+    outEl.scrollTop = outEl.scrollHeight;
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

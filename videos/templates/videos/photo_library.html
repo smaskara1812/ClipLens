@@ -1,0 +1,678 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Photos — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .content-area { padding: 20px 24px 60px; }
+
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+  }
+  .page-header h1 { font-size: 22px; font-weight: 800; }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; margin-bottom: 20px;
+  }
+  .filter-select {
+    appearance: none; -webkit-appearance: none;
+    background: var(--surface-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+    border: 1px solid var(--border-2); border-radius: 999px;
+    padding: 6px 30px 6px 14px; font-size: 13px; font-weight: 500;
+    color: var(--text-muted); cursor: pointer;
+    transition: all var(--transition); outline: none;
+  }
+  .filter-select:hover, .filter-select:focus { border-color: var(--accent); color: var(--text); }
+
+  /* Photo grid */
+  .photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 640px) { .photo-grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+
+  .pcard {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; cursor: pointer;
+    transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+    text-decoration: none; color: inherit; display: block;
+  }
+  .pcard:hover {
+    transform: translateY(-3px); box-shadow: var(--shadow);
+    border-color: var(--border-2);
+  }
+  .pcard-thumb {
+    aspect-ratio: 1/1; background: var(--surface-3);
+    position: relative; overflow: hidden;
+  }
+  .pcard-thumb img {
+    width: 100%; height: 100%; object-fit: cover;
+    transition: transform 0.3s;
+  }
+  .pcard:hover .pcard-thumb img { transform: scale(1.06); }
+  .pcard-thumb-ph {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-subtle);
+  }
+  .pcard-thumb-ph svg { width: 36px; height: 36px; }
+  .pcard-body { padding: 10px 12px 12px; }
+  .pcard-title {
+    font-size: 13px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-bottom: 4px;
+  }
+  .pcard-meta {
+    font-size: 11px; color: var(--text-muted); display: flex; gap: 8px;
+  }
+  .pcard-status {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(0,0,0,.65); color: #fff;
+    font-size: 10px; font-weight: 600; padding: 2px 7px;
+    border-radius: 4px; text-transform: uppercase;
+  }
+  .pcard-status.processing { background: var(--accent); }
+  .pcard-status.failed { background: var(--red); }
+
+  /* Load more */
+  .load-more-wrap { text-align: center; margin-top: 32px; }
+  .load-more-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 28px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    color: var(--text); font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all var(--transition);
+  }
+  .load-more-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .load-more-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .empty-state {
+    text-align: center; padding: 80px 20px;
+    color: var(--text-muted); grid-column: 1/-1;
+  }
+  .empty-state svg { width: 56px; height: 56px; margin: 0 auto 16px; display: block; opacity: .35; }
+  .empty-state h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+  .empty-state p  { font-size: 14px; }
+
+  /* Bulk select */
+  .pcard { position: relative; }
+  .pcard-check {
+    position: absolute; top: 7px; left: 7px; z-index: 2;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(0,0,0,.5); border: 2px solid rgba(255,255,255,.75);
+    opacity: 0; pointer-events: none; transition: opacity .15s;
+  }
+  .select-mode .pcard:hover .pcard-check,
+  .select-mode .pcard.selected .pcard-check { opacity: 1; }
+  .select-mode .pcard.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .select-mode .pcard.selected .pcard-check {
+    background: var(--accent); border-color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .select-mode .pcard.selected .pcard-check::after {
+    content: ''; width: 9px; height: 5px;
+    border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+    transform: rotate(-45deg) translate(1px,-1px);
+  }
+  .select-mode .pcard { cursor: pointer; }
+
+  /* Bulk action bar */
+  .bulk-bar {
+    display: none; position: sticky; top: 56px; z-index: 100;
+    background: var(--accent); color: #fff; border-radius: var(--radius);
+    padding: 9px 16px; margin-bottom: 14px;
+    align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .bulk-bar.visible { display: flex; }
+  .bulk-count { font-weight: 700; flex: 1; font-size: 13px; }
+  .bulk-bar button {
+    background: rgba(255,255,255,.2); color: #fff; border: none;
+    padding: 5px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: background .15s;
+  }
+  .bulk-bar button:hover { background: rgba(255,255,255,.35); }
+  .bulk-bar .btn-danger { background: rgba(239,68,68,.45); }
+  .bulk-bar .btn-danger:hover { background: rgba(239,68,68,.7); }
+
+  /* Timeline date headers */
+  .date-group-header {
+    grid-column: 1 / -1;
+    font-size: 13px; font-weight: 700; color: var(--text-muted);
+    padding: 8px 0 4px; border-bottom: 1px solid var(--border);
+    margin-bottom: 4px; letter-spacing: 0.3px; text-transform: uppercase;
+  }
+
+  /* View toggle */
+  .view-toggle { display: flex; gap: 4px; }
+  .view-btn {
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    background: none; border: 1px solid var(--border-2);
+    color: var(--text-muted); cursor: pointer; transition: all .15s;
+    display: inline-flex; align-items: center;
+  }
+  .view-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .view-btn svg { width: 14px; height: 14px; }
+
+  /* Album picker modal */
+  .album-modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,.5); align-items: center; justify-content: center;
+  }
+  .album-modal-backdrop.open { display: flex; }
+  .album-modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 400px;
+    max-height: 80vh; overflow-y: auto;
+  }
+  .album-modal h3 { font-size: 16px; font-weight: 800; margin-bottom: 16px; }
+  .album-option {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    cursor: pointer; transition: background .12s;
+  }
+  .album-option:hover { background: var(--surface-2); }
+  .album-option-thumb {
+    width: 40px; height: 40px; border-radius: var(--radius-sm);
+    background: var(--surface-3); overflow: hidden; flex-shrink: 0;
+  }
+  .album-option-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .album-option-name { font-size: 13px; font-weight: 600; }
+  .album-option-count { font-size: 11px; color: var(--text-muted); }
+  .duplicate-badge {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(239,68,68,.8); color: #fff;
+    font-size: 9px; font-weight: 700; padding: 2px 6px;
+    border-radius: 4px; text-transform: uppercase;
+  }
+
+  /* Tabs */
+  .tab-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); text-decoration: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .15s, border-color .15s;
+  }
+  .tab-pill:hover { color: var(--text); }
+  .tab-pill.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Archive overlay button on card */
+  .pcard-archive-btn {
+    position: absolute; bottom: 6px; right: 6px; z-index: 3;
+    background: rgba(0,0,0,.6); border: none; border-radius: 50%;
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; opacity: 0; transition: opacity .15s, background .15s;
+    color: #fff;
+  }
+  .pcard-archive-btn svg { width: 14px; height: 14px; }
+  .pcard:hover .pcard-archive-btn { opacity: 1; }
+  .pcard-archive-btn:hover { background: rgba(0,0,0,.85); }
+  .pcard-archive-btn.is-archived { opacity: 1; background: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content-area">
+  <div class="page-header">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h1>Photos</h1>
+      {% if is_editor %}
+      <a href="{% url 'photo_duplicates' %}" class="btn btn-ghost btn-sm" style="font-size:12px;border-radius:999px;">
+        🔍 Duplicates
+      </a>
+      {% endif %}
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <!-- View toggle -->
+      <div class="view-toggle">
+        <button class="view-btn active" id="viewGrid" onclick="setView('grid')" title="Grid">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+          </svg>
+        </button>
+        <button class="view-btn" id="viewTimeline" onclick="setView('timeline')" title="Timeline">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      {% if is_editor %}
+      <button class="btn btn-ghost btn-sm" id="selectBtn" onclick="toggleSelectMode()">Select</button>
+      {% endif %}
+      {% if request.user.is_authenticated %}
+      <a href="{% url 'photo_upload' %}" class="btn btn-primary btn-sm" style="display:inline-flex;align-items:center;gap:6px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Tab bar -->
+  <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0;">
+    <a href="{% url 'photo_library' %}"
+       class="tab-pill {% if current_tab != 'archive' %}active{% endif %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </svg>
+      Photos
+    </a>
+    <a href="{% url 'photo_library' %}?tab=archive"
+       class="tab-pill {% if current_tab == 'archive' %}active{% endif %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+        <polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/>
+        <line x1="10" y1="12" x2="14" y2="12"/>
+      </svg>
+      Archive
+    </a>
+  </div>
+
+  <!-- Search + filters -->
+  <form method="get" class="filter-bar" id="filterForm">
+    {% if current_tab == 'archive' %}<input type="hidden" name="tab" value="archive">{% endif %}
+    <input type="search" name="q" value="{{ current_q }}" placeholder="Search photos…"
+      class="filter-select" style="background-image:none;padding:6px 14px;min-width:220px;"
+      autocomplete="off" />
+
+    <select name="category" class="filter-select" onchange="this.form.submit()">
+      <option value="">All categories</option>
+      {% for cat in categories %}
+      <option value="{{ cat.slug }}" {% if current_cat == cat.slug %}selected{% endif %}>{{ cat.name }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="sort" class="filter-select" onchange="this.form.submit()">
+      <option value="" {% if not current_sort %}selected{% endif %}>Newest</option>
+      <option value="oldest" {% if current_sort == 'oldest' %}selected{% endif %}>Oldest</option>
+      <option value="views"  {% if current_sort == 'views'  %}selected{% endif %}>Most viewed</option>
+    </select>
+
+    {% if current_q or current_cat or current_sort %}
+    <a href="{% url 'photo_library' %}" class="btn btn-ghost btn-sm" style="border-radius:999px;">Clear</a>
+    {% endif %}
+  </form>
+
+  <!-- Bulk action bar -->
+  <div class="bulk-bar" id="bulkBar">
+    <span class="bulk-count" id="bulkCount">0 selected</span>
+    <button onclick="bulkAddToAlbum()">Add to Album</button>
+    <button onclick="bulkSetVisibility('private')">Make Private</button>
+    {% if current_tab == 'archive' %}
+    <button onclick="bulkArchive('unarchive')">Restore</button>
+    {% else %}
+    <button onclick="bulkArchive('archive')">Archive</button>
+    {% endif %}
+    <button class="btn-danger" onclick="bulkDelete()">Delete</button>
+    <button onclick="cancelSelectMode()" style="background:rgba(255,255,255,.1);">Cancel</button>
+  </div>
+
+  <!-- Grid / Timeline -->
+  <div class="photo-grid" id="photoGrid">
+    {% for photo in photos %}
+    <a class="pcard" href="{% url 'photo_detail' photo.id %}"
+       id="pc-{{ photo.id }}"
+       data-id="{{ photo.id }}"
+       data-date="{{ photo.created_at|date:'Y-m' }}"
+       data-date-label="{{ photo.created_at|date:'F Y' }}"
+       onclick="return handleCardClick(event, this)">
+      <div class="pcard-check"></div>
+      <div class="pcard-thumb">
+        {% if photo.thumbnail_url %}
+          <img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />
+        {% else %}
+          <div class="pcard-thumb-ph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </div>
+        {% endif %}
+        {% if photo.status != 'ready' %}
+          <div class="pcard-status {{ photo.status }}">{{ photo.status }}</div>
+        {% endif %}
+        {% if photo.is_potential_duplicate %}
+          <div class="duplicate-badge">Duplicate</div>
+        {% endif %}
+        {% if request.user.is_authenticated %}
+        <button class="pcard-archive-btn {% if photo.is_archived %}is-archived{% endif %}"
+                title="{% if photo.is_archived %}Unarchive{% else %}Archive{% endif %}"
+                onclick="toggleArchive(event, '{{ photo.id }}', this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/>
+            <line x1="10" y1="12" x2="14" y2="12"/>
+          </svg>
+        </button>
+        {% endif %}
+      </div>
+      <div class="pcard-body">
+        <div class="pcard-title" title="{{ photo.title }}">{{ photo.title }}</div>
+        <div class="pcard-meta">
+          {% if photo.width and photo.height %}<span>{{ photo.width }}×{{ photo.height }}</span>{% endif %}
+          {% if photo.views_count %}<span>{{ photo.views_count }} view{{ photo.views_count|pluralize }}</span>{% endif %}
+        </div>
+      </div>
+    </a>
+    {% empty %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      <h3>No photos yet</h3>
+      <p>{% if current_q %}No results for "{{ current_q }}".{% else %}Upload photos to build your library.{% endif %}</p>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if has_more %}
+  <div class="load-more-wrap">
+    <button class="load-more-btn" id="loadMoreBtn" onclick="loadMorePhotos(this)">Load more</button>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Album picker modal -->
+<div class="album-modal-backdrop" id="albumModal">
+  <div class="album-modal">
+    <h3>Add to Album</h3>
+    <div id="albumList"><p style="color:var(--text-muted);font-size:13px;">Loading…</p></div>
+    <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn btn-ghost btn-sm" onclick="closeAlbumModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Search submit on Enter ────────────────────────────────────────────────────
+(function() {
+  // Scope to the photos filter bar so we don't hijack the global header search.
+  const s = document.querySelector('#filterForm input[name="q"]');
+  if (s) s.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('filterForm').submit(); }
+  });
+})();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const _q       = '{{ current_q|default:''|escapejs }}';
+const _cat     = '{{ current_cat|default:''|escapejs }}';
+const _sort    = '{{ current_sort|default:''|escapejs }}';
+const _tabMode = '{{ current_tab|default:"photos"|escapejs }}'; // 'photos' | 'archive'
+let _cursor     = null;
+let _page       = 1;
+let _viewMode   = 'grid';       // 'grid' | 'timeline'
+let _selectMode = false;
+const _selected = new Set();
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+
+// ── Card builder (used by load-more) ─────────────────────────────────────────
+function _buildPhotoCard(p) {
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const dims  = (p.width && p.height) ? `<span>${p.width}×${p.height}</span>` : '';
+  const views = p.views_count ? `<span>${p.views_count} view${p.views_count != 1 ? 's' : ''}</span>` : '';
+  const dup   = p.is_potential_duplicate ? `<div class="duplicate-badge">Duplicate</div>` : '';
+  const thumb = p.thumbnail_url
+    ? `<img src="${esc(p.thumbnail_url)}" alt="${esc(p.title)}" loading="lazy" />`
+    : `<div class="pcard-thumb-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
+  const a = document.createElement('a');
+  a.className = 'pcard';
+  a.href = '/photos/' + p.id + '/';
+  a.id   = 'pc-' + p.id;
+  a.dataset.id        = p.id;
+  a.dataset.date      = (p.created_at || '').slice(0, 7);   // YYYY-MM
+  a.dataset.dateLabel = _fmtDateLabel(p.created_at);
+  a.setAttribute('onclick', 'return handleCardClick(event, this)');
+  a.innerHTML = `
+    <div class="pcard-check"></div>
+    <div class="pcard-thumb">${thumb}${dup}</div>
+    <div class="pcard-body">
+      <div class="pcard-title" title="${esc(p.title)}">${esc(p.title)}</div>
+      <div class="pcard-meta">${dims}${views}</div>
+    </div>`;
+  return a;
+}
+
+function _fmtDateLabel(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString('default', { month: 'long', year: 'numeric' });
+}
+
+// ── View mode (grid / timeline) ───────────────────────────────────────────────
+function setView(mode) {
+  _viewMode = mode;
+  document.getElementById('viewGrid').classList.toggle('active', mode === 'grid');
+  document.getElementById('viewTimeline').classList.toggle('active', mode === 'timeline');
+  if (mode === 'timeline') applyTimelineGrouping();
+  else removeTimelineGrouping();
+}
+
+function applyTimelineGrouping() {
+  const grid  = document.getElementById('photoGrid');
+  const cards = [...grid.querySelectorAll('.pcard')];
+  // Remove existing headers
+  grid.querySelectorAll('.date-group-header').forEach(h => h.remove());
+  let lastKey = null;
+  cards.forEach(card => {
+    const key   = card.dataset.date  || '';
+    const label = card.dataset.dateLabel || key;
+    if (key !== lastKey) {
+      const hdr = document.createElement('div');
+      hdr.className = 'date-group-header';
+      hdr.textContent = label;
+      grid.insertBefore(hdr, card);
+      lastKey = key;
+    }
+  });
+}
+
+function removeTimelineGrouping() {
+  document.querySelectorAll('.date-group-header').forEach(h => h.remove());
+}
+
+// ── Bulk select ───────────────────────────────────────────────────────────────
+function toggleSelectMode() {
+  _selectMode = !_selectMode;
+  const btn = document.getElementById('selectBtn');
+  if (btn) btn.textContent = _selectMode ? 'Done' : 'Select';
+  document.getElementById('photoGrid').classList.toggle('select-mode', _selectMode);
+  if (!_selectMode) {
+    _selected.clear();
+    document.querySelectorAll('.pcard.selected').forEach(el => el.classList.remove('selected'));
+    document.getElementById('bulkBar').classList.remove('visible');
+  }
+}
+
+function cancelSelectMode() {
+  _selectMode = false;
+  const btn = document.getElementById('selectBtn');
+  if (btn) btn.textContent = 'Select';
+  document.getElementById('photoGrid').classList.remove('select-mode');
+  _selected.clear();
+  document.querySelectorAll('.pcard.selected').forEach(el => el.classList.remove('selected'));
+  document.getElementById('bulkBar').classList.remove('visible');
+}
+
+function handleCardClick(e, el) {
+  if (!_selectMode) return true;
+  e.preventDefault();
+  const id = el.dataset.id;
+  if (_selected.has(id)) { _selected.delete(id); el.classList.remove('selected'); }
+  else { _selected.add(id); el.classList.add('selected'); }
+  const n = _selected.size;
+  document.getElementById('bulkCount').textContent = n + ' selected';
+  document.getElementById('bulkBar').classList.toggle('visible', n > 0);
+  return false;
+}
+
+// ── Bulk actions ──────────────────────────────────────────────────────────────
+async function _bulkPost(body) {
+  return fetch('/api/photos/bulk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({ photo_ids: [..._selected], ...body }),
+  });
+}
+
+async function bulkDelete() {
+  if (!_selected.size) return;
+  if (!confirm(`Delete ${_selected.size} photo(s)? This cannot be undone.`)) return;
+  const deletedCount = _selected.size;   // capture before cancelSelectMode clears _selected
+  const res = await _bulkPost({ action: 'delete' });
+  if (res.ok) {
+    _selected.forEach(id => document.getElementById('pc-' + id)?.remove());
+    if (_viewMode === 'timeline') applyTimelineGrouping();
+    cancelSelectMode();
+    showToast('success', `Deleted ${deletedCount} photo(s)`);
+  } else showToast('error', 'Delete failed');
+}
+
+async function bulkSetVisibility(vis) {
+  if (!_selected.size) return;
+  const res = await _bulkPost({ action: 'set_visibility', visibility: vis });
+  if (res.ok) { cancelSelectMode(); showToast('success', `Set to ${vis}`); }
+  else showToast('error', 'Failed to update visibility');
+}
+
+// Album picker for "Add to Album"
+let _pendingAlbumPhotos = null;
+
+async function bulkAddToAlbum() {
+  if (!_selected.size) return;
+  _pendingAlbumPhotos = [..._selected];
+  // Load albums
+  const res = await fetch('/api/albums/', { credentials: 'include' });
+  const albums = res.ok ? await res.json() : [];
+  const esc = s => String(s).replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const listEl = document.getElementById('albumList');
+  if (albums.length === 0) {
+    listEl.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">No albums yet. <a href="/albums/">Create one first.</a></p>`;
+  } else {
+    listEl.innerHTML = albums.map(a => `
+      <div class="album-option" onclick="addToAlbumConfirm('${esc(a.id)}','${esc(a.title)}')">
+        <div class="album-option-thumb">
+          ${a.cover_url ? `<img src="${esc(a.cover_url)}" />` : ''}
+        </div>
+        <div>
+          <div class="album-option-name">${esc(a.title)}</div>
+          <div class="album-option-count">${a.photo_count} photo${a.photo_count !== 1 ? 's' : ''}</div>
+        </div>
+      </div>`).join('');
+  }
+  document.getElementById('albumModal').classList.add('open');
+}
+
+async function addToAlbumConfirm(albumId, albumTitle) {
+  closeAlbumModal();
+  if (!_pendingAlbumPhotos?.length) return;
+  const res = await _bulkPost({ action: 'add_to_album', album_id: albumId, photo_ids: _pendingAlbumPhotos });
+  if (res.ok) {
+    const d = await res.json();
+    cancelSelectMode();
+    showToast('success', `Added ${d.added} photo(s) to "${albumTitle}"`);
+  } else showToast('error', 'Failed to add to album');
+  _pendingAlbumPhotos = null;
+}
+
+function closeAlbumModal() {
+  document.getElementById('albumModal').classList.remove('open');
+}
+document.getElementById('albumModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeAlbumModal();
+});
+
+// ── Archive toggle (individual card) ─────────────────────────────────────────
+async function toggleArchive(e, photoId, btn) {
+  e.preventDefault();
+  e.stopPropagation();
+  const res = await fetch(`/api/photos/${photoId}/archive/`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+  });
+  if (!res.ok) { showToast('error', 'Failed to update'); return; }
+  const d = await res.json();
+  if (d.is_archived) {
+    btn.classList.add('is-archived');
+    btn.title = 'Unarchive';
+    // In Photos tab, remove the card from grid immediately (it's now archived)
+    if (_tabMode !== 'archive') {
+      const card = btn.closest('.pcard');
+      card?.remove();
+      if (_viewMode === 'timeline') applyTimelineGrouping();
+    }
+    showToast('success', 'Archived');
+  } else {
+    btn.classList.remove('is-archived');
+    btn.title = 'Archive';
+    // In Archive tab, remove the card (it's been restored to main library)
+    if (_tabMode === 'archive') {
+      const card = btn.closest('.pcard');
+      card?.remove();
+      if (_viewMode === 'timeline') applyTimelineGrouping();
+    }
+    showToast('success', 'Restored to library');
+  }
+}
+
+// ── Bulk archive / unarchive ──────────────────────────────────────────────────
+async function bulkArchive(action) {
+  if (!_selected.size) return;
+  const count = _selected.size;
+  const ids = [..._selected];
+  const res = await _bulkPost({ action });
+  if (res.ok) {
+    ids.forEach(id => document.getElementById('pc-' + id)?.remove());
+    if (_viewMode === 'timeline') applyTimelineGrouping();
+    cancelSelectMode();
+    showToast('success', action === 'archive'
+      ? `Archived ${count} photo(s)`
+      : `Restored ${count} photo(s) to library`);
+  } else showToast('error', 'Failed to update');
+}
+
+// ── Load more (cursor pagination) ────────────────────────────────────────────
+function loadMorePhotos(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  const params = new URLSearchParams({ page_size: 36 });
+  if (_q)   params.set('q',        _q);
+  if (_cat)  params.set('category', _cat);
+  if (_sort) params.set('sort',     _sort);
+  if (_tabMode === 'archive') params.set('archived', '1');
+
+  const useCursor = !_sort || (_sort !== 'views' && _sort !== 'oldest');
+  if (useCursor && _cursor) params.set('cursor', _cursor);
+  else { _page++; params.set('page', _page); }
+
+  fetch('/api/photos/?' + params.toString())
+    .then(r => r.json())
+    .then(data => {
+      const grid = document.getElementById('photoGrid');
+      // In timeline mode insert before any trailing headers
+      const newCards = (data.results || []).map(_buildPhotoCard);
+      newCards.forEach(c => grid.appendChild(c));
+      if (data.next_cursor) _cursor = data.next_cursor;
+      if (_viewMode === 'timeline') applyTimelineGrouping();
+      if (data.has_more) { btn.disabled = false; btn.textContent = 'Load more'; }
+      else btn.closest('.load-more-wrap')?.remove();
+    })
+    .catch(() => { btn.disabled = false; btn.textContent = 'Load more'; });
+}
+</script>
+{% endblock %}

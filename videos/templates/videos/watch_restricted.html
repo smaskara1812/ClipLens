@@ -1,0 +1,81 @@
+{% extends 'videos/base.html' %}
+
+{% block title %}Members Only — ClipLens{% endblock %}
+
+{% block content %}
+<div style="max-width:480px;margin:80px auto;padding:0 24px;text-align:center;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:48px 36px;">
+
+    <div style="width:64px;height:64px;border-radius:50%;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+        <rect x="3" y="11" width="18" height="11" rx="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+    </div>
+
+    <h1 style="font-size:22px;font-weight:800;margin-bottom:10px;">Members Only</h1>
+    <p style="color:var(--text-muted);font-size:14px;line-height:1.7;margin-bottom:24px;">
+      This video is only available to subscribers of
+      {% if video.channel %}
+      <a href="{% url 'channel' video.channel.slug %}" style="color:var(--accent);font-weight:600;">{{ video.channel.name }}</a>.
+      {% else %}this channel.{% endif %}
+      Subscribe to watch.
+    </p>
+
+    {% if user.is_authenticated %}
+      {% if video.channel %}
+      <button class="btn btn-primary btn-lg" id="subBtn" onclick="subscribe()" style="width:100%;justify-content:center;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+        </svg>
+        Subscribe to {{ video.channel.name }}
+      </button>
+      {% endif %}
+    {% else %}
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <a href="{% url 'login' %}?next={{ request.path }}" class="btn btn-primary btn-lg" style="justify-content:center;">Sign In to Subscribe</a>
+      <a href="{% url 'register' %}" class="btn btn-ghost btn-lg" style="justify-content:center;">Create Account</a>
+    </div>
+    {% endif %}
+
+    <div style="margin-top:24px;padding-top:24px;border-top:1px solid var(--border);">
+      <a href="javascript:history.back()" style="font-size:13px;color:var(--text-muted);">← Go back</a>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if user.is_authenticated and video.channel %}
+<script>
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+async function subscribe() {
+  const btn = document.getElementById('subBtn');
+  btn.disabled = true;
+  btn.textContent = 'Subscribing…';
+  const res = await fetch('/api/channels/{{ video.channel.slug }}/subscribe/', {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (data.subscribed) {
+      showToast('success', 'Subscribed!', 'Reloading…');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Subscribe to {{ video.channel.name }}';
+      showToast('info', 'Already unsubscribed');
+    }
+  } else {
+    btn.disabled = false;
+    showToast('error', 'Failed to subscribe');
+  }
+}
+</script>
+{% endif %}
+{% endblock %}

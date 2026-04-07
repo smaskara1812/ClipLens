@@ -1,0 +1,344 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}{{ photo.title }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .photo-detail-wrap {
+    max-width: 1100px; margin: 0 auto; padding: 24px 24px 60px;
+    display: grid; grid-template-columns: 1fr 340px; gap: 28px;
+  }
+  @media (max-width: 900px) {
+    .photo-detail-wrap { grid-template-columns: 1fr; }
+  }
+
+  /* Image viewer */
+  .photo-viewer {
+    background: var(--surface-3); border-radius: var(--radius-lg);
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
+    min-height: 300px; max-height: 70vh; position: relative;
+  }
+  .photo-viewer img {
+    max-width: 100%; max-height: 70vh; object-fit: contain; display: block;
+  }
+  .photo-viewer-ph {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: var(--text-muted); padding: 60px;
+  }
+  .photo-viewer-ph svg { width: 56px; height: 56px; opacity: .4; }
+
+  /* Sidebar info */
+  .photo-info { }
+  .photo-title {
+    font-size: 20px; font-weight: 800; line-height: 1.3;
+    margin-bottom: 10px; letter-spacing: -0.3px;
+  }
+  .photo-meta {
+    display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px;
+    color: var(--text-muted); margin-bottom: 16px;
+  }
+  .photo-meta span { display: flex; align-items: center; gap: 4px; }
+  .photo-meta svg { width: 13px; height: 13px; }
+
+  .info-section { margin-bottom: 20px; }
+  .info-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px; color: var(--text-subtle); margin-bottom: 6px;
+  }
+  .info-text { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+
+  .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag {
+    background: var(--surface-3); border: 1px solid var(--border-2);
+    color: var(--text-muted); padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 500;
+  }
+  .ai-tag {
+    background: var(--accent-soft); color: var(--accent);
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  }
+
+  .photo-actions {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px;
+  }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase;
+  }
+  .status-badge.ready      { background: var(--green-bg); color: var(--green); }
+  .status-badge.processing { background: var(--accent-soft); color: var(--accent); }
+  .status-badge.pending    { background: var(--surface-3); color: var(--text-muted); }
+  .status-badge.failed     { background: rgba(239,68,68,.12); color: var(--red); }
+
+  .channel-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border);
+    text-decoration: none; color: var(--text); font-size: 13px; font-weight: 600;
+    transition: all var(--transition);
+  }
+  .channel-link:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .ch-avatar-sm {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; overflow: hidden;
+  }
+  .ch-avatar-sm img { width: 100%; height: 100%; object-fit: cover; }
+
+  .divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+  .processing-notice {
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: var(--radius); padding: 12px 16px;
+    font-size: 13px; color: var(--accent); margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .processing-notice svg { width: 16px; height: 16px; flex-shrink: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="photo-detail-wrap">
+
+  <!-- Left: image -->
+  <div>
+    <div class="photo-viewer" id="photoViewer">
+      {% if photo.file %}
+        {% if photo.status == 'ready' or photo.status == 'processing' %}
+          <img src="{{ photo.file.url }}" alt="{{ photo.title }}" id="photoImg" />
+        {% else %}
+          <div class="photo-viewer-ph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+            </svg>
+            <span>{{ photo.get_status_display }}</span>
+          </div>
+        {% endif %}
+      {% else %}
+        <div class="photo-viewer-ph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+          </svg>
+          <span>No image</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right: info sidebar -->
+  <div class="photo-info">
+
+    {% if photo.status == 'processing' or photo.status == 'pending' %}
+    <div class="processing-notice" id="processingNotice">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+      </svg>
+      AI analysis in progress — labels and description will appear shortly.
+    </div>
+    {% endif %}
+
+    <div class="photo-title">{{ photo.title }}</div>
+
+    <div class="photo-meta">
+      <span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+        </svg>
+        {% if photo.width and photo.height %}{{ photo.width }}×{{ photo.height }}px{% else %}Photo{% endif %}
+      </span>
+      {% if photo.file_size %}
+      <span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        {% if photo.file_size < 1048576 %}{{ photo.file_size|floatformat:0 }} B
+        {% elif photo.file_size < 1073741824 %}{% widthratio photo.file_size 1048576 1 %} MB
+        {% else %}{% widthratio photo.file_size 1073741824 1 %} GB{% endif %}
+      </span>
+      {% endif %}
+      <span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+        {{ photo.views_count }} view{{ photo.views_count|pluralize }}
+      </span>
+      <span class="status-badge {{ photo.status }}">{{ photo.status }}</span>
+    </div>
+
+    <div class="photo-actions">
+      {% if photo.file %}
+      <a href="{{ photo.file.url }}" download class="btn btn-ghost btn-sm" style="display:inline-flex;align-items:center;gap:5px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download
+      </a>
+      {% endif %}
+      {% if request.user.is_authenticated %}
+      <button id="archiveBtn"
+              class="btn btn-ghost btn-sm"
+              style="display:inline-flex;align-items:center;gap:5px;{% if photo.is_archived %}color:var(--accent);{% endif %}"
+              onclick="toggleDetailArchive()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+          <polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/>
+          <line x1="10" y1="12" x2="14" y2="12"/>
+        </svg>
+        <span id="archiveBtnLabel">{% if photo.is_archived %}Unarchive{% else %}Archive{% endif %}</span>
+      </button>
+      {% endif %}
+      <a href="{% url 'photo_library' %}" class="btn btn-ghost btn-sm">← Back to library</a>
+    </div>
+
+    <div class="divider"></div>
+
+    {% if photo.description %}
+    <div class="info-section">
+      <div class="info-label">Description</div>
+      <div class="info-text">{{ photo.description }}</div>
+    </div>
+    {% endif %}
+
+    {% if photo.channel %}
+    <div class="info-section">
+      <div class="info-label">Channel</div>
+      <a class="channel-link" href="{% url 'channel' photo.channel.slug %}">
+        <div class="ch-avatar-sm">
+          {% if photo.channel.avatar %}
+            <img src="{{ photo.channel.avatar_url }}" alt="" />
+          {% else %}
+            {{ photo.channel.name|first|upper }}
+          {% endif %}
+        </div>
+        {{ photo.channel.name }}
+      </a>
+    </div>
+    {% endif %}
+
+    {% if photo.category %}
+    <div class="info-section">
+      <div class="info-label">Category</div>
+      <div class="info-text">{{ photo.category.name }}</div>
+    </div>
+    {% endif %}
+
+    {% if photo_tags %}
+    <div class="info-section">
+      <div class="info-label">Tags</div>
+      <div class="tag-list">
+        {% for tag in photo_tags %}
+          <span class="tag">{{ tag }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if photo.labels %}
+    <div class="info-section" id="labelsSection">
+      <div class="info-label">Detected objects</div>
+      <div class="tag-list">
+        {% for lbl in photo.labels_list %}
+        <span class="ai-tag">{{ lbl }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if photo.scene_description %}
+    <div class="info-section" id="sceneSection">
+      <div class="info-label">Scene description</div>
+      <div class="info-text" style="color:var(--text);">{{ photo.scene_description }}</div>
+    </div>
+    {% endif %}
+
+    {% if photo.face_count %}
+    <div class="info-section">
+      <div class="info-label">People</div>
+      <div class="info-text">
+        {{ photo.face_count }} face{{ photo.face_count|pluralize }} detected
+        {% if photo.face_names %} — {{ photo.face_names }}{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if photo.ocr_text %}
+    <div class="info-section" id="ocrSection">
+      <div class="info-label">Text in image (OCR)</div>
+      <div class="info-text" style="font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow-y:auto;">{{ photo.ocr_text }}</div>
+    </div>
+    {% endif %}
+
+    <div class="divider"></div>
+
+    <div class="info-section">
+      <div class="info-label">Uploaded</div>
+      <div class="info-text">{{ photo.created_at|date:"N j, Y" }}{% if photo.uploaded_by %} by {{ photo.uploaded_by }}{% endif %}</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Archive toggle
+const _photoId = '{{ photo.id }}';
+let _isArchived = {{ photo.is_archived|yesno:'true,false' }};
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+
+async function toggleDetailArchive() {
+  const btn = document.getElementById('archiveBtn');
+  const lbl = document.getElementById('archiveBtnLabel');
+  btn.disabled = true;
+  const res = await fetch(`/api/photos/${_photoId}/archive/`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+  });
+  btn.disabled = false;
+  if (!res.ok) { alert('Failed to update archive status'); return; }
+  const d = await res.json();
+  _isArchived = d.is_archived;
+  lbl.textContent = _isArchived ? 'Unarchive' : 'Archive';
+  btn.style.color = _isArchived ? 'var(--accent)' : '';
+}
+</script>
+
+{% if photo.status == 'processing' or photo.status == 'pending' %}
+<script>
+(function() {
+  const photoId = '{{ photo.id }}';
+  const poll = setInterval(() => {
+    fetch('/api/photos/' + photoId + '/status/')
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'ready') {
+          clearInterval(poll);
+          document.getElementById('processingNotice')?.remove();
+          // Reload page to show all analysis results
+          window.location.reload();
+        } else if (d.status === 'failed') {
+          clearInterval(poll);
+          const notice = document.getElementById('processingNotice');
+          if (notice) {
+            notice.style.background = 'rgba(239,68,68,.1)';
+            notice.style.borderColor = 'var(--red)';
+            notice.style.color = 'var(--red)';
+            notice.querySelector('span') && (notice.lastChild.textContent = 'Analysis failed: ' + (d.processing_error || 'unknown error'));
+          }
+        }
+      })
+      .catch(() => clearInterval(poll));
+  }, 4000);
+})();
+</script>
+{% endif %}
+{% endblock %}

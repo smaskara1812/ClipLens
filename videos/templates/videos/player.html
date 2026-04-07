@@ -1,0 +1,1236 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}Browse — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── Content area ── */
+  .content-area { padding: 20px 24px 60px; }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; margin-bottom: 20px;
+  }
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 500;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    color: var(--text-muted); cursor: pointer;
+    transition: all var(--transition);
+  }
+  .filter-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .filter-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .filter-chip svg { width: 13px; height: 13px; }
+
+  /* Filter selects */
+  .filter-selects {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; margin-bottom: 20px;
+  }
+  .filter-select {
+    appearance: none; -webkit-appearance: none;
+    background: var(--surface-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+    border: 1px solid var(--border-2); border-radius: 999px;
+    padding: 6px 30px 6px 14px; font-size: 13px; font-weight: 500;
+    color: var(--text-muted); cursor: pointer;
+    transition: all var(--transition); outline: none;
+  }
+  .filter-select:hover, .filter-select:focus { border-color: var(--accent); color: var(--text); }
+  .filter-select.active { background-color: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .filter-divider { width: 1px; height: 20px; background: var(--border-2); margin: 0 2px; }
+  .filter-clear {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 12px; border-radius: 999px; font-size: 12px;
+    background: none; border: 1px solid var(--border-2);
+    color: var(--text-muted); cursor: pointer; transition: all var(--transition);
+  }
+  .filter-clear:hover { border-color: var(--red); color: var(--red); }
+
+  /* Section heading */
+  .section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .section-head h2 { font-size: 16px; font-weight: 700; }
+  .section-count { font-size: 12px; color: var(--text-muted); }
+
+  /* ── Video grid ── */
+  .video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 20px;
+  }
+  @media (max-width: 640px) { .video-grid { grid-template-columns: 1fr 1fr; gap: 12px; } }
+
+  /* Video card */
+  .vcard {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; cursor: pointer;
+    transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+    text-decoration: none; color: inherit; display: block;
+  }
+  .vcard:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow);
+    border-color: var(--border-2);
+  }
+  .vcard-thumb {
+    aspect-ratio: 16/9; background: var(--surface-3);
+    position: relative; overflow: hidden;
+  }
+  .vcard-thumb img {
+    width: 100%; height: 100%; object-fit: cover;
+    transition: transform 0.3s;
+  }
+  .vcard:hover .vcard-thumb img { transform: scale(1.04); }
+  .vcard-thumb-ph {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-subtle); font-size: 32px;
+  }
+  .vcard-dur {
+    position: absolute; bottom: 7px; right: 8px;
+    background: rgba(0,0,0,.78); color: #fff;
+    font-size: 11px; font-weight: 600; padding: 2px 7px;
+    border-radius: 4px; font-variant-numeric: tabular-nums;
+  }
+  .vcard-play-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0); transition: background 0.18s;
+  }
+  .vcard:hover .vcard-play-overlay { background: rgba(0,0,0,.28); }
+  .vcard-play-btn {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(255,255,255,.92);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: scale(0.7); transition: all 0.18s;
+  }
+  .vcard:hover .vcard-play-btn { opacity: 1; transform: scale(1); }
+  .vcard-play-btn svg { width: 16px; height: 16px; color: #111; margin-left: 2px; }
+
+  .vcard-body { padding: 12px 13px 14px; }
+  .vcard-title {
+    font-size: 14px; font-weight: 600; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; margin-bottom: 7px;
+  }
+  .vcard-meta {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .vcard-channel {
+    display: flex; align-items: center; gap: 5px;
+    font-weight: 500;
+  }
+  .vcard-ch-dot {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); display: flex; align-items: center;
+    justify-content: center; font-size: 9px; font-weight: 700; color: #fff;
+    overflow: hidden; flex-shrink: 0;
+  }
+  .vcard-ch-dot img { width: 100%; height: 100%; object-fit: cover; }
+  .vcard-sep { color: var(--border-2); }
+  .vcard-status { flex-shrink: 0; }
+
+
+  /* Empty state */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 80px 24px; gap: 14px; text-align: center;
+  }
+  .empty-state svg { width: 56px; height: 56px; color: var(--text-subtle); }
+  .empty-state h3 { font-size: 18px; font-weight: 700; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+
+  /* Search tabs */
+  .search-tabs {
+    display: flex; gap: 4px; margin-bottom: 20px;
+    border-bottom: 1px solid var(--border); padding-bottom: 0;
+  }
+  .search-tab {
+    padding: 8px 14px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer; border: none;
+    background: none; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s, border-color .15s;
+    white-space: nowrap;
+  }
+  .search-tab:hover { color: var(--text); }
+  .search-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .search-tab .tab-count {
+    display: inline-block; background: var(--surface-3);
+    border-radius: 10px; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; margin-left: 5px; color: var(--text-muted);
+  }
+  .search-tab.active .tab-count { background: var(--accent-soft); color: var(--accent); }
+  .search-section { display: none; }
+
+  /* Photo search results */
+  .photo-search-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+  }
+  .photo-search-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; text-decoration: none; color: inherit;
+    display: block; transition: transform .18s, box-shadow .18s, border-color .18s;
+  }
+  .photo-search-card:hover {
+    transform: translateY(-3px); box-shadow: var(--shadow); border-color: var(--border-2);
+  }
+  .photo-search-thumb {
+    aspect-ratio: 1/1; background: var(--surface-3);
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
+  }
+  .photo-search-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .photo-search-card:hover .photo-search-thumb img { transform: scale(1.06); }
+  .photo-search-thumb svg { width: 32px; height: 32px; color: var(--text-subtle); }
+  .photo-search-body { padding: 8px 10px 10px; }
+  .photo-search-title {
+    font-size: 12px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px;
+  }
+  .photo-search-meta { font-size: 11px; color: var(--text-muted); }
+  .search-section.active { display: block; }
+
+  /* People search results */
+  .people-matches { margin-bottom: 28px; }
+  .people-identity-block {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 12px; overflow: hidden;
+  }
+  .people-identity-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+  }
+  .people-identity-avatar {
+    width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
+    background: var(--surface-3); flex-shrink: 0; border: 2px solid var(--border);
+  }
+  .people-identity-name { font-size: 14px; font-weight: 700; }
+  .people-identity-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .people-video-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; color: var(--text);
+    border-bottom: 1px solid var(--border);
+  }
+  .people-video-row:last-child { border-bottom: none; }
+  .people-video-thumb {
+    width: 56px; aspect-ratio: 16/9; border-radius: 4px;
+    overflow: hidden; flex-shrink: 0; background: var(--surface-3);
+  }
+  .people-video-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .people-video-info { flex: 1; min-width: 0; }
+  .people-video-title { font-size: 12px; font-weight: 600; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .people-video-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .people-timestamps { display: flex; gap: 6px; flex-wrap: wrap; }
+  .people-ts-chip {
+    font-size: 11px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 4px;
+    padding: 2px 7px; font-variant-numeric: tabular-nums;
+    text-decoration: none; transition: background .15s;
+  }
+  .people-ts-chip:hover { background: var(--accent); color: #fff; }
+
+  /* In-video speech search results */
+  .speech-matches {
+    margin-bottom: 28px;
+  }
+  .speech-matches-heading {
+    font-size: 13px; font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .6px;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .speech-matches-heading svg { width: 14px; height: 14px; color: var(--accent); }
+  .speech-video-block {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; margin-bottom: 12px;
+  }
+  .speech-video-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    text-decoration: none; color: inherit;
+    transition: background var(--transition);
+  }
+  .speech-video-header:hover { background: var(--surface-2); }
+  .speech-video-thumb {
+    width: 64px; aspect-ratio: 16/9; border-radius: 4px;
+    background: var(--surface-3); overflow: hidden; flex-shrink: 0;
+  }
+  .speech-video-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .speech-video-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
+  .speech-video-channel { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .speech-moments { padding: 6px 0; }
+  .speech-moment {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 8px 14px; cursor: pointer;
+    text-decoration: none; color: inherit;
+    transition: background var(--transition);
+  }
+  .speech-moment:hover { background: var(--surface-2); }
+  .speech-moment-time {
+    font-size: 12px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 4px;
+    padding: 2px 8px; white-space: nowrap; flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .speech-moment-text {
+    font-size: 13px; color: var(--text-muted); line-height: 1.5;
+  }
+  .speech-moment-text mark {
+    background: rgba(99,102,241,.25); color: var(--text);
+    border-radius: 2px; padding: 0 2px;
+  }
+  /* Divider between exact and fuzzy moments */
+  .match-divider {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 14px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .6px; color: var(--text-subtle);
+  }
+  .match-divider::before, .match-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
+  .fuzzy-badge {
+    font-size: 10px; font-weight: 600; padding: 1px 6px;
+    border-radius: 999px; background: rgba(245,158,11,.15); color: #f59e0b;
+    margin-left: 6px; flex-shrink: 0;
+  }
+
+  /* Visual / object-detection search results */
+  .visual-matches { margin-bottom: 28px; }
+  .visual-matches-heading {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .06em;
+    margin-bottom: 10px;
+  }
+  .visual-matches-heading svg { width: 14px; height: 14px; color: #f59e0b; }
+  .visual-video-block {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 8px; overflow: hidden;
+  }
+  .visual-video-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; text-decoration: none; color: var(--text);
+    transition: background .15s;
+  }
+  .visual-video-header:hover { background: var(--surface-2); }
+  .visual-video-thumb {
+    width: 64px; height: 36px; border-radius: 4px;
+    overflow: hidden; flex-shrink: 0; background: var(--surface-3);
+  }
+  .visual-video-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .visual-video-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
+  .visual-video-channel { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .visual-moments { padding: 4px 0 6px; }
+  .visual-moment {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 5px 10px; cursor: pointer; text-decoration: none;
+    color: var(--text); transition: background .15s;
+  }
+  .visual-moment:hover { background: var(--surface-2); }
+  .visual-moment-time {
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    font-variant-numeric: tabular-nums; min-width: 38px; padding-top: 1px;
+  }
+  .visual-moment-labels {
+    font-size: 12px; color: var(--text-muted); line-height: 1.5; flex: 1;
+  }
+  .visual-label-pill {
+    display: inline-block; background: rgba(245,158,11,.15);
+    color: #f59e0b; border-radius: 3px; font-size: 11px;
+    font-weight: 600; padding: 1px 5px; margin: 1px 2px 1px 0;
+  }
+
+  /* Show-more collapse for scene/speech moments */
+  .moment-extra-hidden { display: none; }
+  .show-more-btn {
+    display: block; width: 100%; text-align: left;
+    padding: 5px 10px; font-size: 12px; font-weight: 600;
+    color: var(--accent); background: none; border: none; cursor: pointer;
+    transition: color .15s;
+  }
+  .show-more-btn:hover { color: var(--accent-hover, var(--accent)); text-decoration: underline; }
+
+  /* Search result highlight */
+  .search-result-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: var(--radius-sm); padding: 10px 14px;
+    margin-bottom: 20px; font-size: 13px;
+  }
+  .search-result-banner strong { color: var(--accent); }
+  .search-clear {
+    background: none; border: none; color: var(--text-muted);
+    cursor: pointer; font-size: 12px; text-decoration: underline;
+  }
+  .search-clear:hover { color: var(--text); }
+  .semantic-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text-muted); cursor: pointer; transition: all .15s;
+  }
+  .semantic-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .semantic-toggle.active {
+    background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+  }
+
+  /* Video title search results */
+  .video-title-matches { margin-bottom: 28px; }
+  .video-title-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px; text-decoration: none; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 8px;
+    transition: background .15s;
+  }
+  .video-title-row:hover { background: var(--surface-2); }
+  .video-title-thumb {
+    width: 80px; aspect-ratio: 16/9; border-radius: 4px;
+    overflow: hidden; flex-shrink: 0; background: var(--surface-3);
+  }
+  .video-title-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .video-title-info { flex: 1; min-width: 0; }
+  .video-title-name { font-size: 13px; font-weight: 600; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .video-title-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  /* Channel search results */
+  .channel-matches { margin-bottom: 28px; }
+  .channel-result-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 14px; text-decoration: none; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 8px;
+    transition: background .15s;
+  }
+  .channel-result-row:hover { background: var(--surface-2); }
+  .channel-result-avatar {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--surface-3); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 700; color: var(--text-muted);
+    overflow: hidden; border: 2px solid var(--border);
+  }
+  .channel-result-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .channel-result-name { font-size: 14px; font-weight: 700; }
+  .channel-result-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Playlist search results */
+  .playlist-matches { margin-bottom: 28px; }
+  .playlist-result-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px; text-decoration: none; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 8px;
+    transition: background .15s;
+  }
+  .playlist-result-row:hover { background: var(--surface-2); }
+  .playlist-result-thumb {
+    width: 80px; aspect-ratio: 16/9; border-radius: 4px;
+    overflow: hidden; flex-shrink: 0; background: var(--surface-3);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .playlist-result-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .playlist-result-info { flex: 1; min-width: 0; }
+  .playlist-result-name { font-size: 13px; font-weight: 600; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .playlist-result-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  /* CLIP semantic pill */
+  .clip-pill { background: rgba(99,102,241,.15); color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="browse-layout-sidebar-removed" style="display:none">
+  <aside>
+
+    <!-- Home -->
+    <div class="sidebar-section">
+      <div class="sidebar-item {% if not request.GET.channel %}active{% endif %}" onclick="filterChannel(null)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        Home
+      </div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    {% if request.user.is_authenticated %}
+
+    <!-- Discover -->
+    <div class="sidebar-section">
+      <div class="sidebar-heading">Discover</div>
+      <a href="{% url 'trending' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        Trending
+      </a>
+      <a href="{% url 'saved' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        Saved
+      </a>
+      <a href="{% url 'history' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        History
+      </a>
+      <a href="{% url 'playlists' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        Playlists
+      </a>
+    </div>
+    <div class="sidebar-divider"></div>
+
+    <!-- Editor tools -->
+    {% if is_editor %}
+    <div class="sidebar-section">
+      <div class="sidebar-heading">Studio</div>
+
+      <!-- All owned channels -->
+      {% for ch in owned_channels %}
+      <a href="{% url 'channel' ch.slug %}" class="sidebar-item">
+        <div class="ch-avatar" style="background:var(--accent);">
+          {% if ch.avatar %}<img src="{{ ch.avatar_url }}" alt="" />
+          {% else %}{{ ch.name|first|upper }}{% endif %}
+        </div>
+        {{ ch.name }}
+      </a>
+      {% empty %}
+      <a href="{% url 'channels_manage' %}" class="sidebar-item" style="color:var(--text-subtle);font-style:italic;">
+        No channels yet
+      </a>
+      {% endfor %}
+
+      <a href="{% url 'channels_manage' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        Manage Channels
+      </a>
+      <a href="{% url 'upload' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload
+      </a>
+      <a href="{% url 'analytics' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+        </svg>
+        Analytics
+      </a>
+      <a href="{% url 'faces' %}" class="sidebar-item {% if request.resolver_match.url_name == 'faces' or request.resolver_match.url_name == 'face_identity' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.418 4.03-8 9-8s9 3.582 9 8"/>
+        </svg>
+        People
+      </a>
+    </div>
+    <div class="sidebar-divider"></div>
+    {% endif %}
+
+    <!-- Subscriptions -->
+    <div class="sidebar-section">
+      <div class="sidebar-heading">Subscriptions</div>
+      {% for ch in subscribed_channels %}
+      <a href="{% url 'channel' ch.slug %}" class="sidebar-item {% if request.GET.channel == ch.slug %}active{% endif %}">
+        <div class="ch-avatar">
+          {% if ch.avatar %}<img src="{{ ch.avatar_url }}" alt="" />{% else %}{{ ch.name|first|upper }}{% endif %}
+        </div>
+        {{ ch.name }}
+      </a>
+      {% empty %}
+      <div style="padding:8px 12px;font-size:12px;color:var(--text-subtle);line-height:1.6;">
+        No subscriptions yet.<br/>Browse channels and click Subscribe.
+      </div>
+      {% endfor %}
+    </div>
+
+    {% else %}
+    <!-- Guest CTA -->
+    <div class="sidebar-section">
+      <a href="{% url 'trending' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        Trending
+      </a>
+    </div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">
+      <div style="padding:10px 12px;">
+        <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">
+          Sign in to subscribe to channels and personalise your feed.
+        </p>
+        <a href="{% url 'login' %}" class="btn btn-ghost btn-sm btn-full" style="justify-content:center;">Sign In</a>
+        <a href="{% url 'register' %}" class="btn btn-primary btn-sm btn-full" style="justify-content:center;margin-top:8px;">Create Account</a>
+      </div>
+    </div>
+    {% endif %}
+
+  </aside>
+</div>{# end hidden removed sidebar #}
+
+<!-- Main content -->
+<div class="content-area">
+
+    <!-- Search result banner -->
+    {% if request.GET.q %}
+    <div class="search-result-banner">
+      <span>Results for <strong>"{{ request.GET.q }}"</strong></span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="semantic-toggle {% if use_semantic %}active{% endif %}"
+                onclick="toggleSemantic()"
+                title="{% if use_semantic %}Semantic search ON — uses CLIP AI model (slower){% else %}Semantic search OFF — enable for concept-based matching{% endif %}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v3l2 2"/></svg>
+          Advanced Search{% if use_semantic %} ON{% else %} OFF{% endif %}
+        </button>
+        <button class="search-clear" onclick="window.location='{% url 'player' %}'">Clear search</button>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Filter bar — always visible at the top of results/grid -->
+    <div class="filter-selects" id="filterBar">
+
+      <!-- Sort -->
+      <select class="filter-select {% if current_sort %}active{% endif %}" onchange="applySelect('sort', this.value)" title="Sort by">
+        <option value=""     {% if not current_sort %}selected{% endif %}>⇅ Sort: Latest</option>
+        <option value="views"   {% if current_sort == 'views' %}selected{% endif %}>↑ Most Viewed</option>
+        <option value="oldest"  {% if current_sort == 'oldest' %}selected{% endif %}>↑ Oldest First</option>
+      </select>
+
+      <div class="filter-divider"></div>
+
+      <!-- Duration -->
+      <select class="filter-select {% if current_duration %}active{% endif %}" onchange="applySelect('duration', this.value)" title="Filter by duration">
+        <option value=""       {% if not current_duration %}selected{% endif %}>⏱ Duration: Any</option>
+        <option value="short"  {% if current_duration == 'short' %}selected{% endif %}>Short (&lt; 4 min)</option>
+        <option value="medium" {% if current_duration == 'medium' %}selected{% endif %}>Medium (4–20 min)</option>
+        <option value="long"   {% if current_duration == 'long' %}selected{% endif %}>Long (&gt; 20 min)</option>
+      </select>
+
+      <!-- Upload date -->
+      <select class="filter-select {% if current_date %}active{% endif %}" onchange="applySelect('date', this.value)" title="Filter by upload date">
+        <option value=""      {% if not current_date %}selected{% endif %}>📅 Date: Any</option>
+        <option value="today" {% if current_date == 'today' %}selected{% endif %}>Today</option>
+        <option value="week"  {% if current_date == 'week' %}selected{% endif %}>This Week</option>
+        <option value="month" {% if current_date == 'month' %}selected{% endif %}>This Month</option>
+        <option value="year"  {% if current_date == 'year' %}selected{% endif %}>This Year</option>
+      </select>
+
+      <!-- Category -->
+      {% if categories %}
+      <select class="filter-select {% if current_cat %}active{% endif %}" onchange="applySelect('category', this.value)" title="Filter by category">
+        <option value="" {% if not current_cat %}selected{% endif %}>🏷 Category: All</option>
+        {% for cat in categories %}
+        <option value="{{ cat.slug }}" {% if current_cat == cat.slug %}selected{% endif %}>{{ cat.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+
+      <!-- Clear filters (shown when any filter is active) -->
+      {% if current_sort or current_duration or current_date or current_cat %}
+      <div class="filter-divider"></div>
+      <button class="filter-clear" onclick="clearFilters()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Clear filters
+      </button>
+      {% endif %}
+
+    </div>
+
+    {% if request.GET.q %}
+    <!-- Active-filter notice for AI search -->
+    {% if current_cat or current_duration or current_date or current_q and request.GET.channel %}
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;
+                padding:9px 14px;background:var(--accent-soft);border:1px solid var(--accent);
+                border-radius:var(--radius-sm);font-size:12px;color:var(--accent);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0;">
+        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+      </svg>
+      <span><strong>Filters active</strong> — channel, category, duration &amp; date filters also apply to Speech, Scenes and CLIP results below.</span>
+      <a href="?q={{ request.GET.q }}" style="margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap;">Clear filters</a>
+    </div>
+    {% endif %}
+
+    <!-- Search result tabs -->
+    <div class="search-tabs">
+      <button class="search-tab active" onclick="switchTab('all', this)">All</button>
+      {% if videos %}
+      <button class="search-tab" onclick="switchTab('videos', this)">
+        Videos <span class="tab-count">{{ videos|length }}</span>
+      </button>
+      {% endif %}
+      {% if people_matches %}
+      <button class="search-tab" onclick="switchTab('people', this)">
+        People <span class="tab-count">{{ people_matches|length }}</span>
+      </button>
+      {% endif %}
+      {% if scene_matches %}
+      <button class="search-tab" onclick="switchTab('scenes', this)">
+        Scenes <span class="tab-count">{{ scene_matches|length }}</span>
+      </button>
+      {% endif %}
+      {% if segment_matches %}
+      <button class="search-tab" onclick="switchTab('speech', this)">
+        Speech <span class="tab-count">{{ segment_matches|length }}</span>
+      </button>
+      {% endif %}
+      {% if channel_matches %}
+      <button class="search-tab" onclick="switchTab('channels', this)">
+        Channels <span class="tab-count">{{ channel_matches|length }}</span>
+      </button>
+      {% endif %}
+      {% if playlist_matches %}
+      <button class="search-tab" onclick="switchTab('playlists', this)">
+        Playlists <span class="tab-count">{{ playlist_matches|length }}</span>
+      </button>
+      {% endif %}
+      {% if photo_matches %}
+      <button class="search-tab" onclick="switchTab('photos', this)">
+        Photos <span class="tab-count">{{ photo_matches|length }}</span>
+      </button>
+      {% endif %}
+    </div>
+
+    <!-- Videos tab -->
+    {% if videos %}
+    <div class="search-section active" id="tab-videos">
+      <div class="video-title-matches">
+        {% for v in videos %}
+        <a href="{% url 'watch' v.id %}" class="video-title-row">
+          <div class="video-title-thumb">
+            {% if v.thumbnail_url %}<img src="{{ v.thumbnail_url }}" alt="" />{% endif %}
+          </div>
+          <div class="video-title-info">
+            <div class="video-title-name">{{ v.title }}</div>
+            <div class="video-title-meta">
+              {% if v.channel %}{{ v.channel.name }} · {% endif %}
+              {{ v.views_count }} view{{ v.views_count|pluralize }}
+            </div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- People tab -->
+    {% if people_matches %}
+    <div class="search-section active" id="tab-people">
+      <div class="people-matches">
+        {% for pm in people_matches %}
+        <div class="people-identity-block">
+          <div class="people-identity-header">
+            {% if pm.identity.thumbnail_url %}
+            <img class="people-identity-avatar" src="{{ pm.identity.thumbnail_url }}" onerror="this.style.background='var(--surface-3)';this.style.display='none'" alt="" />
+            {% else %}
+            <div class="people-identity-avatar" style="display:flex;align-items:center;justify-content:center;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            </div>
+            {% endif %}
+            <div>
+              <div class="people-identity-name">{{ pm.identity.name }}</div>
+              <div class="people-identity-meta">
+                Found in {{ pm.videos|length }} video{{ pm.videos|length|pluralize }}
+                {% if pm.photos %} and {{ pm.photos|length }} photo{{ pm.photos|length|pluralize }}{% endif %}
+              </div>
+            </div>
+          </div>
+          {% for vid_entry in pm.videos %}
+          <div class="people-video-row">
+            <a href="{% url 'watch' vid_entry.video.id %}" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-decoration:none;color:inherit;">
+              <div class="people-video-thumb">
+                {% if vid_entry.video.thumbnail_url %}<img src="{{ vid_entry.video.thumbnail_url }}" alt="" />{% endif %}
+              </div>
+              <div class="people-video-info">
+                <div class="people-video-title">{{ vid_entry.video.title }}</div>
+                <div class="people-video-meta">{{ vid_entry.moments|length }} appearance{{ vid_entry.moments|length|pluralize }}</div>
+              </div>
+            </a>
+            <div class="people-timestamps">
+              {% for m in vid_entry.moments %}
+              <a href="{% url 'watch' vid_entry.video.id %}?t={{ m.timestamp|floatformat:0 }}" class="people-ts-chip">{{ m.time_fmt }}</a>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+
+          {% for photo_entry in pm.photos %}
+          <div class="people-video-row">
+            <a href="{% url 'photo_detail' photo_entry.photo.id %}" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-decoration:none;color:inherit;">
+              <div class="people-video-thumb">
+                {% if photo_entry.photo.thumbnail_url %}<img src="{{ photo_entry.photo.thumbnail_url }}" alt="" />{% endif %}
+              </div>
+              <div class="people-video-info">
+                <div class="people-video-title">{{ photo_entry.photo.title|default:"Untitled photo" }}</div>
+                <div class="people-video-meta">{{ photo_entry.moments|length }} face crop{{ photo_entry.moments|length|pluralize }}</div>
+              </div>
+            </a>
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Scenes tab -->
+    {% if scene_matches %}
+    <div class="search-section active" id="tab-scenes">
+      <div class="visual-matches">
+        {% for match in scene_matches %}
+        <div class="visual-video-block">
+          <a href="{% url 'watch' match.video.id %}" class="visual-video-header">
+            <div class="visual-video-thumb">
+              {% if match.video.thumbnail_url %}<img src="{{ match.video.thumbnail_url }}" alt="" />{% endif %}
+            </div>
+            <div>
+              <div class="visual-video-title">{{ match.video.title }}</div>
+              <div class="visual-video-channel">
+                {% if match.video.channel %}{{ match.video.channel.name }} · {% endif %}
+                {{ match.moments|length }} moment{{ match.moments|length|pluralize }}
+              </div>
+            </div>
+          </a>
+          <div class="visual-moments" data-inject-divider="1">
+            {% for moment in match.moments %}
+            <a href="{% url 'watch' match.video.id %}?t={{ moment.timestamp|floatformat:0 }}"
+               class="visual-moment{% if forloop.counter > 4 %} moment-extra moment-extra-hidden{% endif %}"
+               data-exact="{{ moment.is_exact|default:'0'|yesno:'1,0' }}">
+              <span class="visual-moment-time">{{ moment.time_fmt }}</span>
+              <span class="visual-moment-labels">
+                {% if moment.highlighted_labels %}
+                  {% for hlabel in moment.highlighted_labels %}
+                  <span class="visual-label-pill">{{ hlabel|safe }}</span>
+                  {% endfor %}
+                  {% if not moment.is_exact %}<span class="fuzzy-badge">similar</span>{% endif %}
+                {% else %}
+                  {% for label in moment.labels_list %}
+                  <span class="visual-label-pill clip-pill">{{ label|truncatechars:80 }}</span>
+                  {% endfor %}
+                {% endif %}
+              </span>
+            </a>
+            {% endfor %}
+            {% if match.moments|length > 4 %}
+            <button class="show-more-btn" onclick="toggleMoments(this, {{ match.moments|length|add:'-4' }})">
+              Show {{ match.moments|length|add:'-4' }} more
+            </button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Speech tab -->
+    {% if segment_matches %}
+    <div class="search-section active" id="tab-speech">
+      <div class="speech-matches">
+        {% for match in segment_matches %}
+        <div class="speech-video-block">
+          <a href="{% url 'watch' match.video.id %}" class="speech-video-header">
+            <div class="speech-video-thumb">
+              {% if match.video.thumbnail_url %}<img src="{{ match.video.thumbnail_url }}" alt="" />{% endif %}
+            </div>
+            <div>
+              <div class="speech-video-title">{{ match.video.title }}</div>
+              <div class="speech-video-channel">
+                {% if match.video.channel %}{{ match.video.channel.name }} · {% endif %}
+                {{ match.total_moments|default:match.moments|length }} match{{ match.total_moments|default:match.moments|length|pluralize:"es" }}
+                {% if match.video.duration %} · {{ match.video.duration|floatformat:0 }}s{% endif %}
+              </div>
+            </div>
+          </a>
+          <div class="speech-moments" data-inject-divider="1">
+            {% for moment in match.moments %}
+            <a href="{% url 'watch' match.video.id %}?t={{ moment.start|floatformat:0 }}"
+               class="speech-moment{% if forloop.counter > 4 %} moment-extra moment-extra-hidden{% endif %}"
+               data-exact="{{ moment.is_exact|yesno:'1,0' }}">
+              <span class="speech-moment-time">{{ moment.time_fmt }}</span>
+              <span class="speech-moment-text">{{ moment.highlighted_text|safe }}{% if not moment.is_exact %}<span class="fuzzy-badge">~</span>{% endif %}</span>
+            </a>
+            {% endfor %}
+            {% if match.moments|length > 4 %}
+            <button class="show-more-btn" onclick="toggleMoments(this, {{ match.moments|length|add:'-4' }})">
+              Show {{ match.moments|length|add:'-4' }} more
+            </button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Channels tab -->
+    {% if channel_matches %}
+    <div class="search-section active" id="tab-channels">
+      <div class="channel-matches">
+        {% for ch in channel_matches %}
+        <a href="{% url 'channel' ch.slug %}" class="channel-result-row">
+          <div class="channel-result-avatar">
+            {% if ch.avatar %}<img src="{{ ch.avatar_url }}" alt="" />
+            {% else %}{{ ch.name|first|upper }}{% endif %}
+          </div>
+          <div>
+            <div class="channel-result-name">{{ ch.name }}</div>
+            <div class="channel-result-meta">{{ ch.subscriber_count }} subscriber{{ ch.subscriber_count|pluralize }}</div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Photos tab -->
+    {% if photo_matches %}
+    <div class="search-section active" id="tab-photos">
+      <div class="photo-search-grid">
+        {% for photo in photo_matches %}
+        <a class="photo-search-card" href="{% url 'photo_detail' photo.id %}">
+          <div class="photo-search-thumb">
+            {% if photo.thumbnail_url %}
+              <img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />
+            {% else %}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            {% endif %}
+          </div>
+          <div class="photo-search-body">
+            <div class="photo-search-title" title="{{ photo.title }}">{{ photo.title }}</div>
+            <div class="photo-search-meta">
+              {% if photo.width and photo.height %}{{ photo.width }}×{{ photo.height }} · {% endif %}
+              {% if photo.labels %}{{ photo.labels|truncatechars:40 }}{% endif %}
+            </div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Playlists tab -->
+    {% if playlist_matches %}
+    <div class="search-section active" id="tab-playlists">
+      <div class="playlist-matches">
+        {% for pl in playlist_matches %}
+        <a href="{% url 'playlist_detail' pl.id %}" class="playlist-result-row">
+          <div class="playlist-result-thumb">
+            {% if pl.thumbnail_url %}<img src="{{ pl.thumbnail_url }}" alt="" />
+            {% else %}
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            {% endif %}
+          </div>
+          <div class="playlist-result-info">
+            <div class="playlist-result-name">{{ pl.title }}</div>
+            <div class="playlist-result-meta">
+              Playlist · {% if pl.owner.channel %}{{ pl.owner.channel.name }}{% else %}{{ pl.owner.username }}{% endif %}
+              · {{ pl.items.count }} video{{ pl.items.count|pluralize }}
+            </div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+    {% if not request.GET.q %}
+    <!-- Grid heading -->
+    <div class="section-head">
+      <h2>{% if request.GET.channel %}Channel Videos{% else %}All Videos{% endif %}</h2>
+      <span class="section-count">{{ feed_total_count }} video{{ feed_total_count|pluralize }}</span>
+    </div>
+
+    <!-- Video grid -->
+    {% if videos %}
+    <div class="video-grid" id="videoGrid">
+      {% for v in videos %}
+      <a href="{% url 'watch' v.id %}" class="vcard" data-id="{{ v.id }}"
+         data-title="{{ v.title }}"
+         data-views="{{ v.views_count }}"
+         data-uploaded="{{ v.uploaded_at|date:'Y-m-d' }}"
+>
+        <div class="vcard-thumb">
+          {% if v.thumbnail_url %}
+            <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
+          {% else %}
+            <div class="vcard-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="36" height="36">
+                <rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/>
+                <line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>
+                <line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/>
+                <line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>
+              </svg>
+            </div>
+          {% endif %}
+          {% if v.duration %}
+          <div class="vcard-dur">{{ v.duration|duration_fmt }}</div>
+          {% endif %}
+          <div class="vcard-play-overlay">
+            <div class="vcard-play-btn">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+          </div>
+        </div>
+        <div class="vcard-body">
+          <div class="vcard-title">{{ v.title }}</div>
+          <div class="vcard-meta">
+            {% if v.channel %}
+            <span class="vcard-channel">
+              <span class="vcard-ch-dot">
+                {% if v.channel.avatar %}<img src="{{ v.channel.avatar_url }}" alt="" />{% else %}{{ v.channel.name|first|upper }}{% endif %}
+              </span>
+              {{ v.channel.name }}
+            </span>
+            <span class="vcard-sep">·</span>
+            {% endif %}
+            <span>{{ v.views_count }} views</span>
+            <span class="vcard-sep vcard-status">·</span>
+            <span class="badge badge-{{ v.status }}">
+              <span class="badge-dot"></span>{{ v.status }}
+            </span>
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+      {% if has_more_videos %}
+      <div id="feedSentinel" style="width:100%;height:2px;grid-column:1/-1;"></div>
+      <div id="feedLoading" style="display:none;width:100%;text-align:center;padding:20px;color:var(--text-subtle);font-size:13px;grid-column:1/-1;">
+        Loading more videos…
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      {% if is_editor %}
+      <h3>No videos yet</h3>
+      <p>Upload your first video to get started.</p>
+      <a href="{% url 'upload' %}" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload a Video
+      </a>
+      {% else %}
+      <h3>Nothing here yet</h3>
+      <p>Content is on its way — check back soon.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% endif %}{# end if not request.GET.q #}
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // ── Channel filter ──
+  function filterChannel(slug) {
+    const url = new URL(window.location.href);
+    if (slug) url.searchParams.set('channel', slug);
+    else url.searchParams.delete('channel');
+    window.location.href = url.toString();
+  }
+
+  // ── Server-side filters ──
+  function applySelect(param, value) {
+    const url = new URL(window.location.href);
+    // preserve search query and channel filter
+    if (value) url.searchParams.set(param, value);
+    else url.searchParams.delete(param);
+    // reset to page 1 if paginated in future
+    url.searchParams.delete('page');
+    window.location.href = url.toString();
+  }
+
+  function clearFilters() {
+    const url = new URL(window.location.href);
+    ['sort', 'duration', 'date', 'category'].forEach(p => url.searchParams.delete(p));
+    window.location.href = url.toString();
+  }
+
+  function toggleSemantic() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('semantic') === '1') {
+      url.searchParams.delete('semantic');
+    } else {
+      url.searchParams.set('semantic', '1');
+    }
+    window.location.href = url.toString();
+  }
+
+  function switchTab(tab, btn) {
+    // Update active button highlight
+    document.querySelectorAll('.search-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    // Show / hide sections
+    const sections = document.querySelectorAll('.search-section');
+    if (tab === 'all') {
+      sections.forEach(s => s.classList.add('active'));
+    } else {
+      sections.forEach(s => s.classList.remove('active'));
+      const target = document.getElementById('tab-' + tab);
+      if (target) target.classList.add('active');
+    }
+  }
+
+  // ── Inject "Similar matches" divider between exact and fuzzy moment rows ──────
+  document.querySelectorAll('[data-inject-divider="1"]').forEach(container => {
+    const rows = [...container.querySelectorAll('[data-exact]')];
+    let seenFuzzy = false;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.exact === '0' && !seenFuzzy) {
+        seenFuzzy = true;
+        const div = document.createElement('div');
+        div.className = 'match-divider';
+        div.textContent = 'Similar matches';
+        rows[i].before(div);
+      }
+    }
+  });
+
+  function toggleMoments(btn, extra) {
+    const container = btn.closest('.visual-moments, .speech-moments');
+    const hidden = container.querySelectorAll('.moment-extra-hidden');
+    if (hidden.length > 0) {
+      hidden.forEach(el => el.classList.remove('moment-extra-hidden'));
+      btn.textContent = 'Show less';
+    } else {
+      const extras = container.querySelectorAll('.moment-extra');
+      extras.forEach(el => el.classList.add('moment-extra-hidden'));
+      btn.textContent = `Show ${extra} more`;
+    }
+  }
+
+  // ── Infinite scroll feed ───────────────────────────────────────────────────
+  (function initInfiniteScroll() {
+    const sentinel = document.getElementById('feedSentinel');
+    if (!sentinel) return;  // no more pages
+
+    const grid        = sentinel.closest('.video-grid, [class*="grid"]') || sentinel.parentElement;
+    const loadingEl   = document.getElementById('feedLoading');
+    let   currentPage = 1;
+    let   loading     = false;
+    let   exhausted   = false;
+
+    const PARAMS = {
+      channel:  '{{ feed_filter_params.channel|default:""|escapejs }}',
+      q:        '{{ feed_filter_params.q|default:""|escapejs }}',
+      category: '{{ feed_filter_params.category|default:""|escapejs }}',
+      duration: '{{ feed_filter_params.duration|default:""|escapejs }}',
+      date:     '{{ feed_filter_params.date|default:""|escapejs }}',
+      sort:     '{{ feed_filter_params.sort|default:""|escapejs }}',
+    };
+
+    function buildApiUrl(page) {
+      const p = new URLSearchParams({ page, page_size: 24 });
+      Object.entries(PARAMS).forEach(([k, v]) => { if (v) p.set(k, v); });
+      return '/api/videos/?' + p.toString();
+    }
+
+    function fmtDuration(s) {
+      if (!s) return '';
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = Math.floor(s % 60);
+      if (h > 0) return h + ':' + String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+      return m + ':' + String(sec).padStart(2,'0');
+    }
+
+    function renderCard(v) {
+      const thumbHtml = v.thumbnail_url
+        ? `<img src="${v.thumbnail_url}" alt="" loading="lazy" />`
+        : `<div class="vcard-thumb-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>`;
+      const dur = v.duration ? `<div class="vcard-dur">${fmtDuration(v.duration)}</div>` : '';
+      const chAv = v.channel_avatar_url
+        ? `<img src="${v.channel_avatar_url}" alt="" />`
+        : `<span>${(v.channel_name||'?')[0].toUpperCase()}</span>`;
+      const badge = `<span class="badge badge-${v.status}"><span class="badge-dot"></span>${v.status}</span>`;
+      const card = document.createElement('a');
+      card.href      = `/watch/${v.id}/`;
+      card.className = 'vcard';
+      card.dataset.id       = v.id;
+      card.dataset.title    = v.title;
+      card.dataset.views    = v.views_count;
+      card.dataset.uploaded = (v.created_at || '').slice(0, 10);
+      card.innerHTML = `
+        <div class="vcard-thumb">
+          ${thumbHtml}${dur}
+          <div class="vcard-play-overlay"><div class="vcard-play-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><polygon points="5,3 19,12 5,21"/></svg>
+          </div></div>
+        </div>
+        <div class="vcard-body">
+          <div class="vcard-title">${v.title}</div>
+          <div class="vcard-meta">
+            <span class="vcard-channel">
+              <span class="vcard-ch-dot">${chAv}</span>
+              ${v.channel_name || ''}
+            </span>
+            <span class="vcard-sep">·</span>
+            <span>${v.views_count} views</span>
+            <span class="vcard-sep vcard-status">·</span>
+            ${badge}
+          </div>
+        </div>`;
+      return card;
+    }
+
+    async function loadMore() {
+      if (loading || exhausted) return;
+      loading = true;
+      if (loadingEl) loadingEl.style.display = '';
+
+      try {
+        currentPage++;
+        const res  = await fetch(buildApiUrl(currentPage), { credentials: 'include' });
+        if (!res.ok) throw new Error('API error ' + res.status);
+        const data = await res.json();
+
+        data.results.forEach(v => {
+          const card = renderCard(v);
+          grid.insertBefore(card, sentinel);
+        });
+
+        if (!data.has_more) {
+          exhausted = true;
+          sentinel.remove();
+          if (loadingEl) loadingEl.remove();
+        }
+      } catch (e) {
+        console.warn('[ClipLens] Feed load error:', e);
+        currentPage--;  // allow retry
+      } finally {
+        loading = false;
+        if (loadingEl && !exhausted) loadingEl.style.display = 'none';
+      }
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) loadMore();
+    }, { rootMargin: '200px' });
+
+    observer.observe(sentinel);
+  })();
+
+</script>
+{% endblock %}

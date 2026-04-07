@@ -1,0 +1,353 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Upload Photo — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .upload-wrap { max-width: 680px; margin: 36px auto; padding: 0 24px 60px; }
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+  .page-header p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  .dropzone {
+    border: 2px dashed var(--border-2); border-radius: var(--radius-lg);
+    padding: 48px 24px; text-align: center; cursor: pointer;
+    position: relative; margin-bottom: 24px;
+    transition: border-color var(--transition), background var(--transition);
+  }
+  .dropzone:hover, .dropzone.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+  .dropzone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .dz-icon {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--accent-soft); display: flex; align-items: center;
+    justify-content: center; margin: 0 auto 16px;
+  }
+  .dz-icon svg { width: 28px; height: 28px; color: var(--accent); }
+  .dz-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .dz-sub { font-size: 13px; color: var(--text-muted); }
+  .dz-sub span { color: var(--accent); font-weight: 600; }
+
+  /* Preview strip */
+  .preview-strip {
+    display: none; margin-bottom: 20px;
+    border-radius: var(--radius); overflow: hidden;
+    max-height: 280px; background: var(--surface-3);
+    align-items: center; justify-content: center;
+  }
+  .preview-strip img {
+    max-width: 100%; max-height: 280px; object-fit: contain; display: block; margin: auto;
+  }
+
+  .file-chosen {
+    display: none; align-items: center; gap: 12px;
+    background: var(--green-bg); border: 1px solid var(--green);
+    border-radius: var(--radius-sm); padding: 12px 16px; margin-bottom: 24px;
+  }
+  .file-chosen svg { width: 18px; height: 18px; color: var(--green); flex-shrink: 0; }
+  .file-name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-size-label { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 540px) { .form-grid-2 { grid-template-columns: 1fr; } }
+  .form-section { margin-bottom: 22px; }
+
+  .progress-wrap { display: none; margin-bottom: 20px; }
+  .progress-track { background: var(--surface-3); border-radius: 999px; height: 6px; overflow: hidden; }
+  .progress-fill {
+    height: 100%; background: linear-gradient(90deg, var(--accent), #818cf8);
+    border-radius: 999px; width: 0%; transition: width .3s;
+  }
+  .progress-label { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+  .result-card {
+    display: none; background: var(--green-bg);
+    border: 1px solid var(--green); border-radius: var(--radius);
+    padding: 20px; margin-top: 20px;
+  }
+  .result-title { font-weight: 700; color: var(--green); margin-bottom: 14px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .result-title svg { width: 16px; height: 16px; }
+  .result-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .result-table td { padding: 5px 0; vertical-align: top; }
+  .result-table td:first-child { color: var(--text-muted); width: 110px; font-weight: 500; }
+  .result-table a { color: var(--accent); }
+
+  .analysis-card {
+    display: none; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-top: 16px;
+  }
+  .analysis-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; font-size: 13px; }
+  .analysis-label { color: var(--text-muted); font-weight: 500; min-width: 100px; flex-shrink: 0; }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { background: var(--accent-soft); color: var(--accent); padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="upload-wrap">
+  <div class="page-header">
+    <h1>Upload Photo</h1>
+    <p>JPEG, PNG, WEBP, GIF, BMP up to 50 MB. AI analysis runs automatically after upload.</p>
+  </div>
+
+  <!-- Drop zone -->
+  <div class="dropzone" id="dropzone">
+    <input type="file" id="fileInput" accept="image/*" />
+    <div class="dz-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+    </div>
+    <div class="dz-title">Drop your image here</div>
+    <div class="dz-sub">or <span>browse files</span> — JPEG, PNG, WEBP &amp; more</div>
+  </div>
+
+  <!-- Image preview -->
+  <div class="preview-strip" id="previewStrip">
+    <img id="previewImg" src="" alt="Preview" />
+  </div>
+
+  <!-- File chosen indicator -->
+  <div class="file-chosen" id="fileChosen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+    <span class="file-name" id="fileName"></span>
+    <span class="file-size-label" id="fileSizeLabel"></span>
+  </div>
+
+  <!-- Metadata form -->
+  <div id="metaForm">
+    <div class="form-section">
+      <label class="form-label">Title <span style="color:var(--red)">*</span></label>
+      <input type="text" id="titleInput" class="form-input" placeholder="Photo title" />
+    </div>
+    <div class="form-section">
+      <label class="form-label">Description</label>
+      <textarea id="descInput" class="form-input" rows="3" placeholder="Optional description"></textarea>
+    </div>
+    <div class="form-grid-2">
+      <div class="form-section">
+        <label class="form-label">Channel</label>
+        <select id="channelSelect" class="form-input">
+          <option value="">No channel</option>
+          {% for ch in channels %}
+          <option value="{{ ch.id }}">{{ ch.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-section">
+        <label class="form-label">Category</label>
+        <select id="categorySelect" class="form-input">
+          <option value="">No category</option>
+          {% for cat in categories %}
+          <option value="{{ cat.id }}">{{ cat.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-section">
+      <label class="form-label">Tags</label>
+      <input type="text" id="tagsInput" class="form-input" placeholder="Comma-separated, e.g. nature, portrait, architecture" />
+    </div>
+    <div class="form-section">
+      <label class="form-label">Visibility</label>
+      <select id="visibilitySelect" class="form-input">
+        <option value="public">Public</option>
+        <option value="private">Private (URL only)</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-label" id="progressLabel">Uploading…</div>
+  </div>
+
+  <!-- Submit button -->
+  <button class="btn btn-primary btn-full" id="submitBtn" onclick="uploadPhoto()" style="margin-top:4px;">
+    Upload Photo
+  </button>
+
+  <!-- Result -->
+  <div class="result-card" id="resultCard">
+    <div class="result-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      Photo uploaded — AI analysis queued
+    </div>
+    <table class="result-table">
+      <tr><td>Title</td><td id="resTitle"></td></tr>
+      <tr><td>View</td><td><a id="resLink" href="#" target="_blank">Open photo</a></td></tr>
+      <tr><td>Status</td><td id="resStatus">Processing…</td></tr>
+    </table>
+    <div class="analysis-card" id="analysisCard">
+      <div class="analysis-row"><span class="analysis-label">Objects</span><div class="tag-list" id="labelsOut"></div></div>
+      <div class="analysis-row"><span class="analysis-label">Scene</span><span id="sceneOut" style="color:var(--text-muted);"></span></div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;">
+      <a id="resViewBtn" href="#" class="btn btn-primary btn-sm">View photo</a>
+      <button class="btn btn-ghost btn-sm" onclick="resetForm()">Upload another</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const dropzone  = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+let   selectedFile = null;
+
+// Drag-and-drop styling
+dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop',      e => {
+  e.preventDefault(); dropzone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) setFile(f);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) setFile(fileInput.files[0]);
+});
+
+function setFile(f) {
+  selectedFile = f;
+  document.getElementById('fileName').textContent    = f.name;
+  document.getElementById('fileSizeLabel').textContent = formatBytes(f.size);
+  document.getElementById('fileChosen').style.display = 'flex';
+
+  // Image preview
+  const reader = new FileReader();
+  reader.onload = ev => {
+    document.getElementById('previewImg').src = ev.target.result;
+    document.getElementById('previewStrip').style.display = 'flex';
+  };
+  reader.readAsDataURL(f);
+
+  // Pre-fill title
+  const titleEl = document.getElementById('titleInput');
+  if (!titleEl.value) {
+    titleEl.value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024)        return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function uploadPhoto() {
+  if (!selectedFile) { alert('Please select an image first.'); return; }
+  const title = document.getElementById('titleInput').value.trim();
+  if (!title) { alert('Please enter a title.'); return; }
+
+  const fd = new FormData();
+  fd.append('file',        selectedFile);
+  fd.append('title',       title);
+  fd.append('description', document.getElementById('descInput').value);
+  fd.append('tags',        document.getElementById('tagsInput').value);
+  fd.append('channel_id',  document.getElementById('channelSelect').value);
+  fd.append('category_id', document.getElementById('categorySelect').value);
+  fd.append('visibility',  document.getElementById('visibilitySelect').value);
+
+  document.getElementById('submitBtn').disabled   = true;
+  document.getElementById('progressWrap').style.display = 'block';
+  setProgress(10, 'Uploading…');
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/photos/upload/');
+
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable) setProgress(Math.round(e.loaded / e.total * 80), 'Uploading…');
+  };
+
+  xhr.onload = () => {
+    setProgress(100, 'Upload complete — queuing AI analysis…');
+    const data = JSON.parse(xhr.responseText);
+    if (xhr.status === 201) {
+      showResult(data);
+      pollStatus(data.id);
+    } else {
+      alert('Upload failed: ' + (data.error || xhr.statusText));
+      resetProgress();
+    }
+  };
+
+  xhr.onerror = () => { alert('Network error.'); resetProgress(); };
+  xhr.send(fd);
+}
+
+function setProgress(pct, label) {
+  document.getElementById('progressFill').style.width  = pct + '%';
+  document.getElementById('progressLabel').textContent = label;
+}
+
+function resetProgress() {
+  document.getElementById('submitBtn').disabled = false;
+  document.getElementById('progressWrap').style.display = 'none';
+}
+
+function showResult(data) {
+  document.getElementById('progressWrap').style.display = 'none';
+  document.getElementById('resTitle').textContent = data.title;
+  document.getElementById('resLink').href    = data.photo_url;
+  document.getElementById('resViewBtn').href = data.photo_url;
+  document.getElementById('resStatus').textContent = 'Processing…';
+  document.getElementById('resultCard').style.display = 'block';
+  document.getElementById('metaForm').style.display   = 'none';
+  document.getElementById('submitBtn').style.display  = 'none';
+  document.getElementById('previewStrip').style.display = 'none';
+}
+
+function pollStatus(photoId) {
+  const poll = setInterval(() => {
+    fetch('/api/photos/' + photoId + '/status/')
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'ready') {
+          clearInterval(poll);
+          document.getElementById('resStatus').textContent = 'Ready';
+          document.getElementById('resStatus').style.color = 'var(--green)';
+          showAnalysis(d);
+        } else if (d.status === 'failed') {
+          clearInterval(poll);
+          document.getElementById('resStatus').textContent = 'Failed: ' + (d.processing_error || 'Unknown error');
+          document.getElementById('resStatus').style.color = 'var(--red)';
+        }
+      })
+      .catch(() => clearInterval(poll));
+  }, 3000);
+}
+
+function showAnalysis(d) {
+  if (d.labels || d.scene_description) {
+    document.getElementById('analysisCard').style.display = 'block';
+    const labelsEl = document.getElementById('labelsOut');
+    labelsEl.innerHTML = '';
+    (d.labels || '').split(',').filter(s => s.trim()).forEach(lbl => {
+      const tag = document.createElement('span');
+      tag.className = 'tag'; tag.textContent = lbl.trim();
+      labelsEl.appendChild(tag);
+    });
+    document.getElementById('sceneOut').textContent = d.scene_description || '—';
+  }
+}
+
+function resetForm() {
+  selectedFile = null;
+  document.getElementById('fileInput').value    = '';
+  document.getElementById('titleInput').value   = '';
+  document.getElementById('descInput').value    = '';
+  document.getElementById('tagsInput').value    = '';
+  document.getElementById('fileChosen').style.display  = 'none';
+  document.getElementById('previewStrip').style.display = 'none';
+  document.getElementById('resultCard').style.display  = 'none';
+  document.getElementById('metaForm').style.display    = 'block';
+  document.getElementById('submitBtn').style.display   = 'block';
+  document.getElementById('submitBtn').disabled        = false;
+}
+</script>
+{% endblock %}

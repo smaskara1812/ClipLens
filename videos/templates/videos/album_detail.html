@@ -1,0 +1,266 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}{{ album.title }} — Albums — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .content-area { padding: 20px 24px 60px; }
+
+  .album-header {
+    display: flex; align-items: flex-start; gap: 20px;
+    margin-bottom: 28px; flex-wrap: wrap;
+  }
+  .album-header-info { flex: 1; }
+  .album-header-title {
+    font-size: 26px; font-weight: 800; letter-spacing: -0.4px; margin-bottom: 6px;
+  }
+  .album-header-meta { font-size: 13px; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap; }
+  .album-header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+
+  .smart-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--accent); color: #fff;
+    font-size: 11px; font-weight: 700; padding: 3px 10px;
+    border-radius: 999px; text-transform: uppercase;
+  }
+
+  /* Photo grid (same as library) */
+  .photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 640px) { .photo-grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+
+  .pcard {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; display: block;
+    text-decoration: none; color: inherit;
+    transition: transform .18s, box-shadow .18s, border-color .18s;
+    position: relative;
+  }
+  .pcard:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color: var(--border-2); }
+  .pcard-thumb { aspect-ratio: 1/1; background: var(--surface-3); overflow: hidden; }
+  .pcard-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .pcard:hover .pcard-thumb img { transform: scale(1.06); }
+  .pcard-thumb-ph {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-subtle);
+  }
+  .pcard-thumb-ph svg { width: 36px; height: 36px; }
+  .pcard-body { padding: 8px 10px 10px; }
+  .pcard-title {
+    font-size: 12px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Bulk select overlay */
+  .pcard-select {
+    position: absolute; top: 8px; left: 8px; z-index: 2;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(0,0,0,.55); border: 2px solid rgba(255,255,255,.8);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .15s;
+  }
+  .pcard:hover .pcard-select, .pcard.selected .pcard-select { opacity: 1; }
+  .pcard.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .pcard.selected .pcard-select { background: var(--accent); border-color: var(--accent); }
+  .pcard.selected .pcard-select::after {
+    content: ''; width: 10px; height: 6px;
+    border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+    transform: rotate(-45deg) translate(1px, -1px);
+  }
+
+  /* Bulk action bar */
+  .bulk-bar {
+    display: none; position: sticky; top: 56px; z-index: 100;
+    background: var(--accent); color: #fff;
+    padding: 10px 20px; border-radius: var(--radius);
+    margin-bottom: 16px; align-items: center; gap: 12px;
+    flex-wrap: wrap;
+  }
+  .bulk-bar.visible { display: flex; }
+  .bulk-bar-count { font-weight: 700; flex: 1; }
+  .bulk-bar button {
+    background: rgba(255,255,255,.2); color: #fff; border: none;
+    padding: 5px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: background .15s;
+  }
+  .bulk-bar button:hover { background: rgba(255,255,255,.35); }
+  .bulk-bar button.danger { background: rgba(239,68,68,.5); }
+  .bulk-bar button.danger:hover { background: rgba(239,68,68,.75); }
+
+  /* Empty state */
+  .empty-state { text-align: center; padding: 80px 20px; color: var(--text-muted); }
+  .empty-state svg { width: 56px; height: 56px; margin: 0 auto 16px; display: block; opacity: .35; }
+  .empty-state h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content-area">
+
+  <!-- Header -->
+  <div class="album-header">
+    <div class="album-header-info">
+      <div style="margin-bottom:8px;">
+        <a href="{% url 'albums' %}" style="font-size:12px;color:var(--text-muted);text-decoration:none;">← Albums</a>
+      </div>
+      <div class="album-header-title">
+        {{ album.title }}
+        {% if album.is_smart %}<span class="smart-badge" style="font-size:11px;vertical-align:middle;margin-left:8px;">Smart</span>{% endif %}
+      </div>
+      <div class="album-header-meta">
+        <span>{{ photos|length }} photo{{ photos|length|pluralize }}</span>
+        {% if album.description %}<span>{{ album.description }}</span>{% endif %}
+        {% if not album.is_public %}<span>· Private</span>{% endif %}
+      </div>
+    </div>
+    <div class="album-header-actions">
+      {% if not is_shared_view and request.user == album.owner %}
+      <button class="btn btn-ghost btn-sm" onclick="copyShareLink('{{ album.share_url }}')" style="display:inline-flex;align-items:center;gap:5px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+        </svg>
+        Share
+      </button>
+      {% if not album.is_smart %}
+      <button class="btn btn-ghost btn-sm" id="selectModeBtn" onclick="toggleSelectMode()">Select</button>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Bulk action bar -->
+  <div class="bulk-bar" id="bulkBar">
+    <span class="bulk-bar-count" id="bulkCount">0 selected</span>
+    <button onclick="bulkRemoveFromAlbum()">Remove from album</button>
+    <button class="danger" onclick="bulkDelete()">Delete photos</button>
+    <button onclick="cancelSelectMode()" style="background:rgba(255,255,255,.1);">Cancel</button>
+  </div>
+
+  <!-- Photo grid -->
+  {% if photos %}
+  <div class="photo-grid" id="photoGrid">
+    {% for photo in photos %}
+    <a class="pcard" href="{% if not is_select_mode %}{% url 'photo_detail' photo.id %}{% else %}#{% endif %}"
+       id="pc-{{ photo.id }}" data-id="{{ photo.id }}"
+       onclick="return handleCardClick(event, this)">
+      <div class="pcard-select"></div>
+      <div class="pcard-thumb">
+        {% if photo.thumbnail_url %}
+          <img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />
+        {% else %}
+          <div class="pcard-thumb-ph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </div>
+        {% endif %}
+      </div>
+      <div class="pcard-body">
+        <div class="pcard-title" title="{{ photo.title }}">{{ photo.title }}</div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+      <polyline points="21 15 16 10 5 21"/>
+    </svg>
+    <h3>No photos in this album</h3>
+    <p>{% if album.is_smart %}No photos match the smart filter criteria.{% else %}Add photos from the photo library.{% endif %}</p>
+    <a href="{% url 'photo_library' %}" class="btn btn-primary" style="margin-top:12px;">Go to Photo Library</a>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+const ALBUM_ID = '{{ album.id }}';
+let _selectMode = false;
+const _selected = new Set();
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+
+function toggleSelectMode() {
+  _selectMode = !_selectMode;
+  const btn = document.getElementById('selectModeBtn');
+  if (btn) btn.textContent = _selectMode ? 'Done' : 'Select';
+  if (!_selectMode) cancelSelectMode();
+}
+
+function cancelSelectMode() {
+  _selectMode = false;
+  _selected.clear();
+  document.querySelectorAll('.pcard.selected').forEach(el => el.classList.remove('selected'));
+  document.getElementById('bulkBar').classList.remove('visible');
+  const btn = document.getElementById('selectModeBtn');
+  if (btn) btn.textContent = 'Select';
+}
+
+function handleCardClick(event, el) {
+  if (!_selectMode) return true;
+  event.preventDefault();
+  const id = el.dataset.id;
+  if (_selected.has(id)) { _selected.delete(id); el.classList.remove('selected'); }
+  else { _selected.add(id); el.classList.add('selected'); }
+  const count = _selected.size;
+  document.getElementById('bulkCount').textContent = count + ' selected';
+  document.getElementById('bulkBar').classList.toggle('visible', count > 0);
+  return false;
+}
+
+function copyShareLink(path) {
+  const url = window.location.origin + path;
+  navigator.clipboard.writeText(url).then(() => showToast('success', 'Share link copied!'));
+}
+
+async function bulkRemoveFromAlbum() {
+  if (!_selected.size) return;
+  const res = await fetch('/api/photos/bulk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({
+      photo_ids: [..._selected],
+      action: 'remove_from_album',
+      album_id: ALBUM_ID,
+    }),
+  });
+  if (res.ok) {
+    _selected.forEach(id => document.getElementById('pc-' + id)?.remove());
+    cancelSelectMode();
+    showToast('success', 'Removed from album');
+  } else {
+    showToast('error', 'Failed to remove photos');
+  }
+}
+
+async function bulkDelete() {
+  if (!_selected.size) return;
+  if (!confirm(`Delete ${_selected.size} photo(s)? This cannot be undone.`)) return;
+  const res = await fetch('/api/photos/bulk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({ photo_ids: [..._selected], action: 'delete' }),
+  });
+  if (res.ok) {
+    _selected.forEach(id => document.getElementById('pc-' + id)?.remove());
+    cancelSelectMode();
+    showToast('success', 'Photos deleted');
+  } else {
+    showToast('error', 'Failed to delete photos');
+  }
+}
+</script>
+{% endblock %}

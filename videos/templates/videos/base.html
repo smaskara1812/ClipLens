@@ -1,0 +1,631 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}ClipLens{% endblock %}</title>
+  {% block meta %}{% endblock %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    /* ── CSS Variables ── */
+    :root {
+      --bg:            #09090e;
+      --surface:       #111118;
+      --surface-2:     #18181f;
+      --surface-3:     #1e1e2a;
+      --border:        #1e1e2a;
+      --border-2:      #2a2a38;
+      --text:          #f0f0f5;
+      --text-muted:    #71717a;
+      --text-subtle:   #52525b;
+      --accent:        #6366f1;
+      --accent-h:      #5153d6;
+      --accent-soft:   rgba(99,102,241,.12);
+      --green:         #22c55e;
+      --green-bg:      rgba(34,197,94,.1);
+      --red:           #f87171;
+      --red-bg:        rgba(248,113,113,.1);
+      --yellow:        #fbbf24;
+      --yellow-bg:     rgba(251,191,36,.1);
+      --radius:        10px;
+      --radius-sm:     6px;
+      --radius-lg:     16px;
+      --shadow:        0 4px 32px rgba(0,0,0,.45);
+      --shadow-sm:     0 2px 8px rgba(0,0,0,.3);
+      --header-h:      60px;
+      --transition:    0.18s ease;
+    }
+    [data-theme="light"] {
+      --bg:            #f2f2f7;
+      --surface:       #ffffff;
+      --surface-2:     #f7f7fc;
+      --surface-3:     #ededf4;
+      --border:        #e4e4ec;
+      --border-2:      #d1d1de;
+      --text:          #0f0f14;
+      --text-muted:    #6b7280;
+      --text-subtle:   #9ca3af;
+      --accent:        #6366f1;
+      --accent-h:      #5153d6;
+      --accent-soft:   rgba(99,102,241,.08);
+      --green:         #16a34a;
+      --green-bg:      rgba(22,163,74,.08);
+      --red:           #dc2626;
+      --red-bg:        rgba(220,38,38,.08);
+      --yellow:        #d97706;
+      --yellow-bg:     rgba(217,119,6,.08);
+      --shadow:        0 4px 32px rgba(0,0,0,.08);
+      --shadow-sm:     0 2px 8px rgba(0,0,0,.06);
+    }
+
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-size: 14px;
+      line-height: 1.5;
+      transition: background var(--transition), color var(--transition);
+    }
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
+    button { font-family: inherit; cursor: pointer; }
+    input, textarea, select { font-family: inherit; }
+
+    /* ── Header ── */
+    .fs-header {
+      position: sticky; top: 0; z-index: 100;
+      height: var(--header-h);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 24px; gap: 16px;
+      backdrop-filter: blur(12px);
+      transition: background var(--transition), border-color var(--transition);
+    }
+    .fs-logo {
+      font-size: 20px; font-weight: 800;
+      color: var(--accent); letter-spacing: -0.5px;
+      flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+    }
+    .fs-logo svg { width: 28px; height: 28px; }
+    .fs-logo span { color: var(--text); font-weight: 700; }
+
+    /* Search */
+    .fs-search {
+      flex: 1; max-width: 520px; margin: 0 auto;
+      display: flex; align-items: center;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: 999px;
+      overflow: visible;   /* allow dropdown to escape the pill */
+      position: relative;
+      transition: border-color var(--transition), background var(--transition);
+    }
+    .fs-search-inner {
+      display: flex; align-items: center; width: 100%;
+      background: var(--surface-2); border-radius: 999px; overflow: hidden;
+      border: 1px solid transparent;
+      transition: border-color var(--transition), background var(--transition);
+    }
+    .fs-search:focus-within .fs-search-inner {
+      border-color: var(--accent);
+      background: var(--surface);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    /* Autocomplete dropdown */
+    .fs-suggest {
+      display: none; position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+      background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      z-index: 9999; overflow: hidden;
+    }
+    .fs-suggest.open { display: block; }
+    .fs-suggest-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 14px; cursor: pointer; font-size: 13px; color: var(--text);
+      transition: background var(--transition);
+    }
+    .fs-suggest-item:hover, .fs-suggest-item.active { background: var(--surface-2); }
+    .fs-suggest-icon {
+      width: 18px; height: 18px; flex-shrink: 0; color: var(--text-muted);
+    }
+    .fs-suggest-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fs-suggest-type {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--text-subtle);
+    }
+    .fs-search input {
+      flex: 1; background: transparent; border: none; outline: none;
+      padding: 9px 16px; font-size: 14px; color: var(--text);
+    }
+    .fs-search input::placeholder { color: var(--text-subtle); }
+    .fs-search-btn {
+      background: transparent; border: none;
+      padding: 0 14px; color: var(--text-muted);
+      display: flex; align-items: center;
+      transition: color var(--transition);
+    }
+    .fs-search-btn:hover { color: var(--accent); }
+    .fs-search-btn svg { width: 18px; height: 18px; }
+
+    /* Nav */
+    .fs-nav {
+      display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+    }
+    .fs-nav a {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      color: var(--text-muted);
+      transition: background var(--transition), color var(--transition);
+    }
+    .fs-nav a:hover { background: var(--surface-3); color: var(--text); }
+    .fs-nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+    .fs-nav a svg { width: 16px; height: 16px; }
+
+    /* User pill */
+    .user-pill {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: 999px; padding: 4px 10px 4px 4px; flex-shrink: 0;
+    }
+    .user-avatar {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      font-size: 12px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .user-name { font-size: 13px; font-weight: 600; color: var(--text-muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .logout-btn {
+      display: flex; align-items: center; color: var(--text-subtle);
+      padding: 2px; border-radius: 4px; transition: color var(--transition);
+    }
+    .logout-btn:hover { color: #ef4444; }
+    .logout-btn svg { width: 15px; height: 15px; }
+
+    /* Theme toggle */
+    .theme-toggle {
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: 8px; padding: 7px; color: var(--text-muted);
+      display: flex; align-items: center; justify-content: center;
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+      flex-shrink: 0;
+    }
+    .theme-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+    .theme-toggle svg { width: 16px; height: 16px; }
+    .icon-sun { display: none; }
+    .icon-moon { display: block; }
+    [data-theme="light"] .icon-sun { display: block; }
+    [data-theme="light"] .icon-moon { display: none; }
+
+    /* ── App layout: sidebar + content ── */
+    .fs-app-layout {
+      display: flex; align-items: flex-start;
+      min-height: calc(100vh - var(--header-h));
+    }
+    .fs-sidebar-col {
+      width: 220px; flex-shrink: 0;
+      position: sticky; top: var(--header-h);
+      height: calc(100vh - var(--header-h));
+      overflow-y: auto; overflow-x: hidden;
+      border-right: 1px solid var(--border);
+      padding: 8px 8px 8px 0;
+      display: flex; flex-direction: column; gap: 4px;
+      scrollbar-width: none;
+      transition: width 0.22s ease, padding 0.22s ease, border-color 0.22s ease;
+    }
+    .fs-sidebar-col::-webkit-scrollbar { display: none; }
+    .fs-sidebar-col.collapsed {
+      width: 0; padding: 0; border-right-color: transparent; overflow: hidden;
+    }
+    .fs-main { flex: 1; min-width: 0; }
+
+    /* Sidebar toggle button in header */
+    .sidebar-toggle-btn {
+      background: none; border: none; color: var(--text-muted);
+      display: flex; align-items: center; justify-content: center;
+      padding: 7px; border-radius: 8px; flex-shrink: 0; cursor: pointer;
+      transition: background var(--transition), color var(--transition);
+    }
+    .sidebar-toggle-btn:hover { background: var(--surface-3); color: var(--text); }
+    .sidebar-toggle-btn svg { width: 18px; height: 18px; }
+
+    /* ── Sidebar items (shared by all pages) ── */
+    .sidebar-section { margin-bottom: 2px; }
+    .sidebar-heading {
+      font-size: 10px; font-weight: 700; color: var(--text-subtle);
+      text-transform: uppercase; letter-spacing: 0.8px;
+      padding: 6px 12px 4px;
+    }
+    .sidebar-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; transition: background var(--transition), color var(--transition);
+      border: 1px solid transparent; text-decoration: none;
+    }
+    .sidebar-item:hover { background: var(--surface-3); color: var(--text); }
+    .sidebar-item.active {
+      background: var(--accent-soft); color: var(--accent);
+      font-weight: 600; border-color: var(--accent-soft);
+    }
+    .sidebar-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .sidebar-item .ch-avatar {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--accent); display: flex; align-items: center;
+      justify-content: center; font-size: 10px; font-weight: 700; color: #fff;
+      flex-shrink: 0; overflow: hidden;
+    }
+    .sidebar-item .ch-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .sidebar-divider {
+      height: 1px; background: var(--border); margin: 8px 0;
+    }
+    @media (max-width: 900px) {
+      .fs-sidebar-col { display: none; }
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: none; border-radius: var(--radius-sm); padding: 9px 18px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: background var(--transition), opacity var(--transition), transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn svg { width: 15px; height: 15px; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-h); }
+    .btn-secondary { background: var(--surface-3); color: var(--text); border: 1px solid var(--border-2); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border-2); }
+    .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border-2); }
+    .btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid transparent; }
+    .btn-danger:hover:not(:disabled) { border-color: var(--red); }
+    .btn-success { background: var(--green-bg); color: var(--green); border: 1px solid transparent; }
+    .btn-success:hover:not(:disabled) { border-color: var(--green); }
+    .btn-sm { padding: 5px 12px; font-size: 12px; }
+    .btn-lg { padding: 12px 24px; font-size: 15px; }
+    .btn-full { width: 100%; }
+    .btn-icon { padding: 7px; border-radius: var(--radius-sm); }
+
+    /* ── Form elements ── */
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-label {
+      font-size: 12px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .form-label .req { color: var(--red); margin-left: 2px; }
+    .form-input, .form-textarea, .form-select {
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); padding: 9px 12px;
+      font-size: 14px; color: var(--text); outline: none; width: 100%;
+      transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+    }
+    .form-input:focus, .form-textarea:focus, .form-select:focus {
+      border-color: var(--accent);
+      background: var(--surface);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .form-input::placeholder, .form-textarea::placeholder { color: var(--text-subtle); }
+    .form-textarea { resize: vertical; min-height: 80px; line-height: 1.6; }
+    .form-select { appearance: none; cursor: pointer; }
+    .form-select option { background: var(--surface-2); }
+    .form-hint { font-size: 11px; color: var(--text-subtle); }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 28px;
+      transition: background var(--transition), border-color var(--transition);
+    }
+    .card-title {
+      font-size: 15px; font-weight: 700; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 8px; color: var(--text);
+    }
+    .card-title svg { width: 18px; height: 18px; color: var(--accent); }
+
+    /* ── Badge ── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: 600; padding: 3px 9px;
+      border-radius: 999px;
+    }
+    .badge-ready { background: var(--green-bg); color: var(--green); }
+    .badge-processing { background: var(--accent-soft); color: var(--accent); }
+    .badge-pending { background: var(--surface-3); color: var(--text-muted); }
+    .badge-failed { background: var(--red-bg); color: var(--red); }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .badge-processing .badge-dot { animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+    /* ── Toast ── */
+    .fs-toast {
+      position: fixed; bottom: 24px; right: 24px; z-index: 999;
+      background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 14px 18px;
+      display: flex; align-items: flex-start; gap: 12px;
+      box-shadow: var(--shadow); min-width: 280px; max-width: 380px;
+      transform: translateY(100px); opacity: 0;
+      transition: transform 0.3s cubic-bezier(.34,1.56,.64,1), opacity 0.3s;
+      pointer-events: none;
+    }
+    .fs-toast.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
+    .fs-toast.success { border-color: var(--green); }
+    .fs-toast.error   { border-color: var(--red); }
+    .fs-toast.info    { border-color: var(--accent); }
+    .toast-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .toast-body .toast-title { font-weight: 600; font-size: 14px; }
+    .toast-body .toast-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ── Toggle switch ── */
+    .toggle-wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .toggle-info .toggle-label { font-size: 14px; font-weight: 500; }
+    .toggle-info .toggle-hint { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: var(--border-2); border-radius: 22px;
+      transition: background var(--transition);
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      width: 16px; height: 16px; left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%;
+      transition: transform var(--transition);
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .fs-header { padding: 0 14px; gap: 10px; }
+      .fs-search { max-width: 100%; }
+      .hide-mobile { display: none; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<!-- Header -->
+<header class="fs-header">
+  <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar" aria-label="Toggle sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+  <a href="{% url 'player' %}" class="fs-logo">
+    <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="28" height="28" rx="7" fill="#6366f1"/>
+      <polygon points="11,8 21,14 11,20" fill="white"/>
+    </svg>
+    Clip<span>Lens</span>
+  </a>
+
+  <form class="fs-search" id="fsSearchForm" action="{% url 'player' %}" method="get">
+    <div class="fs-search-inner">
+      <input type="text" name="q" id="fsSearchInput"
+             placeholder="Search videos, channels, tags…"
+             value="{{ request.GET.q|default:'' }}" autocomplete="off"
+             aria-label="Search" aria-autocomplete="list" aria-controls="fsSuggest" />
+      <button type="submit" class="fs-search-btn" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+      </button>
+    </div>
+    <div class="fs-suggest" id="fsSuggest" role="listbox"></div>
+  </form>
+
+  <nav class="fs-nav hide-mobile">
+    <a href="{% url 'player' %}" {% if request.resolver_match.url_name == 'player' %}class="active"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      Browse
+    </a>
+  </nav>
+
+  {% if user.is_authenticated %}
+  <a href="{% url 'notifications' %}" class="notif-bell" title="Notifications" style="position:relative;display:flex;align-items:center;padding:7px;border-radius:8px;color:var(--text-muted);border:1px solid var(--border-2);background:var(--surface-2);transition:all var(--transition);flex-shrink:0;" onmouseover="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'" onmouseout="this.style.color='var(--text-muted)';this.style.borderColor='var(--border-2)'">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+    {% if unread_count %}<span style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:10px;font-weight:700;border-radius:999px;padding:1px 5px;min-width:16px;text-align:center;">{{ unread_count }}</span>{% endif %}
+  </a>
+  <div class="user-pill">
+    <div class="user-avatar">{{ user.username|first|upper }}</div>
+    <span class="user-name hide-mobile">{{ user.username }}</span>
+    <a href="{% url 'logout' %}" class="logout-btn" title="Sign out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+    </a>
+  </div>
+  {% else %}
+  <div style="display:flex;gap:8px;flex-shrink:0;">
+    <a href="{% url 'login' %}" style="display:inline-flex;align-items:center;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;color:var(--text-muted);border:1px solid var(--border-2);background:transparent;transition:all var(--transition);" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border-2)';this.style.color='var(--text-muted)'">Sign In</a>
+    <a href="{% url 'register' %}" style="display:inline-flex;align-items:center;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;background:var(--accent);transition:background var(--transition);" onmouseover="this.style.background='var(--accent-h)'" onmouseout="this.style.background='var(--accent)'">Sign Up</a>
+  </div>
+  {% endif %}
+
+  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+    <!-- Moon (dark mode icon) -->
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+    <!-- Sun (light mode icon) -->
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="5"/>
+      <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+      <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+  </button>
+</header>
+
+<div class="fs-app-layout">
+  <aside class="fs-sidebar-col">
+    {% include 'videos/_sidebar.html' %}
+  </aside>
+  <main class="fs-main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="fs-toast" id="fsToast">
+  <div class="toast-icon" id="fsToastIcon">✅</div>
+  <div class="toast-body">
+    <div class="toast-title" id="fsToastTitle"></div>
+    <div class="toast-sub" id="fsToastSub"></div>
+  </div>
+</div>
+
+<script>
+  // ── Theme ──
+  (function() {
+    const saved = localStorage.getItem('fs-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+  })();
+
+  // ── Sidebar collapse ──
+  (function() {
+    if (localStorage.getItem('fs-sidebar-collapsed') === '1') {
+      const col = document.querySelector('.fs-sidebar-col');
+      if (col) col.classList.add('collapsed');
+    }
+  })();
+
+  function toggleSidebar() {
+    const col = document.querySelector('.fs-sidebar-col');
+    if (!col) return;
+    const collapsed = col.classList.toggle('collapsed');
+    localStorage.setItem('fs-sidebar-collapsed', collapsed ? '1' : '0');
+  }
+
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('fs-theme', next);
+  }
+
+  // ── Toast ──
+  let _toastTimer = null;
+  function showToast(type, title, sub = '') {
+    const el = document.getElementById('fsToast');
+    document.getElementById('fsToastIcon').textContent =
+      type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+    document.getElementById('fsToastTitle').textContent = title;
+    document.getElementById('fsToastSub').textContent = sub;
+    el.className = `fs-toast ${type} show`;
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+  }
+
+  // ── Copy to clipboard ──
+  function copyText(text, label) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('success', label || 'Copied!', text.length > 60 ? text.slice(0,60) + '…' : text);
+    });
+  }
+
+  // ── Search autocomplete ──
+  (function() {
+    const input   = document.getElementById('fsSearchInput');
+    const suggest = document.getElementById('fsSuggest');
+    const form    = document.getElementById('fsSearchForm');
+    if (!input || !suggest) return;
+
+    let _timer = null;
+    let _active = -1;
+    let _items  = [];
+
+    const ICONS = {
+      video:   '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+      channel: '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+      person:  '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a9 9 0 0 1 13 0"/></svg>',
+      photo:   '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+    };
+
+    function closeSuggest() {
+      suggest.classList.remove('open');
+      suggest.innerHTML = '';
+      _active = -1;
+      _items  = [];
+    }
+
+    function renderItems(items) {
+      _items = items;
+      _active = -1;
+      if (!items.length) { closeSuggest(); return; }
+      suggest.innerHTML = items.map((it, i) => {
+        const esc = s => String(s).replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        return `<div class="fs-suggest-item" role="option" data-idx="${i}" data-text="${esc(it.text)}" onmousedown="event.preventDefault()" onclick="_fsSuggestPick(${i})">
+          ${ICONS[it.type] || ICONS.video}
+          <span class="fs-suggest-text">${esc(it.text)}</span>
+          <span class="fs-suggest-type">${esc(it.type)}</span>
+        </div>`;
+      }).join('');
+      suggest.classList.add('open');
+    }
+
+    window._fsSuggestPick = function(idx) {
+      const item = _items[idx];
+      if (!item) return;
+      input.value = item.text;
+      closeSuggest();
+      form.submit();
+    };
+
+    function setActive(idx) {
+      const els = suggest.querySelectorAll('.fs-suggest-item');
+      els.forEach(e => e.classList.remove('active'));
+      _active = idx;
+      if (idx >= 0 && idx < els.length) {
+        els[idx].classList.add('active');
+        els[idx].scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    input.addEventListener('input', () => {
+      clearTimeout(_timer);
+      const q = input.value.trim();
+      if (q.length < 2) { closeSuggest(); return; }
+      _timer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/search/suggest/?q=${encodeURIComponent(q)}`, { credentials: 'include' });
+          if (res.ok) renderItems(await res.json());
+        } catch (_) { closeSuggest(); }
+      }, 160);
+    });
+
+    input.addEventListener('keydown', e => {
+      if (!suggest.classList.contains('open')) return;
+      if (e.key === 'ArrowDown')  { e.preventDefault(); setActive(Math.min(_active + 1, _items.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(Math.max(_active - 1, -1)); }
+      else if (e.key === 'Enter' && _active >= 0) { e.preventDefault(); _fsSuggestPick(_active); }
+      else if (e.key === 'Escape') closeSuggest();
+    });
+
+    input.addEventListener('blur', () => setTimeout(closeSuggest, 150));
+  })();
+</script>
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

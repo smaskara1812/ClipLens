@@ -1,0 +1,159 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}{{ playlist.title }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .pl-layout { max-width: 1200px; margin: 0 auto; padding: 28px 24px; display: grid; grid-template-columns: 340px 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 900px) { .pl-layout { grid-template-columns: 1fr; } }
+
+  /* Sidebar info panel */
+  .pl-info-panel { position: sticky; top: calc(var(--header-h) + 16px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .pl-cover { aspect-ratio: 16/9; background: var(--surface-3); position: relative; }
+  .pl-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .pl-cover-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); font-size: 48px; }
+  .pl-details { padding: 20px; }
+  .pl-title { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+  .pl-owner { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }
+  .pl-stats { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+  .pl-stat { display: flex; align-items: center; gap: 5px; }
+  .pl-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 16px; }
+  .pl-privacy { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+  .pl-privacy.public { background: var(--green-bg); color: var(--green); }
+  .pl-privacy.private { background: var(--surface-3); color: var(--text-muted); }
+
+  /* Video list */
+  .pl-items { display: flex; flex-direction: column; gap: 10px; }
+  .pl-item { display: flex; gap: 14px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; text-decoration: none; color: inherit; transition: border-color var(--transition), background var(--transition); }
+  .pl-item:hover { border-color: var(--border-2); background: var(--surface-2); }
+  .pl-item-num { font-size: 13px; color: var(--text-subtle); font-weight: 600; width: 22px; text-align: center; flex-shrink: 0; }
+  .pl-item-thumb { width: 128px; flex-shrink: 0; aspect-ratio: 16/9; border-radius: var(--radius-sm); background: var(--surface-3); overflow: hidden; position: relative; }
+  .pl-item-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .pl-item-thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); font-size: 20px; }
+  .pl-item-dur { position: absolute; bottom: 4px; right: 5px; background: rgba(0,0,0,.78); color: #fff; font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px; }
+  .pl-item-info { flex: 1; min-width: 0; }
+  .pl-item-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-item-meta { font-size: 12px; color: var(--text-muted); }
+  .pl-item-remove { flex-shrink: 0; opacity: 0; transition: opacity var(--transition); }
+  .pl-item:hover .pl-item-remove { opacity: 1; }
+
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; gap: 14px; text-align: center; }
+  .empty-state svg { width: 48px; height: 48px; color: var(--text-subtle); }
+  .empty-state h3 { font-size: 18px; font-weight: 700; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pl-layout">
+
+  <!-- Info Panel -->
+  <div class="pl-info-panel">
+    <div class="pl-cover">
+      {% if playlist.thumbnail_url %}<img src="{{ playlist.thumbnail_url }}" alt="" />
+      {% else %}<div class="pl-cover-ph">▶</div>{% endif %}
+    </div>
+    <div class="pl-details">
+      <div class="pl-title">{{ playlist.title }}</div>
+      <div class="pl-owner">by {{ playlist.owner.username }}</div>
+      <div class="pl-stats">
+        <span class="pl-stat">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>
+          {{ items|length }} video{{ items|length|pluralize }}
+        </span>
+        <span class="pl-stat">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Updated {{ playlist.updated_at|timesince }} ago
+        </span>
+      </div>
+      {% if playlist.description %}
+      <div class="pl-desc">{{ playlist.description }}</div>
+      {% endif %}
+      <span class="pl-privacy {% if playlist.is_public %}public{% else %}private{% endif %}">
+        {% if playlist.is_public %}
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Public
+        {% else %}
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Private
+        {% endif %}
+      </span>
+      {% if items %}
+      <div style="margin-top:16px;">
+        <a href="{{ items.0.video.watch_url }}" class="btn btn-primary btn-full" style="justify-content:center;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Play All
+        </a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Video List -->
+  <div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h2 style="font-size:16px;font-weight:700;">Videos</h2>
+      <span style="font-size:12px;color:var(--text-muted);">{{ items|length }} video{{ items|length|pluralize }}</span>
+    </div>
+
+    {% if items %}
+    <div class="pl-items" id="plItems">
+      {% for item in items %}
+      <a href="{{ item.video.watch_url }}" class="pl-item" id="plitem-{{ item.id }}">
+        <span class="pl-item-num">{{ forloop.counter }}</span>
+        <div class="pl-item-thumb">
+          {% if item.video.thumbnail_url %}<img src="{{ item.video.thumbnail_url }}" alt="" loading="lazy" />
+          {% else %}<div class="pl-item-thumb-ph">▶</div>{% endif %}
+          {% if item.video.duration %}<span class="pl-item-dur">{{ item.video.duration|format_duration }}</span>{% endif %}
+        </div>
+        <div class="pl-item-info">
+          <div class="pl-item-title">{{ item.video.title }}</div>
+          <div class="pl-item-meta">{{ item.video.channel.name }} · {{ item.video.views_count }} views</div>
+        </div>
+        {% if is_owner %}
+        <button class="btn btn-ghost btn-sm pl-item-remove" onclick="removeFromPlaylist(event, '{{ playlist.id }}', '{{ item.video.id }}', '{{ item.id }}')" title="Remove">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>
+      <h3>Playlist is empty</h3>
+      <p>Add videos to this playlist from any video's watch page.</p>
+      <a href="{% url 'player' %}" class="btn btn-primary">Browse Videos</a>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+async function removeFromPlaylist(e, playlistId, videoId, itemId) {
+  e.preventDefault();
+  e.stopPropagation();
+  const res = await fetch(`/api/playlists/${playlistId}/videos/${videoId}/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  if (res.ok) {
+    const el = document.getElementById(`plitem-${itemId}`);
+    el.style.transition = 'opacity 0.3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+    showToast('success', 'Removed from playlist');
+  } else {
+    showToast('error', 'Failed to remove');
+  }
+}
+</script>
+{% endblock %}

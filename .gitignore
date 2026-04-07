@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+staticfiles/
+
+# Environment variables — NEVER commit secrets
+.env
+.env.*
+!.env.example
+
+# Media files (uploaded videos, HLS segments — too large for git)
+media/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDEs
+.cursor/
+.claude/
+.code-review-graph/
+.cursorrules/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage / testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+claude.md
+cursorrules.md
+image_iden.txt
+cursor.md

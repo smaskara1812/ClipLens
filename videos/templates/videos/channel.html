@@ -1,0 +1,633 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}{{ channel.name }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* Banner */
+  .channel-banner {
+    width: 100%; height: 180px;
+    background: linear-gradient(135deg, var(--accent) 0%, #818cf8 50%, #a78bfa 100%);
+    position: relative; overflow: hidden;
+  }
+  .channel-banner img { width: 100%; height: 100%; object-fit: cover; }
+  .channel-banner-overlay {
+    position: absolute; inset: 0;
+    background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,.55));
+  }
+
+  /* Channel header */
+  .channel-header-wrap {
+    max-width: 1280px; margin: 0 auto; padding: 0 24px;
+  }
+  .channel-header {
+    display: flex; align-items: flex-end; gap: 20px;
+    margin-top: -36px; margin-bottom: 24px;
+    position: relative; z-index: 2;
+  }
+  .ch-avatar-xl {
+    width: 88px; height: 88px; border-radius: 50%;
+    background: var(--accent); display: flex; align-items: center;
+    justify-content: center; font-size: 36px; font-weight: 800;
+    color: #fff; border: 4px solid var(--bg);
+    overflow: hidden; flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
+  }
+  .ch-avatar-xl img { width: 100%; height: 100%; object-fit: cover; }
+  .ch-header-info { flex: 1; padding-bottom: 4px; }
+  .ch-header-name { font-size: 24px; font-weight: 800; letter-spacing: -0.3px; }
+  .ch-header-sub { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+  .ch-header-actions { display: flex; gap: 8px; padding-bottom: 4px; }
+
+  /* Content */
+  .channel-content {
+    max-width: 1280px; margin: 0 auto; padding: 0 24px 60px;
+  }
+
+  /* Description */
+  .ch-description {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px;
+    font-size: 14px; color: var(--text-muted); line-height: 1.7;
+    margin-bottom: 28px;
+  }
+
+  /* Grid */
+  .video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 20px;
+  }
+  @media (max-width: 640px) { .video-grid { grid-template-columns: 1fr 1fr; gap: 12px; } }
+
+  .vcard {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    text-decoration: none; color: inherit; display: block;
+    transition: transform .18s, box-shadow .18s, border-color .18s;
+  }
+  .vcard:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color: var(--border-2); }
+  .vcard-thumb {
+    aspect-ratio: 16/9; background: var(--surface-3); position: relative; overflow: hidden;
+  }
+  .vcard-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .vcard:hover .vcard-thumb img { transform: scale(1.04); }
+  .vcard-thumb-ph {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-subtle); font-size: 32px;
+  }
+  .vcard-dur {
+    position: absolute; bottom: 7px; right: 8px;
+    background: rgba(0,0,0,.78); color: #fff;
+    font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px;
+  }
+  .vcard-play-overlay {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; background: rgba(0,0,0,0); transition: background .18s;
+  }
+  .vcard:hover .vcard-play-overlay { background: rgba(0,0,0,.28); }
+  .vcard-play-btn {
+    width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,.92);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: scale(0.7); transition: all .18s;
+  }
+  .vcard:hover .vcard-play-btn { opacity: 1; transform: scale(1); }
+  .vcard-play-btn svg { width: 16px; height: 16px; color: #111; margin-left: 2px; }
+  .vcard-body { padding: 12px 13px 14px; }
+  .vcard-title {
+    font-size: 14px; font-weight: 600; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    margin-bottom: 7px;
+  }
+  .vcard-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+
+  /* Links */
+  .ch-links {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 24px;
+  }
+  .ch-link-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 5px 14px;
+    font-size: 13px; font-weight: 500; color: var(--accent);
+    text-decoration: none; transition: background .15s, border-color .15s;
+  }
+  .ch-link-pill:hover { background: var(--accent-soft); border-color: var(--accent); }
+  .ch-link-pill svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+  /* Edit links panel */
+  .ch-links-edit {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 24px;
+  }
+  .ch-links-edit-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .ch-links-edit-header h3 { font-size: 14px; font-weight: 700; margin: 0; }
+  .link-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .link-row input { flex: 1; }
+  .link-row-label { width: 140px; flex-shrink: 0; }
+
+  /* Tabs */
+  .ch-tabs {
+    display: flex; gap: 4px; margin-bottom: 24px;
+    border-bottom: 1px solid var(--border); padding-bottom: 0;
+  }
+  .ch-tab {
+    padding: 8px 18px 10px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); background: none; border: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    cursor: pointer; transition: color .15s, border-color .15s;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .ch-tab:hover { color: var(--text); }
+  .ch-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ch-tab-count {
+    background: var(--surface-3); border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: 700;
+  }
+  .ch-tab.active .ch-tab-count { background: var(--accent-soft); color: var(--accent); }
+
+  /* Photo grid on channel page */
+  .ch-photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 640px) { .ch-photo-grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+  .ch-pcard {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; display: block;
+    text-decoration: none; color: inherit;
+    transition: transform .18s, box-shadow .18s, border-color .18s;
+  }
+  .ch-pcard:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color: var(--border-2); }
+  .ch-pcard-thumb {
+    aspect-ratio: 1/1; background: var(--surface-3); overflow: hidden;
+  }
+  .ch-pcard-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .ch-pcard:hover .ch-pcard-thumb img { transform: scale(1.06); }
+  .ch-pcard-ph {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-subtle);
+  }
+  .ch-pcard-body { padding: 8px 10px 10px; }
+  .ch-pcard-title {
+    font-size: 12px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ch-pcard-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  /* Empty */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 80px 24px; gap: 14px; text-align: center;
+  }
+  .empty-state svg { width: 52px; height: 52px; color: var(--text-subtle); }
+  .empty-state h3 { font-size: 18px; font-weight: 700; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 300px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Banner -->
+<div class="channel-banner">
+  {% if channel.banner %}
+    <img src="{{ channel.banner_url }}" alt="" />
+  {% endif %}
+  <div class="channel-banner-overlay"></div>
+</div>
+
+<!-- Channel Header -->
+<div class="channel-header-wrap">
+  <div class="channel-header">
+    <div class="ch-avatar-xl">
+      {% if channel.avatar %}
+        <img src="{{ channel.avatar_url }}" alt="" />
+      {% else %}
+        {{ channel.name|first|upper }}
+      {% endif %}
+    </div>
+    <div class="ch-header-info">
+      <div class="ch-header-name">{{ channel.name }}</div>
+      <div class="ch-header-sub">
+        <span id="subscriberCount">{{ subscriber_count }}</span> subscriber{{ subscriber_count|pluralize }}
+        &nbsp;·&nbsp;
+        {{ videos|length }} video{{ videos|length|pluralize }}{% if photo_count %} · {{ photo_count }} photo{{ photo_count|pluralize }}{% endif %}
+        {% if channel.created_at %} · Joined {{ channel.created_at|date:"M Y" }}{% endif %}
+      </div>
+    </div>
+    <div class="ch-header-actions">
+      {% if is_owner %}
+      <a href="{% url 'analytics' %}" class="btn btn-secondary btn-sm">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+        </svg>
+        Analytics
+      </a>
+      <a href="{% url 'upload' %}" class="btn btn-primary btn-sm">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload
+      </a>
+      {% elif request.user.is_authenticated %}
+      <button id="subscribeBtn"
+        class="btn btn-sm {% if is_subscribed %}btn-secondary{% else %}btn-primary{% endif %}"
+        onclick="toggleSubscribe()">
+        {% if is_subscribed %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+        Subscribed
+        {% else %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Subscribe
+        {% endif %}
+      </button>
+      {% else %}
+      <a href="{% url 'login' %}?next={{ request.path }}" class="btn btn-primary btn-sm">Subscribe</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Content -->
+<div class="channel-content">
+  {% if channel.description %}
+  <div class="ch-description">{{ channel.description }}</div>
+  {% endif %}
+
+  <!-- Channel Links -->
+  {% if links %}
+  <div class="ch-links">
+    {% for link in links %}
+    <a href="{{ link.url }}" class="ch-link-pill" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+      {{ link.label }}
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Owner: Manage Links -->
+  {% if is_owner %}
+  <div class="ch-links-edit" id="linksEditPanel" style="display:none;">
+    <div class="ch-links-edit-header">
+      <h3>Social & Website Links</h3>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('linksEditPanel').style.display='none'">Done</button>
+    </div>
+    <div id="linksList"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <input type="text" class="form-input" id="newLinkLabel" placeholder="Label (e.g. Twitter)" style="width:160px;flex-shrink:0;" />
+      <input type="url"  class="form-input" id="newLinkUrl"   placeholder="https://…" style="flex:1;" />
+      <button class="btn btn-primary btn-sm" onclick="addLink()">Add</button>
+    </div>
+  </div>
+
+  <div style="margin-bottom:20px;">
+    <button class="btn btn-ghost btn-sm" onclick="toggleLinksPanel()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+      Manage Links
+    </button>
+  </div>
+  {% endif %}
+
+  <!-- Tabs — only rendered when both content types exist -->
+  {% if videos and photos %}
+  <div class="ch-tabs" id="chTabs">
+    <button class="ch-tab active" id="tab-btn-videos" onclick="switchChTab('videos')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+        <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+        <line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/>
+      </svg>
+      Videos <span class="ch-tab-count">{{ videos|length }}</span>
+    </button>
+    <button class="ch-tab" id="tab-btn-photos" onclick="switchChTab('photos')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      Photos <span class="ch-tab-count">{{ photo_count }}</span>
+    </button>
+  </div>
+  {% endif %}
+
+  <!-- Videos tab -->
+  <div id="ch-tab-videos">
+    {% if videos %}
+    <div class="video-grid">
+      {% for v in videos %}
+      <a href="{% url 'watch' v.id %}" class="vcard">
+        <div class="vcard-thumb">
+          {% if v.thumbnail_url %}
+            <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
+          {% else %}
+            <div class="vcard-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+                <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+              </svg>
+            </div>
+          {% endif %}
+          {% if v.duration %}<div class="vcard-dur">{{ v.duration|duration_fmt }}</div>{% endif %}
+          <div class="vcard-play-overlay">
+            <div class="vcard-play-btn">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+          </div>
+        </div>
+        <div class="vcard-body">
+          <div class="vcard-title">{{ v.title }}</div>
+          <div class="vcard-meta">
+            <span class="badge badge-{{ v.status }}"><span class="badge-dot"></span>{{ v.status }}</span>
+            <span>·</span>
+            <span>{{ v.views_count }} views</span>
+            {% if v.duration %}<span>·</span><span>{{ v.duration|duration_fmt }}</span>{% endif %}
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+        <line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/>
+        <line x1="2" y1="12" x2="22" y2="12"/>
+      </svg>
+      <h3>No videos yet</h3>
+      <p>Upload a video and assign it to this channel to get started.</p>
+      <a href="{% url 'upload' %}" class="btn btn-primary">Upload Video</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Photos tab (only rendered if channel has photos) -->
+  {% if photos %}
+  <div id="ch-tab-photos" style="display:none;">
+    <div class="ch-photo-grid" id="chPhotoGrid">
+      {% for p in photos %}
+      <a class="ch-pcard" href="{% url 'photo_detail' p.id %}">
+        <div class="ch-pcard-thumb">
+          {% if p.thumbnail_url %}
+            <img src="{{ p.thumbnail_url }}" alt="{{ p.title }}" loading="lazy" />
+          {% else %}
+            <div class="ch-pcard-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          {% endif %}
+        </div>
+        <div class="ch-pcard-body">
+          <div class="ch-pcard-title" title="{{ p.title }}">{{ p.title }}</div>
+          {% if p.views_count %}<div class="ch-pcard-meta">{{ p.views_count }} view{{ p.views_count|pluralize }}</div>{% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% if photo_has_more %}
+    <div class="load-more-wrap" id="chPhotoLoadMore" style="text-align:center;margin-top:28px;">
+      <button class="load-more-btn" onclick="loadMoreChPhotos(this)">Load more photos</button>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if photos %}
+<script>
+const CH_SLUG = '{{ channel.slug|escapejs }}';
+let _chPhotoCursor = null;
+
+function switchChTab(tab) {
+  document.getElementById('ch-tab-videos').style.display = tab === 'videos' ? '' : 'none';
+  document.getElementById('ch-tab-photos').style.display = tab === 'photos' ? '' : 'none';
+  document.getElementById('tab-btn-videos')?.classList.toggle('active', tab === 'videos');
+  document.getElementById('tab-btn-photos')?.classList.toggle('active', tab === 'photos');
+}
+
+function _chPhotoCard(p) {
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const thumb = p.thumbnail_url
+    ? `<img src="${esc(p.thumbnail_url)}" alt="${esc(p.title)}" loading="lazy" />`
+    : `<div class="ch-pcard-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
+  const views = p.views_count ? `<div class="ch-pcard-meta">${p.views_count} view${p.views_count != 1 ? 's' : ''}</div>` : '';
+  const a = document.createElement('a');
+  a.className = 'ch-pcard';
+  a.href = '/photos/' + p.id + '/';
+  a.innerHTML = `<div class="ch-pcard-thumb">${thumb}</div><div class="ch-pcard-body"><div class="ch-pcard-title" title="${esc(p.title)}">${esc(p.title)}</div>${views}</div>`;
+  return a;
+}
+
+function loadMoreChPhotos(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  const params = new URLSearchParams({ channel: CH_SLUG, page_size: 48 });
+  if (_chPhotoCursor) params.set('cursor', _chPhotoCursor);
+  fetch('/api/photos/?' + params.toString())
+    .then(r => r.json())
+    .then(data => {
+      const grid = document.getElementById('chPhotoGrid');
+      (data.results || []).forEach(p => grid.appendChild(_chPhotoCard(p)));
+      if (data.next_cursor) _chPhotoCursor = data.next_cursor;
+      if (data.has_more) { btn.disabled = false; btn.textContent = 'Load more photos'; }
+      else { btn.closest('.load-more-wrap')?.remove(); }
+    })
+    .catch(() => { btn.disabled = false; btn.textContent = 'Load more photos'; });
+}
+</script>
+{% endif %}
+
+{% if is_owner %}
+<script>
+const CHANNEL_SLUG = '{{ channel.slug }}';
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+
+let _links = [];
+
+async function loadLinks() {
+  const res = await fetch(`/api/channels/${CHANNEL_SLUG}/links/`, { credentials: 'include' });
+  if (!res.ok) return;
+  _links = await res.json();
+  renderLinks();
+}
+
+function renderLinks() {
+  const container = document.getElementById('linksList');
+  if (!container) return;
+  if (_links.length === 0) {
+    container.innerHTML = '<p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">No links yet. Add one below.</p>';
+    return;
+  }
+  container.innerHTML = _links.map(l => `
+    <div class="link-row" id="lr-${l.id}">
+      <input type="text" class="form-input link-row-label" value="${escHtml(l.label)}" placeholder="Label" onchange="updateLink(${l.id}, 'label', this.value)" />
+      <input type="url"  class="form-input" value="${escHtml(l.url)}"   placeholder="URL"   onchange="updateLink(${l.id}, 'url',   this.value)" style="flex:1;" />
+      <button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteLink(${l.id})">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      </button>
+    </div>`).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function addLink() {
+  const label = document.getElementById('newLinkLabel').value.trim();
+  const url   = document.getElementById('newLinkUrl').value.trim();
+  if (!label || !url) { showToast('error', 'Enter both a label and a URL'); return; }
+  const res = await fetch(`/api/channels/${CHANNEL_SLUG}/links/`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ label, url, order: _links.length }),
+  });
+  if (!res.ok) { showToast('error', 'Failed to add link'); return; }
+  const link = await res.json();
+  _links.push(link);
+  document.getElementById('newLinkLabel').value = '';
+  document.getElementById('newLinkUrl').value   = '';
+  renderLinks();
+  refreshLinksDisplay();
+  showToast('success', 'Link added');
+}
+
+async function updateLink(id, field, value) {
+  const body = {};
+  body[field] = value;
+  const res = await fetch(`/api/channel-links/${id}/`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) {
+    const updated = await res.json();
+    const idx = _links.findIndex(l => l.id === id);
+    if (idx !== -1) _links[idx] = updated;
+    refreshLinksDisplay();
+  } else {
+    showToast('error', 'Failed to update link');
+  }
+}
+
+async function deleteLink(id) {
+  const res = await fetch(`/api/channel-links/${id}/`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  if (res.ok) {
+    _links = _links.filter(l => l.id !== id);
+    renderLinks();
+    refreshLinksDisplay();
+    showToast('info', 'Link removed');
+  } else {
+    showToast('error', 'Failed to delete link');
+  }
+}
+
+function refreshLinksDisplay() {
+  // Update the public-facing pills without page reload
+  const pillsContainer = document.querySelector('.ch-links');
+  if (!pillsContainer) {
+    // Create pills container if it didn't exist before
+    if (_links.length > 0) location.reload();
+    return;
+  }
+  if (_links.length === 0) {
+    pillsContainer.style.display = 'none';
+    return;
+  }
+  pillsContainer.style.display = 'flex';
+  pillsContainer.innerHTML = _links.map(l => `
+    <a href="${escHtml(l.url)}" class="ch-link-pill" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+      ${escHtml(l.label)}
+    </a>`).join('');
+}
+
+function toggleLinksPanel() {
+  const panel = document.getElementById('linksEditPanel');
+  const isHidden = panel.style.display === 'none';
+  panel.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) loadLinks();
+}
+</script>
+{% endif %}
+
+{% if request.user.is_authenticated and not is_owner %}
+<script>
+const CHANNEL_SLUG = '{{ channel.slug }}';
+let _subscribed = {{ is_subscribed|lower }};
+
+async function toggleSubscribe() {
+  const btn = document.getElementById('subscribeBtn');
+  btn.disabled = true;
+
+  const res = await fetch(`/api/channels/${CHANNEL_SLUG}/subscribe/`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+
+  if (!res.ok) {
+    btn.disabled = false;
+    showToast('error', 'Error', 'Could not update subscription.');
+    return;
+  }
+
+  const data = await res.json();
+  _subscribed = data.subscribed;
+
+  // Update subscriber count
+  document.getElementById('subscriberCount').textContent = data.subscribers;
+
+  // Swap button appearance
+  if (_subscribed) {
+    btn.className = 'btn btn-sm btn-secondary';
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+      Subscribed`;
+    showToast('success', 'Subscribed!', '{{ channel.name }}');
+  } else {
+    btn.className = 'btn btn-sm btn-primary';
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Subscribe`;
+    showToast('info', 'Unsubscribed', '{{ channel.name }}');
+  }
+
+  btn.disabled = false;
+}
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+</script>
+{% endif %}
+{% endblock %}

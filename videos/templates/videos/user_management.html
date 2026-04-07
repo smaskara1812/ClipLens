@@ -1,0 +1,210 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}User Management — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .admin-layout { max-width: 1200px; margin: 0 auto; padding: 28px 24px; }
+  .page-hero { margin-bottom: 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .page-hero h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+  .page-hero h1 svg { width: 24px; height: 24px; color: var(--accent); }
+  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+
+  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+  .stat-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-subtle); margin-bottom: 6px; }
+  .stat-val { font-size: 28px; font-weight: 800; }
+
+  .search-bar { margin-bottom: 16px; }
+  .search-bar input { width: 100%; max-width: 360px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  thead th { padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-subtle); background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background var(--transition); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+  td { padding: 12px 16px; font-size: 13px; vertical-align: middle; }
+  .user-cell { display: flex; align-items: center; gap: 10px; }
+  .u-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .u-name { font-weight: 600; }
+  .u-email { font-size: 11px; color: var(--text-muted); }
+  .badge-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+  .pill-active   { background: var(--green-bg); color: var(--green); }
+  .pill-inactive { background: var(--red-bg);   color: var(--red); }
+  .pill-super    { background: var(--accent-soft); color: var(--accent); }
+  .pill-staff    { background: var(--yellow-bg); color: var(--yellow); }
+  .action-btns { display: flex; gap: 6px; }
+
+  @media (max-width: 768px) { .hide-sm { display: none; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+
+  <div class="page-hero">
+    <div>
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        User Management
+      </h1>
+      <p>Superuser panel — manage all accounts</p>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Total Users</div>
+      <div class="stat-val">{{ users|length }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active</div>
+      <div class="stat-val" style="color:var(--green);">{% with users|length as total %}{{ users|length }}{% endwith %}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">With Channel</div>
+      <div class="stat-val" id="withChannelCount">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Editors / Admins</div>
+      <div class="stat-val" id="staffCount">—</div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="search-bar">
+    <input type="text" class="form-input" id="userSearch" placeholder="Search by username or email…" oninput="filterUsers(this.value)" />
+  </div>
+
+  <!-- Table -->
+  <table id="userTable">
+    <thead>
+      <tr>
+        <th>User</th>
+        <th class="hide-sm">Channel</th>
+        <th>Role</th>
+        <th>Status</th>
+        <th class="hide-sm">Joined</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr id="urow-{{ u.id }}" data-username="{{ u.username|lower }}" data-email="{{ u.email|lower }}">
+        <td>
+          <div class="user-cell">
+            <div class="u-avatar">{{ u.username|first|upper }}</div>
+            <div>
+              <div class="u-name">{{ u.username }}</div>
+              <div class="u-email">{{ u.email|default:"—" }}</div>
+            </div>
+          </div>
+        </td>
+        <td class="hide-sm">
+          {% with ch=u.channels.first %}
+          {% if ch %}
+          <a href="{% url 'channel' ch.slug %}" style="color:var(--accent);font-weight:600;">{{ ch.name }}</a>
+          <span style="font-size:11px;color:var(--text-muted);display:block;">{{ ch.videos.count }} videos</span>
+          {% else %}
+          <span style="color:var(--text-subtle);">—</span>
+          {% endif %}
+          {% endwith %}
+        </td>
+        <td>
+          {% with role=u.profile.role %}
+          {% if role == 'superadmin' %}<span class="badge-pill pill-super">Superadmin</span>
+          {% elif role == 'editor' %}<span class="badge-pill pill-staff">Editor</span>
+          {% else %}<span style="color:var(--text-muted);font-size:12px;">Viewer</span>{% endif %}
+          {% endwith %}
+        </td>
+        <td>
+          {% if u.is_active %}<span class="badge-pill pill-active">Active</span>
+          {% else %}<span class="badge-pill pill-inactive">Suspended</span>{% endif %}
+        </td>
+        <td class="hide-sm" style="color:var(--text-muted);font-size:12px;">{{ u.date_joined|date:"M j, Y" }}</td>
+        <td>
+          <div class="action-btns">
+            {% if not u.is_superuser %}
+            <button class="btn btn-ghost btn-sm" onclick="toggleActive({{ u.id }}, {{ u.is_active|yesno:'true,false' }}, this)">
+              {% if u.is_active %}Suspend{% else %}Restore{% endif %}
+            </button>
+            <select class="form-select" style="padding:4px 8px;font-size:12px;width:auto;"
+                    onchange="setRole({{ u.id }}, this.value, this)">
+              <option value="viewer" {% if u.profile.role == 'viewer' %}selected{% endif %}>Viewer</option>
+              <option value="editor" {% if u.profile.role == 'editor' %}selected{% endif %}>Editor</option>
+              <option value="superadmin" {% if u.profile.role == 'superadmin' %}selected{% endif %}>Superadmin</option>
+            </select>
+            {% else %}
+            <span style="font-size:12px;color:var(--text-subtle);">Protected</span>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Compute counts client-side
+document.addEventListener('DOMContentLoaded', () => {
+  const rows = document.querySelectorAll('#userTable tbody tr');
+  let withChannel = 0, staff = 0;
+  rows.forEach(r => {
+    if (r.querySelector('a[href*="/channel/"]')) withChannel++;
+    if (r.querySelector('.pill-super, .pill-staff')) staff++;
+  });
+  document.getElementById('withChannelCount').textContent = withChannel;
+  document.getElementById('staffCount').textContent = staff;
+});
+
+function filterUsers(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#userTable tbody tr').forEach(r => {
+    const match = r.dataset.username.includes(q) || r.dataset.email.includes(q);
+    r.style.display = match ? '' : 'none';
+  });
+}
+
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+async function toggleActive(userId, currentlyActive, btn) {
+  btn.disabled = true;
+  const res = await fetch(`/api/admin/users/${userId}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ is_active: !currentlyActive }),
+  });
+  if (res.ok) {
+    showToast('success', currentlyActive ? 'User suspended' : 'User restored');
+    setTimeout(() => location.reload(), 800);
+  } else {
+    btn.disabled = false;
+    showToast('error', 'Action failed');
+  }
+}
+
+async function setRole(userId, role, sel) {
+  sel.disabled = true;
+  const res = await fetch(`/api/admin/users/${userId}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ role }),
+  });
+  if (res.ok) {
+    showToast('success', `Role updated to ${role}`);
+    setTimeout(() => location.reload(), 800);
+  } else {
+    sel.disabled = false;
+    showToast('error', 'Role update failed');
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,116 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}{{ category.name }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .browse-layout { max-width: 1400px; margin: 0 auto; padding: 28px 24px; display: grid; grid-template-columns: 240px 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 900px) { .browse-layout { grid-template-columns: 1fr; } }
+  .sidebar { position: sticky; top: calc(var(--header-h) + 16px); display: flex; flex-direction: column; gap: 8px; }
+  .sidebar-section { margin-bottom: 4px; }
+  .sidebar-heading { font-size: 10px; font-weight: 700; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.8px; padding: 0 12px 6px; }
+  .sidebar-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; color: var(--text-muted); transition: background var(--transition), color var(--transition); border: 1px solid transparent; }
+  .sidebar-item:hover { background: var(--surface-3); color: var(--text); }
+  .sidebar-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-color: var(--accent-soft); }
+  .sidebar-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .sidebar-item .ch-avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .sidebar-divider { height: 1px; background: var(--border); margin: 8px 0; }
+
+  .page-hero { margin-bottom: 24px; }
+  .page-hero h1 { font-size: 24px; font-weight: 800; }
+  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
+  @media (max-width: 640px) { .video-grid { grid-template-columns: 1fr 1fr; gap: 12px; } }
+  .vcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; text-decoration: none; color: inherit; display: block; transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s; }
+  .vcard:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color: var(--border-2); }
+  .vcard-thumb { aspect-ratio: 16/9; background: var(--surface-3); position: relative; overflow: hidden; }
+  .vcard-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+  .vcard:hover .vcard-thumb img { transform: scale(1.04); }
+  .vcard-thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); font-size: 32px; }
+  .vcard-dur { position: absolute; bottom: 7px; right: 8px; background: rgba(0,0,0,.78); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
+  .vcard-body { padding: 12px 13px 14px; }
+  .vcard-title { font-size: 14px; font-weight: 600; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 7px; }
+  .vcard-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+  .vcard-channel { display: flex; align-items: center; gap: 5px; font-weight: 500; }
+  .vcard-ch-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #fff; flex-shrink: 0; }
+
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; gap: 14px; text-align: center; }
+  .empty-state svg { width: 56px; height: 56px; color: var(--text-subtle); }
+  .empty-state h3 { font-size: 18px; font-weight: 700; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="browse-layout">
+
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <a href="{% url 'player' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a href="{% url 'trending' %}" class="sidebar-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        Trending
+      </a>
+    </div>
+    {% if user.is_authenticated %}
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">
+      <div class="sidebar-heading">Subscriptions</div>
+      {% for ch in subscribed_channels %}
+      <a href="{% url 'channel' ch.slug %}" class="sidebar-item">
+        <div class="ch-avatar">{{ ch.name|first|upper }}</div>
+        {{ ch.name }}
+      </a>
+      {% empty %}
+      <div style="padding:8px 12px;font-size:12px;color:var(--text-subtle);">No subscriptions yet.</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </aside>
+
+  <div>
+    <div class="page-hero">
+      <h1>{{ category.name }}</h1>
+      <p>{{ videos|length }} video{{ videos|length|pluralize }}</p>
+    </div>
+
+    {% if videos %}
+    <div class="video-grid">
+      {% for video in videos %}
+      <a href="{{ video.watch_url }}" class="vcard">
+        <div class="vcard-thumb">
+          {% if video.thumbnail_url %}<img src="{{ video.thumbnail_url }}" alt="{{ video.title }}" loading="lazy" />
+          {% else %}<div class="vcard-thumb-ph">▶</div>{% endif %}
+          {% if video.duration %}<span class="vcard-dur">{{ video.duration|format_duration }}</span>{% endif %}
+        </div>
+        <div class="vcard-body">
+          <div class="vcard-title">{{ video.title }}</div>
+          <div class="vcard-meta">
+            <span class="vcard-channel">
+              <span class="vcard-ch-dot">{{ video.channel.name|first|upper }}</span>
+              {{ video.channel.name }}
+            </span>
+            <span>·</span>
+            <span>{{ video.views_count }} views</span>
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      <h3>No videos in {{ category.name }}</h3>
+      <p>Nothing has been uploaded to this category yet.</p>
+      <a href="{% url 'player' %}" class="btn btn-primary">Browse All Videos</a>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

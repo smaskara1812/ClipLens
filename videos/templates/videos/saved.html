@@ -1,0 +1,116 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}Saved Videos — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .page-content { max-width: 1000px; margin: 0 auto; padding: 28px 24px; }
+
+  .page-hero { margin-bottom: 24px; }
+  .page-hero h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+  .page-hero h1 svg { width: 24px; height: 24px; color: var(--accent); }
+  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  .saved-list { display: flex; flex-direction: column; gap: 12px; }
+  .saved-row {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px; text-decoration: none; color: inherit;
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+  .saved-row:hover { border-color: var(--border-2); box-shadow: var(--shadow-sm); }
+  .saved-thumb { width: 160px; flex-shrink: 0; aspect-ratio: 16/9; border-radius: var(--radius-sm); background: var(--surface-3); position: relative; overflow: hidden; }
+  .saved-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .saved-thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); font-size: 24px; }
+  .saved-dur { position: absolute; bottom: 5px; right: 6px; background: rgba(0,0,0,.78); color: #fff; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+  .saved-info { flex: 1; min-width: 0; }
+  .saved-title { font-size: 15px; font-weight: 600; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .saved-meta { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+  .saved-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; gap: 14px; text-align: center; }
+  .empty-state svg { width: 56px; height: 56px; color: var(--text-subtle); }
+  .empty-state h3 { font-size: 18px; font-weight: 700; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+
+  @media (max-width: 640px) { .saved-thumb { width: 110px; } .saved-title { font-size: 13px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-content">
+    <div class="page-hero">
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        Saved Videos
+      </h1>
+      <p>{{ saved|length }} saved video{{ saved|length|pluralize }}</p>
+    </div>
+
+    {% if saved %}
+    <div class="saved-list">
+      {% for item in saved %}
+      <div style="position:relative;">
+        <a href="{{ item.video.watch_url }}" class="saved-row">
+          <div class="saved-thumb">
+            {% if item.video.thumbnail_url %}<img src="{{ item.video.thumbnail_url }}" alt="" loading="lazy" />
+            {% else %}<div class="saved-thumb-ph">▶</div>{% endif %}
+            {% if item.video.duration %}<span class="saved-dur">{{ item.video.duration|format_duration }}</span>{% endif %}
+          </div>
+          <div class="saved-info">
+            <div class="saved-title">{{ item.video.title }}</div>
+            <div class="saved-meta">
+              <span>{{ item.video.channel.name }}</span>
+              <span>·</span>
+              <span>{{ item.video.views_count }} views</span>
+              <span>·</span>
+              <span>Saved {{ item.saved_at|timesince }} ago</span>
+            </div>
+          </div>
+          <div class="saved-actions" onclick="event.preventDefault()">
+            <button class="btn btn-ghost btn-sm" onclick="unsave('{{ item.video.id }}', this)" title="Remove">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+              Remove
+            </button>
+          </div>
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      <h3>No saved videos</h3>
+      <p>Click the bookmark icon on any video to save it here for later.</p>
+      <a href="{% url 'player' %}" class="btn btn-primary">Browse Videos</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+async function unsave(videoId, btn) {
+  btn.disabled = true;
+  const res = await fetch(`/api/videos/${videoId}/save/`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  if (res.ok) {
+    const row = btn.closest('[style]');
+    row.style.transition = 'opacity 0.3s';
+    row.style.opacity = '0';
+    setTimeout(() => row.remove(), 300);
+    showToast('success', 'Removed from saved');
+  } else {
+    btn.disabled = false;
+    showToast('error', 'Failed to remove');
+  }
+}
+</script>
+{% endblock %}
