@@ -11,12 +11,15 @@ psycopg2-binary==2.9.10
 pgvector==0.4.2
 
 # MySQL driver (used when USE_MYSQL=true)
-mysqlclient==2.2.4
+#mysqlclient==2.2.4
 
 # MSSQL driver (used when USE_MSSQL=true)
 # Requires the ODBC Driver for SQL Server installed on the OS — see README
-mssql-django==1.4
-pyodbc==5.1.0
+#mssql-django==1.4
+#pyodbc==5.1.0
+
+# Production WSGI server (replaces runserver on Linux)
+gunicorn==23.0.0
 
 # Development tools
 django-debug-toolbar==4.4.6
@@ -24,6 +27,7 @@ django-debug-toolbar==4.4.6
 # Async task queue
 celery==5.6.3
 redis==7.4.0
+flower==2.0.1
 
 # ML / Vision
 torch==2.11.0
@@ -35,3 +39,4 @@ ultralytics==8.4.33
 insightface==0.7.3
 onnxruntime==1.24.4
 opencv-python==4.13.0.92
+gunicorn==23.0.0

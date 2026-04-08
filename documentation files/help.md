@@ -205,6 +205,69 @@ whitenoise==6.7.0
 
 
 download youtube video using yt-dlp in mac use this command
-yt-dlp --extractor-args "youtube:player_client=android" \
---download-sections "*00:00:00-00:05:00" \
-"URL"
+yt-dlp -f "137+140/136+140/best" \
+--merge-output-format mp4 \
+--download-sections "*00:00:00-00:10:00" \
+"https://www.youtube.com/watch?v=8JXKSd0Y8is"
+
+
+
+
+Good question — but actually `localhost` stays correct for a typical single-server deployment.
+
+## What the architecture looks like on Linux
+
+Everything runs on **one server**:
+
+```
+Linux Server
+├── Nginx          (port 80/443)
+├── Gunicorn       (Django, port 8000 internally)
+├── Celery worker  (background process)
+├── Flower         (port 5556)
+├── PostgreSQL     (port 5432)
+└── Redis          (port 6379)
+```
+
+Redis is installed on the **same machine** as Django and Celery. So `redis://localhost:6379/0` is exactly right — it's "localhost" relative to that Linux server, not your Mac.
+
+The value in `.env` doesn't change. You just need Redis running on the server before you start Django/Celery:
+
+```bash
+# Ubuntu/Debian
+sudo apt install redis-server
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+
+# Verify it's up
+redis-cli ping   # should return PONG
+```
+
+---
+
+## When you WOULD need a different value
+
+| Scenario | REDIS_URL |
+|---|---|
+| Single server (your plan) | `redis://localhost:6379/0` ✓ same as now |
+| Redis on a separate VM | `redis://192.168.1.50:6379/0` |
+| Redis with password | `redis://:yourpassword@localhost:6379/0` |
+| Managed Redis (AWS ElastiCache, Upstash) | `redis://xxxx.cache.amazonaws.com:6379/0` |
+
+---
+
+## One thing worth adding for production
+
+Redis by default listens on `localhost` only (no external access) and has no password. That's fine for a single-server setup. But if you ever open Redis to a network, add a password in `/etc/redis/redis.conf`:
+
+```
+requirepass yourStrongPassword
+```
+
+Then update `.env`:
+```
+REDIS_URL=redis://:yourStrongPassword@localhost:6379/0
+CELERY_BROKER_URL=redis://:yourStrongPassword@localhost:6379/0
+```
+
+For your initial deploy: install Redis, confirm `redis-cli ping` returns `PONG`, and your existing `.env` values work as-is.

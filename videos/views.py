@@ -163,6 +163,13 @@ def _postgres_fuzzy_filter(qs, raw: str, fields: tuple[str, ...], threshold: flo
     except Exception:
         return qs.none()
 
+    # Short queries (≤ 3 chars) have only 4 trigrams total, so coincidental
+    # overlaps are unavoidable at 0.35.  e.g. "cow" shares " c" + "co" with
+    # "course" / "couch" / "conduct" → score 0.36, false match.
+    # For short queries we skip fuzzy entirely and rely on FTS + icontains.
+    if len(raw.strip()) <= 3:
+        return qs.none()
+
     # 0.35 is deliberately higher than 0.22:
     #   • "essar" → "necessary" scores ~0.60 — still matches ✓
     #   • "animals" → "animated" scores ~0.57 — still matches (user typo scenario)
@@ -746,7 +753,7 @@ def player_page(request):
                     _txt_feat = _clip_model_cache.get_text_features(**_txt_inputs)
                     _txt_feat = _txt_feat / _txt_feat.norm(dim=-1, keepdim=True)
                 _txt_vec = _txt_feat[0].tolist()
-                _threshold = getattr(settings, 'CLIP_SIMILARITY_THRESHOLD', 0.20)
+                _threshold = getattr(settings, 'CLIP_SIMILARITY_THRESHOLD', 0.24)
                 _max_dist  = 1.0 - _threshold  # cosine distance = 1 − similarity
                 # pgvector HNSW ANN search — no Python loop needed
                 _clip_base_qs = (
@@ -1055,9 +1062,36 @@ def watch_page(request, video_id):
         except ValueError:
             pass
 
-    related = Video.objects.filter(
-        visibility=Video.VISIBILITY_PUBLIC, status=Video.STATUS_READY
-    ).exclude(id=video_id).select_related('channel')[:10]
+    # Playlist context — if ?playlist=<uuid> is passed, drive Up Next from the playlist
+    playlist_obj  = None
+    playlist_next = None
+    playlist_prev = None
+    playlist_pos  = None
+    playlist_total = None
+    playlist_id_param = request.GET.get('playlist', '').strip()
+    if playlist_id_param:
+        try:
+            import uuid as _uuid
+            _pid = _uuid.UUID(playlist_id_param)
+            playlist_obj = Playlist.objects.get(id=_pid)
+            _items = list(playlist_obj.items.select_related('video__channel').order_by('order', 'added_at'))
+            _idx = next((i for i, it in enumerate(_items) if str(it.video_id) == str(video_id)), None)
+            if _idx is not None:
+                playlist_pos   = _idx + 1
+                playlist_total = len(_items)
+                if _idx + 1 < len(_items):
+                    playlist_next = _items[_idx + 1].video
+                if _idx > 0:
+                    playlist_prev = _items[_idx - 1].video
+                # Sidebar shows remaining playlist videos instead of generic related
+                related = [it.video for it in _items if str(it.video_id) != str(video_id)][:10]
+        except (ValueError, Playlist.DoesNotExist):
+            playlist_id_param = ''
+
+    if not playlist_obj:
+        related = Video.objects.filter(
+            visibility=Video.VISIBILITY_PUBLIC, status=Video.STATUS_READY
+        ).exclude(id=video_id).select_related('channel')[:10]
 
     is_owner = _is_video_owner(request.user, video)
 
@@ -1099,22 +1133,29 @@ def watch_page(request, video_id):
         unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
 
     return render(request, 'videos/watch.html', {
-        'video':          video,
-        'related':        related,
-        'is_owner':       is_owner,
-        'user_liked':     user_liked,
-        'user_saved':     user_saved,
-        'watch_progress': watch_progress,
-        'comments':       comments,
-        'chapters':       chapters,
-        'end_screens':    end_screens,
-        'subtitles':      subtitles,
-        'audio_tracks':   audio_tracks,
-        'user_playlists': user_playlists,
-        'unread_count':   unread_count,
-        'seek_to':        seek_to,
+        'video':           video,
+        'related':         related,
+        'is_owner':        is_owner,
+        'user_liked':      user_liked,
+        'user_saved':      user_saved,
+        'watch_progress':  watch_progress,
+        'comments':        comments,
+        'chapters':        chapters,
+        'end_screens':     end_screens,
+        'subtitles':       subtitles,
+        'audio_tracks':    audio_tracks,
+        'user_playlists':  user_playlists,
+        'unread_count':    unread_count,
+        'seek_to':         seek_to,
         'all_categories':  Category.objects.all().order_by('name'),
         'frame_interval':  getattr(settings, 'FRAME_INTERVAL_SECONDS', 5),
+        # Playlist queue context
+        'playlist_obj':    playlist_obj,
+        'playlist_id':     playlist_id_param,
+        'playlist_next':   playlist_next,
+        'playlist_prev':   playlist_prev,
+        'playlist_pos':    playlist_pos,
+        'playlist_total':  playlist_total,
     })
 
 
@@ -1286,7 +1327,7 @@ def trending_page(request):
         visibility=Video.VISIBILITY_PUBLIC,
         status=Video.STATUS_READY,
         created_at__gte=week_ago,
-    ).select_related('channel', 'category').order_by('-views_count')[:50]
+    ).select_related('channel', 'category').order_by('-views_count')[:10]
 
     return render(request, 'videos/trending.html', {'videos': videos})
 

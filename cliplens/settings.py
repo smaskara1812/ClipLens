@@ -121,7 +121,7 @@ else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('POSTGRES_DB',       'freestream'),
+            'NAME': os.getenv('POSTGRES_DB',       'cliplens'),
             'USER': os.getenv('POSTGRES_USER',     'postgres'),
             'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
             'HOST': os.getenv('POSTGRES_HOST',     'localhost'),
@@ -235,6 +235,10 @@ CELERY_TASK_ROUTES = {
     'videos.tasks.reindex_segments_task':       {'queue': 'default'},
 }
 
+
+# Flower basic authentication
+FLOWER_BASIC_AUTH = os.getenv('FLOWER_BASIC_AUTH', 'admin:password')
+
 # ── Frame Analysis / Object Detection (YOLOv8) ───────────────────────────────
 # Set FRAME_ANALYSIS_ENABLED=false in .env to skip during development
 FRAME_ANALYSIS_ENABLED   = os.getenv('FRAME_ANALYSIS_ENABLED',   'true').lower() == 'true'
@@ -242,9 +246,10 @@ FACE_RECOGNITION_ENABLED  = os.getenv('FACE_RECOGNITION_ENABLED',  'true').lower
 SCENE_DESCRIPTION_ENABLED = os.getenv('SCENE_DESCRIPTION_ENABLED', 'true').lower() == 'true'
 SCENE_CAPTION_MODEL      = os.getenv('SCENE_CAPTION_MODEL', 'blip')       # 'blip' or 'florence2'
 CLIP_ENABLED             = os.getenv('CLIP_ENABLED', 'true').lower() == 'true'
-CLIP_SIMILARITY_THRESHOLD = float(os.getenv('CLIP_SIMILARITY_THRESHOLD', '0.20'))
-FUZZY_SEARCH_ENABLED      = os.getenv('FUZZY_SEARCH_ENABLED', 'true').lower() == 'true'
-FUZZY_SEARCH_SIMILARITY_THRESHOLD = float(os.getenv('FUZZY_SEARCH_SIMILARITY_THRESHOLD', '0.22'))
+CLIP_SIMILARITY_THRESHOLD       = float(os.getenv('CLIP_SIMILARITY_THRESHOLD', '0.24'))   # video frames
+CLIP_PHOTO_SIMILARITY_THRESHOLD = float(os.getenv('CLIP_PHOTO_SIMILARITY_THRESHOLD', '0.28'))  # photos (stricter)
+FUZZY_SEARCH_ENABLED            = os.getenv('FUZZY_SEARCH_ENABLED', 'true').lower() == 'true'
+FUZZY_SEARCH_SIMILARITY_THRESHOLD = float(os.getenv('FUZZY_SEARCH_SIMILARITY_THRESHOLD', '0.35'))  # was 0.22 — too low
 FRAME_INTERVAL_SECONDS   = int(os.getenv('FRAME_INTERVAL_SECONDS', '5'))   # 1 frame per N secs
 YOLO_MODEL               = os.getenv('YOLO_MODEL', 'yolov8n')              # nano/small/medium
 

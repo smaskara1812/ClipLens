@@ -4,6 +4,7 @@
 {% block title %}Edit Subtitles — {{ video.title }} — ClipLens{% endblock %}
 
 {% block extra_head %}
+<script src="{% static 'videos/hls.min.js' %}" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js'"></script>
 <style>
   .se-wrap {
     max-width: 1200px; margin: 0 auto; padding: 20px 24px 60px;
@@ -99,14 +100,8 @@
   <!-- Left: video preview -->
   <div class="se-left">
     <div class="se-video-wrap">
-      {% if video.hls_playlist %}
-      <video id="seVideo" controls preload="metadata">
-        <source src="/media/{{ video.hls_playlist }}" type="application/x-mpegURL" />
-      </video>
-      {% elif video.file %}
-      <video id="seVideo" controls preload="metadata">
-        <source src="{{ video.file.url }}" />
-      </video>
+      {% if video.hls_path or video.file %}
+      <video id="seVideo" controls preload="metadata"></video>
       {% else %}
       <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;">No video source</div>
       {% endif %}
@@ -155,9 +150,27 @@
 const _videoId    = '{{ video.id }}';
 const _subtitleId = {{ subtitle.id }};
 const _format     = '{{ subtitle.format }}';
-let _cues         = [];    // current working copy
-let _original     = '';    // JSON.stringify of original for dirty detection
+let _cues         = [];
+let _original     = '';
 let _dirty        = false;
+
+// ── HLS video initialisation ──────────────────────────────────────────────────
+(function () {
+  const vid = document.getElementById('seVideo');
+  if (!vid) return;
+  {% if video.hls_path %}
+  const src = '{{ video.hls_url }}';
+  if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+    const hls = new Hls();
+    hls.loadSource(src);
+    hls.attachMedia(vid);
+  } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+    vid.src = src;
+  }
+  {% elif video.file %}
+  vid.src = '{{ video.file.url }}';
+  {% endif %}
+})();
 
 function getCsrfToken() {
   const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');

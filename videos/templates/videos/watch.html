@@ -968,12 +968,37 @@
     </div>
   </div>
 
-  <!-- Sidebar: related videos -->
+  <!-- Sidebar: playlist queue or related videos -->
   <aside>
+    {% if playlist_obj %}
+    <!-- Playlist context bar -->
+    <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;">Playlist</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ playlist_obj.title }}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">{{ playlist_pos }} of {{ playlist_total }}</div>
+      <div style="display:flex;gap:8px;">
+        {% if playlist_prev %}
+        <a href="{% url 'watch' playlist_prev.id %}?playlist={{ playlist_id }}" class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;" title="{{ playlist_prev.title }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="15 18 9 12 15 6"/></svg>
+          Prev
+        </a>
+        {% endif %}
+        {% if playlist_next %}
+        <a href="{% url 'watch' playlist_next.id %}?playlist={{ playlist_id }}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;" title="{{ playlist_next.title }}">
+          Next
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="9 18 15 12 9 6"/></svg>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="sidebar-heading">Up Next — {{ playlist_obj.title }}</div>
+    {% else %}
     <div class="sidebar-heading">Up Next</div>
+    {% endif %}
+
     <div class="related-list">
       {% for v in related %}
-      <a href="{% url 'watch' v.id %}" class="related-item">
+      <a href="{% url 'watch' v.id %}{% if playlist_id %}?playlist={{ playlist_id }}{% endif %}" class="related-item">
         <div class="r-thumb">
           {% if v.thumbnail_url %}
             <img src="{{ v.thumbnail_url }}" alt="" loading="lazy" />
@@ -1981,6 +2006,46 @@
   const VIDEO_ID = '{{ video.id }}';
   const VIDEO_DURATION = {{ video.duration|default:0 }};
   let _progressTimer = null;
+
+  // ── Playlist auto-advance ─────────────────────────────────────────────────
+  {% if playlist_next %}
+  (function () {
+    const NEXT_URL = "{% url 'watch' playlist_next.id %}?playlist={{ playlist_id }}";
+    const NEXT_TITLE = "{{ playlist_next.title|escapejs }}";
+    let _countdown = null;
+
+    function showUpNext() {
+      if (document.getElementById('_plUpNext')) return;
+      const el = document.createElement('div');
+      el.id = '_plUpNext';
+      el.style.cssText = 'position:fixed;bottom:28px;right:28px;z-index:9999;background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);max-width:280px;display:flex;flex-direction:column;gap:10px;';
+      el.innerHTML = `
+        <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">Up Next in <span id="_plSecs">5</span>s</div>
+        <div style="font-size:13px;font-weight:700;line-height:1.4;">${NEXT_TITLE}</div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="cancelUpNext()" style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-2);background:var(--surface-2);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
+          <a href="${NEXT_URL}" style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-size:12px;font-weight:600;text-align:center;text-decoration:none;">Play Now</a>
+        </div>`;
+      document.body.appendChild(el);
+
+      let secs = 5;
+      _countdown = setInterval(() => {
+        secs--;
+        const s = document.getElementById('_plSecs');
+        if (s) s.textContent = secs;
+        if (secs <= 0) { clearInterval(_countdown); window.location.href = NEXT_URL; }
+      }, 1000);
+    }
+
+    window.cancelUpNext = function () {
+      clearInterval(_countdown);
+      const el = document.getElementById('_plUpNext');
+      if (el) el.remove();
+    };
+
+    videoEl.addEventListener('ended', showUpNext);
+  })();
+  {% endif %}
 
   // Seek-to / resume — handled in MANIFEST_PARSED (hls.js) or native loadedmetadata (Safari).
   // This fallback only runs if neither hls.js nor native HLS is available (e.g. direct mp4).

@@ -81,7 +81,7 @@
       </span>
       {% if items %}
       <div style="margin-top:16px;">
-        <a href="{{ items.0.video.watch_url }}" class="btn btn-primary btn-full" style="justify-content:center;">
+        <a href="{{ items.0.video.watch_url }}?playlist={{ playlist.id }}" class="btn btn-primary btn-full" style="justify-content:center;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           Play All
         </a>
@@ -100,7 +100,7 @@
     {% if items %}
     <div class="pl-items" id="plItems">
       {% for item in items %}
-      <a href="{{ item.video.watch_url }}" class="pl-item" id="plitem-{{ item.id }}">
+      <a href="{{ item.video.watch_url }}?playlist={{ playlist.id }}" class="pl-item" id="plitem-{{ item.id }}">
         <span class="pl-item-num">{{ forloop.counter }}</span>
         <div class="pl-item-thumb">
           {% if item.video.thumbnail_url %}<img src="{{ item.video.thumbnail_url }}" alt="" loading="lazy" />
