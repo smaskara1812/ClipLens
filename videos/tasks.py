@@ -784,11 +784,16 @@ def analyze_video_frames_task(self, video_id: str):
                 status     = initial_status,
             ))
 
-        # Apply best-frontal thumbnail to each identity, then persist
+        # Best-frontal crop → FaceIdentity.thumbnail. Auto-named identities always
+        # get an updated representative crop from this video; user-tagged identities
+        # keep their existing thumbnail when re-matched so uploads don’t replace it.
         for cluster_id, best_face_idx in identity_best_crop_idx.items():
             best_crop = saved_crop_paths.get(best_face_idx, '')
-            if best_crop:
-                identities[cluster_id].thumbnail = best_crop
+            if not best_crop:
+                continue
+            ident = identities[cluster_id]
+            if ident.is_auto_named or not (ident.thumbnail or '').strip():
+                ident.thumbnail = best_crop
         for identity in identities:
             if getattr(identity, 'thumbnail', None):
                 FaceIdentity.objects.filter(pk=identity.pk).update(thumbnail=identity.thumbnail)
@@ -1030,6 +1035,76 @@ def extract_audio_tracks_task(self, video_id: str):
         logger.info(f'extract_audio_tracks_task: saved AudioTrack "{label}" for {video_id}')
 
 
+# ── EXIF helper ──────────────────────────────────────────────────────────────
+
+def _extract_photo_exif(img_path):
+    """
+    Extract EXIF metadata from a photo using Pillow.
+    Returns (exif_dict, taken_at_datetime | None).
+    Only stores human-readable fields — skips binary blobs and MakerNote.
+    """
+    import datetime
+    from PIL import Image as _PILImg
+    from PIL.ExifTags import TAGS, GPSTAGS
+
+    KEEP_TAGS = {
+        'Make', 'Model', 'LensMake', 'LensModel', 'Software',
+        'DateTimeOriginal', 'DateTime', 'DateTimeDigitized',
+        'FocalLength', 'FNumber', 'ISOSpeedRatings', 'ExposureTime',
+        'ExposureProgram', 'Flash', 'WhiteBalance', 'MeteringMode',
+        'Orientation', 'PixelXDimension', 'PixelYDimension',
+        'GPSInfo',
+    }
+    try:
+        img = _PILImg.open(img_path)
+        raw = img.getexif()
+        if not raw:
+            return {}, None
+    except Exception:
+        return {}, None
+
+    exif = {}
+    taken_at = None
+
+    for tag_id, value in raw.items():
+        tag = TAGS.get(tag_id, None)
+        if not tag or tag not in KEEP_TAGS:
+            continue
+        if tag == 'GPSInfo':
+            try:
+                gps_raw = raw.get_ifd(tag_id)
+                gps = {}
+                for gps_id, gps_val in gps_raw.items():
+                    gps_tag = GPSTAGS.get(gps_id, str(gps_id))
+                    if isinstance(gps_val, (tuple, list)):
+                        gps[gps_tag] = [float(v) if hasattr(v, 'numerator') else v for v in gps_val]
+                    elif hasattr(gps_val, 'numerator'):
+                        gps[gps_tag] = float(gps_val)
+                    else:
+                        gps[gps_tag] = gps_val
+                if gps:
+                    exif['GPSInfo'] = gps
+            except Exception:
+                pass
+        elif tag in ('DateTimeOriginal', 'DateTime', 'DateTimeDigitized'):
+            try:
+                dt = datetime.datetime.strptime(str(value), '%Y:%m:%d %H:%M:%S')
+                exif[tag] = dt.isoformat()
+                if tag == 'DateTimeOriginal' and taken_at is None:
+                    taken_at = dt.replace(tzinfo=datetime.timezone.utc)
+            except (ValueError, TypeError):
+                exif[tag] = str(value)
+        elif hasattr(value, 'numerator'):
+            exif[tag] = float(value)
+        elif isinstance(value, (int, float, bool)):
+            exif[tag] = value
+        elif isinstance(value, str):
+            exif[tag] = value[:200]
+        # skip bytes / unknown types
+
+    return exif, taken_at
+
+
 # ── Photo analysis task ───────────────────────────────────────────────────────
 
 @shared_task(
@@ -1139,6 +1214,9 @@ def analyze_photo_task(self, photo_id: str):
                 face_app.prepare(ctx_id=0, det_size=(640, 640))
             except Exception as exc:
                 logger.warning(f'analyze_photo_task: InsightFace unavailable ({exc})')
+
+        # ── Extract EXIF (before converting to RGB which strips EXIF) ─────────
+        exif_data, taken_at = _extract_photo_exif(img_path)
 
         # ── Run inference ─────────────────────────────────────────────────────
         pil_img = _PILImage.open(str(img_path)).convert('RGB')
@@ -1428,12 +1506,15 @@ def analyze_photo_task(self, photo_id: str):
         photo.height                = pil_img.height
         photo.is_potential_duplicate = is_dup
         photo.duplicate_of_id       = dup_of_id
+        photo.exif_data             = exif_data if exif_data else None
+        photo.taken_at              = taken_at
         photo.status                = Photo.STATUS_READY
         photo.processing_error      = ''
         photo.save(update_fields=[
             'labels', 'face_count', 'face_names', 'scene_description',
             'clip_embedding', 'ocr_text', 'width', 'height', 'thumbnail',
             'is_potential_duplicate', 'duplicate_of_id',
+            'exif_data', 'taken_at',
             'status', 'processing_error',
         ])
         logger.info(
@@ -1453,3 +1534,345 @@ def analyze_photo_task(self, photo_id: str):
         except Exception:
             pass
         raise self.retry(exc=exc)
+
+
+# ── Speaker Diarization task ──────────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.run_diarization_task',
+    queue='captions',
+    max_retries=1,
+    acks_late=True,
+)
+def run_diarization_task(self, video_id: str):
+    """
+    Run speaker diarization on a video using pyannote.audio.
+    Assigns a speaker_label (e.g. SPEAKER_00) to every VideoSegment.
+
+    Requirements:
+      - pip install pyannote.audio
+      - HF_TOKEN set in .env (HuggingFace token with access to pyannote models)
+      - Accept terms at https://hf.co/pyannote/speaker-diarization-3.1
+    """
+    from pathlib import Path
+    from .models import Video, VideoSegment
+
+    hf_token = getattr(settings, 'HF_TOKEN', '')
+    if not hf_token:
+        logger.error('run_diarization_task: HF_TOKEN not set — cannot load pyannote models')
+        return {'error': 'HF_TOKEN not configured. Set it in .env and restart Celery.'}
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        logger.warning(f'run_diarization_task: video {video_id} not found')
+        return
+
+    segments = list(VideoSegment.objects.filter(video=video).order_by('start_seconds'))
+    if not segments:
+        return {'error': 'No transcript segments found. Run Whisper first.'}
+
+    # ── Prepare audio file ────────────────────────────────────────────────────
+    audio_dir  = Path(settings.MEDIA_ROOT) / 'audio'
+    audio_path = audio_dir / f'{video_id}.wav'
+
+    if not audio_path.exists():
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        source = None
+        if video.original_file and video.original_file.name:
+            candidate = Path(settings.MEDIA_ROOT) / video.original_file.name
+            if candidate.exists():
+                source = candidate
+        if source is None:
+            logger.error(f'run_diarization_task: no audio source for {video_id}')
+            return {'error': 'No source file found. Upload or re-process the video first.'}
+
+        ffmpeg = getattr(settings, 'FFMPEG_PATH', 'ffmpeg')
+        result = subprocess.run(
+            [ffmpeg, '-y', '-i', str(source),
+             '-ar', '16000', '-ac', '1', '-f', 'wav', str(audio_path)],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            logger.error(f'run_diarization_task: ffmpeg failed: {result.stderr.decode()[:400]}')
+            return {'error': 'Audio extraction failed. Check FFmpeg logs.'}
+
+    # ── Run pyannote diarization ───────────────────────────────────────────────
+    try:
+        import torch
+        from pyannote.audio import Pipeline as _Pipeline
+
+        pipeline = _Pipeline.from_pretrained(
+            'pyannote/speaker-diarization-3.1',
+            token=hf_token,
+        )
+        device = getattr(settings, 'WHISPER_DEVICE', 'cpu')
+        if device == 'cuda' and torch.cuda.is_available():
+            pipeline.to(torch.device('cuda'))
+
+        raw = pipeline(str(audio_path))
+        # Unwrap whatever pyannote returns — version differences:
+        #   3.1.x → Annotation directly (has itertracks)
+        #   3.3.x → DiarizeOutput dataclass (use vars() to walk fields)
+        #   some builds → NamedTuple (use _asdict() to walk fields)
+        logger.info(f'run_diarization_task: pyannote output type={type(raw).__name__}')
+        if hasattr(raw, 'itertracks'):
+            annotation = raw
+        else:
+            # Collect all field values from dataclass (__dict__) or namedtuple (_asdict)
+            if hasattr(raw, '__dict__'):
+                candidates = list(vars(raw).values())
+            elif hasattr(raw, '_fields'):
+                candidates = list(raw._asdict().values())
+            else:
+                candidates = []
+            annotation = next((v for v in candidates if hasattr(v, 'itertracks')), None)
+            if annotation is None:
+                field_types = {k: type(v).__name__ for k, v in (vars(raw) if hasattr(raw, '__dict__') else {}).items()}
+                raise RuntimeError(
+                    f'Cannot find Annotation in pyannote {type(raw).__name__}. '
+                    f'Fields: {field_types}'
+                )
+        speaker_segments = [
+            (turn.start, turn.end, label)
+            for turn, _, label in annotation.itertracks(yield_label=True)
+        ]
+
+    except ImportError:
+        return {'error': 'pyannote.audio not installed. Run: pip install pyannote.audio'}
+    except Exception as exc:
+        logger.error(f'run_diarization_task: pyannote failed for {video_id}: {exc}', exc_info=True)
+        raise self.retry(exc=exc)
+
+    # ── Remap speaker labels to globally unique numbers ───────────────────────
+    # pyannote always starts from SPEAKER_00 per-run. We find the global max
+    # already stored and continue from there so labels are unique across videos.
+    import re as _re
+    existing_labels = (
+        VideoSegment.objects
+        .exclude(speaker_label='')
+        .exclude(video=video)           # ignore this video's own old labels if re-running
+        .values_list('speaker_label', flat=True)
+        .distinct()
+    )
+    max_existing = -1
+    for lbl in existing_labels:
+        m = _re.search(r'(\d+)$', lbl)
+        if m:
+            max_existing = max(max_existing, int(m.group(1)))
+
+    # Build a remap: pyannote's local SPEAKER_00 → global SPEAKER_<max+1>, etc.
+    local_speakers = sorted({s[2] for s in speaker_segments})
+    remap = {
+        local: f'SPEAKER_{max_existing + 1 + i:02d}'
+        for i, local in enumerate(local_speakers)
+    }
+    logger.info(f'run_diarization_task: speaker remap {remap}')
+
+    # ── Match each segment to dominant speaker by overlap ─────────────────────
+    updated = 0
+    for seg in segments:
+        best_label   = ''
+        best_overlap = 0.0
+        for s_start, s_end, label in speaker_segments:
+            overlap = min(seg.end_seconds, s_end) - max(seg.start_seconds, s_start)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_label   = label
+        if best_label:
+            seg.speaker_label = remap[best_label]
+            updated += 1
+
+    VideoSegment.objects.bulk_update(segments, ['speaker_label'])
+    logger.info(f'run_diarization_task: labelled {updated}/{len(segments)} segments for {video_id}')
+
+    # ── Per-speaker stats (for role heuristic) ────────────────────────────────
+    from videos.models import SpeakerIdentity  # local import avoids circular
+    import numpy as np
+
+    global_labels = list(remap.values())  # e.g. ['SPEAKER_02', 'SPEAKER_03']
+
+    # key: global_label → {'total_duration': float, 'seg_count': int}
+    speaker_stats: dict = {}
+    for seg in segments:
+        lbl = seg.speaker_label
+        if not lbl:
+            continue
+        dur = (seg.end_seconds or 0) - (seg.start_seconds or 0)
+        if lbl not in speaker_stats:
+            speaker_stats[lbl] = {'total_duration': 0.0, 'seg_count': 0}
+        speaker_stats[lbl]['total_duration'] += max(dur, 0)
+        speaker_stats[lbl]['seg_count'] += 1
+
+    # Auto-role heuristic thresholds (only applied to auto-named identities)
+    NARRATOR_AVG_DURATION   = 10.0   # avg segment ≥ 10s → narrator candidate
+    BACKGROUND_TOTAL        = 20.0   # total speaking time < 20s → background
+    BACKGROUND_AVG_DURATION = 2.0    # avg segment < 2s → background
+
+    # ── Extract speaker embeddings via wespeaker ───────────────────────────────
+    # pyannote/wespeaker-voxceleb-resnet34-LM is already downloaded as an
+    # internal dependency of the speaker-diarization-3.1 pipeline.
+    # We load it separately here to compute per-speaker mean embeddings used
+    # for cross-video speaker matching.
+    SPEAKER_MATCH_THRESHOLD = getattr(settings, 'SPEAKER_MATCH_THRESHOLD', 0.75)
+
+    speaker_embeddings: dict = {}  # global_label → np.ndarray(256,) normalised
+    try:
+        from pyannote.audio import Model, Inference
+        from pyannote.audio import Audio as _PyannoteAudio
+        from pyannote.core import Segment as _Segment
+
+        emb_model = Model.from_pretrained(
+            'pyannote/wespeaker-voxceleb-resnet34-LM',
+            use_auth_token=hf_token,
+        )
+        inference  = Inference(emb_model, window='whole')
+        audio_io   = _PyannoteAudio(sample_rate=16000, mono='downmix')
+
+        # Build reverse map: global_label → list of (start, end) raw audio spans
+        label_spans: dict = {}
+        for s_start, s_end, local_lbl in speaker_segments:
+            glbl = remap[local_lbl]
+            label_spans.setdefault(glbl, []).append((s_start, s_end))
+
+        for glbl, spans in label_spans.items():
+            embeddings = []
+            for s_start, s_end in spans:
+                if s_end - s_start < 0.5:          # skip sub-500ms slivers
+                    continue
+                try:
+                    waveform, sr = audio_io.crop(str(audio_path), _Segment(s_start, s_end))
+                    emb = inference({'waveform': waveform, 'sample_rate': sr})
+                    emb = np.array(emb).flatten()
+                    if emb.shape[0] == 256:          # sanity-check dimension
+                        embeddings.append(emb)
+                except Exception:
+                    continue
+            if embeddings:
+                mean_emb = np.mean(embeddings, axis=0)
+                norm = np.linalg.norm(mean_emb)
+                if norm > 0:
+                    speaker_embeddings[glbl] = mean_emb / norm  # L2-normalised
+        logger.info(
+            f'run_diarization_task: computed embeddings for '
+            f'{len(speaker_embeddings)}/{len(global_labels)} speakers'
+        )
+    except Exception as emb_exc:
+        logger.warning(
+            f'run_diarization_task: embedding extraction skipped — {emb_exc}'
+        )
+
+    # ── Create / link SpeakerIdentity records ─────────────────────────────────
+    from pgvector.django import CosineDistance
+
+    def _apply_role_heuristic(si: SpeakerIdentity, lbl: str) -> None:
+        """Set role on a freshly created (auto-named) SpeakerIdentity."""
+        stats     = speaker_stats.get(lbl, {})
+        total_dur = stats.get('total_duration', 0)
+        seg_count = stats.get('seg_count', 1) or 1
+        avg_dur   = total_dur / seg_count
+        if total_dur < BACKGROUND_TOTAL or avg_dur < BACKGROUND_AVG_DURATION:
+            si.role = SpeakerIdentity.ROLE_BACKGROUND
+        elif avg_dur >= NARRATOR_AVG_DURATION:
+            si.role = SpeakerIdentity.ROLE_NARRATOR
+        # else: keep default ROLE_SPEAKER
+
+    label_to_identity: dict = {}
+    match_log: list = []
+
+    for lbl in global_labels:
+        embedding = speaker_embeddings.get(lbl)
+
+        # ── Priority 1: embedding-based cross-video match ──────────────────────
+        matched = None
+        if embedding is not None:
+            # cosine distance = 1 - cosine_similarity, so dist < (1-threshold) means match
+            dist_threshold = 1.0 - SPEAKER_MATCH_THRESHOLD
+            candidate = (
+                SpeakerIdentity.objects
+                .filter(speaker_embedding__isnull=False)
+                .annotate(dist=CosineDistance('speaker_embedding', embedding.tolist()))
+                .filter(dist__lt=dist_threshold)
+                .order_by('dist')
+                .first()
+            )
+            if candidate:
+                matched = candidate
+                sim = round(1.0 - float(candidate.dist), 3)
+                match_log.append(f'{lbl} → "{candidate.name}" (sim={sim})')
+                logger.info(
+                    f'run_diarization_task: cross-video match {lbl} → '
+                    f'"{candidate.name}" (cosine_sim={sim})'
+                )
+                # Update stored embedding: rolling mean keeps it current
+                old_emb = np.array(candidate.speaker_embedding)
+                new_emb = (old_emb + embedding) / 2.0
+                norm    = np.linalg.norm(new_emb)
+                if norm > 0:
+                    candidate.speaker_embedding = (new_emb / norm).tolist()
+                    candidate.save(update_fields=['speaker_embedding'])
+
+        # ── Priority 2: same global label already linked (re-run safety) ───────
+        if matched is None:
+            existing_seg = (
+                VideoSegment.objects
+                .filter(speaker_label=lbl, speaker_identity__isnull=False)
+                .exclude(video=video)
+                .select_related('speaker_identity')
+                .first()
+            )
+            if existing_seg:
+                matched = existing_seg.speaker_identity
+                match_log.append(f'{lbl} → "{matched.name}" (same label, re-run)')
+                # Backfill embedding if we have one and it's missing
+                if embedding is not None and matched.speaker_embedding is None:
+                    matched.speaker_embedding = embedding.tolist()
+                    matched.save(update_fields=['speaker_embedding'])
+
+        if matched is not None:
+            label_to_identity[lbl] = matched
+            continue
+
+        # ── Priority 3: create new SpeakerIdentity ─────────────────────────────
+        m = _re.search(r'(\d+)$', lbl)
+        num_str = f'Speaker {int(m.group(1)) + 1}' if m else lbl
+        si = SpeakerIdentity(
+            name=num_str,
+            is_auto_named=True,
+            role=SpeakerIdentity.ROLE_SPEAKER,
+        )
+        _apply_role_heuristic(si, lbl)
+        if embedding is not None:
+            si.speaker_embedding = embedding.tolist()
+        si.save()
+        match_log.append(f'{lbl} → NEW "{si.name}" (id={si.pk})')
+        label_to_identity[lbl] = si
+
+    logger.info(f'run_diarization_task: identity resolution: {match_log}')
+
+    # ── Attach speaker_identity FK to each segment ────────────────────────────
+    for seg in segments:
+        if seg.speaker_label and seg.speaker_label in label_to_identity:
+            seg.speaker_identity = label_to_identity[seg.speaker_label]
+    VideoSegment.objects.bulk_update(segments, ['speaker_identity'])
+    logger.info(
+        f'run_diarization_task: linked {len(label_to_identity)} '
+        f'SpeakerIdentity records for {video_id}'
+    )
+
+    return {
+        'ok':               True,
+        'segments_updated': updated,
+        'speakers':         len(local_speakers),
+        'labels':           list(remap.values()),
+        'identities': [
+            {
+                'id':      si.pk,
+                'name':    si.name,
+                'role':    si.role,
+                'matched': any(lbl in m for m in match_log if '→ NEW' not in m),
+            }
+            for lbl, si in label_to_identity.items()
+        ],
+    }

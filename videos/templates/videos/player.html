@@ -747,7 +747,8 @@
               <div class="people-identity-name">{{ pm.identity.name }}</div>
               <div class="people-identity-meta">
                 Found in {{ pm.videos|length }} video{{ pm.videos|length|pluralize }}
-                {% if pm.photos %} and {{ pm.photos|length }} photo{{ pm.photos|length|pluralize }}{% endif %}
+                {% if pm.photos %} · {{ pm.photos|length }} photo{{ pm.photos|length|pluralize }}{% endif %}
+                {% if pm.voice_videos %} · <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg> speaks in {{ pm.voice_videos|length }} video{{ pm.voice_videos|length|pluralize }}{% endif %}
               </div>
             </div>
           </div>
@@ -783,6 +784,34 @@
             </a>
           </div>
           {% endfor %}
+
+          {% if pm.voice_videos %}
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);padding:8px 0 4px;display:flex;align-items:center;gap:5px;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+            Also speaks in
+          </div>
+          {% for ve in pm.voice_videos %}
+          <div class="people-video-row" style="{% if ve.already_in_face %}opacity:.65;{% endif %}">
+            <a href="{% url 'watch' ve.video.id %}" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-decoration:none;color:inherit;">
+              <div class="people-video-thumb">
+                {% if ve.video.thumbnail_url %}<img src="{{ ve.video.thumbnail_url }}" alt="" />{% endif %}
+              </div>
+              <div class="people-video-info">
+                <div class="people-video-title">{{ ve.video.title }}</div>
+                <div class="people-video-meta" style="display:flex;align-items:center;gap:4px;">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                  {{ ve.moments|length }} speech moment{{ ve.moments|length|pluralize }}
+                </div>
+              </div>
+            </a>
+            <div class="people-timestamps">
+              {% for m in ve.moments %}
+              <a href="{% url 'watch' ve.video.id %}?t={{ m.timestamp|floatformat:0 }}" class="people-ts-chip" title="{{ m.text|truncatechars:60 }}" style="background:var(--surface-2);border-color:var(--border);">{{ m.time_fmt }}</a>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+          {% endif %}
         </div>
         {% endfor %}
       </div>

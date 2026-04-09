@@ -396,6 +396,13 @@ class VideoSegment(models.Model):
     start_seconds = models.FloatField()
     end_seconds   = models.FloatField()
     text          = models.TextField()
+    speaker_label    = models.CharField(max_length=50, blank=True,
+                                        help_text='Raw pyannote speaker label, e.g. SPEAKER_02')
+    speaker_identity = models.ForeignKey(
+        'SpeakerIdentity', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='segments',
+        help_text='Resolved SpeakerIdentity — set after diarization',
+    )
 
     class Meta:
         ordering = ['start_seconds']
@@ -532,6 +539,53 @@ class DetectedFace(models.Model):
         return f'/media/{self.crop_path}' if self.crop_path else None
 
 
+# ── Speaker Identity ─────────────────────────────────────────────────────────
+
+class SpeakerIdentity(models.Model):
+    """
+    A named speaker that can appear across many videos.
+    Created automatically during diarization (name='Speaker N'),
+    and managed by the channel owner via the Speakers UI.
+    """
+    ROLE_SPEAKER    = 'speaker'
+    ROLE_NARRATOR   = 'narrator'
+    ROLE_BACKGROUND = 'background'
+    ROLE_CHOICES = [
+        (ROLE_SPEAKER,    'Speaker'),
+        (ROLE_NARRATOR,   'Narrator'),
+        (ROLE_BACKGROUND, 'Background'),
+    ]
+
+    name          = models.CharField(max_length=100)
+    is_auto_named = models.BooleanField(default=True,
+                                        help_text='True until owner gives this speaker a real name')
+    role          = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_SPEAKER)
+    # Optional manual link to a FaceIdentity (user asserts "this voice = this person")
+    face_identity = models.ForeignKey(
+        'FaceIdentity', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='speaker_identities',
+        help_text='Manually linked face identity — set by user to cross-reference voice + face',
+    )
+    # 256-dim wespeaker embedding — mean of all speaker segments across all videos.
+    # Used for cross-video speaker matching (cosine similarity ≥ SPEAKER_MATCH_THRESHOLD).
+    speaker_embedding = VectorField(
+        dimensions=256, null=True, blank=True,
+        help_text='Mean wespeaker-voxceleb-resnet34-LM embedding for cross-video matching',
+    )
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        indexes  = [
+            models.Index(fields=['name'],          name='speakerid_name'),
+            models.Index(fields=['is_auto_named'], name='speakerid_auto'),
+            models.Index(fields=['role'],          name='speakerid_role'),
+        ]
+
+    def __str__(self):
+        return f'{self.name} ({self.role})'
+
+
 # ── Subtitles / Captions ─────────────────────────────────────────────────────
 
 class Subtitle(models.Model):
@@ -625,6 +679,12 @@ class Photo(models.Model):
 
     # OCR — extracted text visible in the image
     ocr_text = models.TextField(blank=True, help_text='Text detected in image via OCR')
+
+    # EXIF metadata — extracted from image file at upload time
+    exif_data = models.JSONField(null=True, blank=True,
+                                 help_text='Camera EXIF metadata: make, model, GPS, exposure settings, etc.')
+    taken_at  = models.DateTimeField(null=True, blank=True, db_index=True,
+                                     help_text='Date/time the photo was taken (from EXIF DateTimeOriginal)')
 
     # Archive — hidden from main library without deleting
     is_archived = models.BooleanField(default=False, db_index=True,

@@ -19,6 +19,8 @@ urlpatterns = [
     path('api/admin/commands/run/',  views.admin_commands_run),
     path('faces/',                       views.faces_page,          name='faces'),
     path('faces/<int:identity_id>/',     views.face_identity_page,  name='face_identity'),
+    path('speakers/',                    views.speakers_page,        name='speakers'),
+    path('speakers/<int:speaker_id>/',   views.speaker_identity_page, name='speaker_identity'),
 
     # ── Auth / onboarding ──
     path('register/',      views.register_page,      name='register'),
@@ -78,6 +80,7 @@ urlpatterns = [
     path('api/videos/<uuid:video_id>/subtitles/<int:subtitle_id>/',       views.subtitle_delete),
     path('api/videos/<uuid:video_id>/subtitles/<int:subtitle_id>/cues/', views.subtitle_cues),
     path('watch/<uuid:video_id>/subtitles/<int:subtitle_id>/edit/',      views.subtitle_editor_page, name='subtitle_editor'),
+    path('watch/<uuid:video_id>/transcript/',                            views.transcript_editor_page, name='transcript_editor'),
 
     # ── API: Audio Tracks ──
     path('api/videos/<uuid:video_id>/audio-tracks/',          views.audio_track_list),
@@ -86,6 +89,9 @@ urlpatterns = [
     # ── API: Video Frames (visual analysis) ──
     path('api/videos/<uuid:video_id>/frames/',          views.video_frames_list),
     path('api/videos/<uuid:video_id>/frames/analyze/',  views.video_frames_analyze),
+
+    # ── API: Speaker Diarization ──
+    path('api/videos/<uuid:video_id>/diarize/', views.run_diarization),
 
     # ── API: Face Recognition ──
     path('api/videos/<uuid:video_id>/faces/',                              views.video_faces_list),
@@ -98,6 +104,17 @@ urlpatterns = [
     path('api/faces/crops/<int:face_id>/status/',                          views.face_set_status),
     path('api/faces/crops/<int:face_id>/set-thumbnail/',                   views.face_set_thumbnail),
     path('api/faces/cleanup-orphans/',                                     views.faces_cleanup_orphans),
+    path('api/faces/<int:identity_id>/audio/',                             views.face_identity_audio_tab),
+    path('api/segments/<int:segment_id>/set-speaker/',                     views.segment_set_speaker),
+
+    # ── API: Speaker Identity ──
+    path('api/videos/<uuid:video_id>/speakers/',            views.video_speakers_list),
+    path('api/speakers/list/',                              views.speaker_list_api),
+    path('api/speakers/<int:speaker_id>/rename/',           views.speaker_rename),
+    path('api/speakers/<int:speaker_id>/set-role/',         views.speaker_set_role),
+    path('api/speakers/<int:speaker_id>/link-face/',        views.speaker_link_face),
+    path('api/speakers/<int:speaker_id>/merge/',            views.speaker_merge),
+    path('api/speakers/<int:speaker_id>/delete/',           views.speaker_delete),
 
     # ── API: Comments ──
     path('api/comments/<int:comment_id>/',       views.comment_delete),

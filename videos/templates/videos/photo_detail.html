@@ -275,6 +275,68 @@
     </div>
     {% endif %}
 
+    {% if photo.exif_data %}
+    <div class="divider"></div>
+    <div class="info-section">
+      <div class="info-label" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="toggleExif(this)">
+        Camera &amp; EXIF
+        <span id="exifChevron" style="font-size:10px;color:var(--text-subtle);transition:transform .2s;">▼</span>
+      </div>
+      <div id="exifPanel" style="margin-top:8px;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          {% if photo.taken_at %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">Date taken</td>
+            <td style="color:var(--text);font-weight:500;">{{ photo.taken_at|date:"N j, Y, g:i a" }}</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.Make or photo.exif_data.Model %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">Camera</td>
+            <td style="color:var(--text);font-weight:500;">{{ photo.exif_data.Make|default:"" }} {{ photo.exif_data.Model|default:"" }}</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.LensModel %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">Lens</td>
+            <td style="color:var(--text);">{{ photo.exif_data.LensModel }}</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.FocalLength %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">Focal length</td>
+            <td style="color:var(--text);">{{ photo.exif_data.FocalLength|floatformat:0 }}mm</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.FNumber %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">Aperture</td>
+            <td style="color:var(--text);">ƒ/{{ photo.exif_data.FNumber|floatformat:1 }}</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.ExposureTime %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">Shutter</td>
+            <td style="color:var(--text);">{{ photo.exif_data.ExposureTime }}s</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.ISOSpeedRatings %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">ISO</td>
+            <td style="color:var(--text);">{{ photo.exif_data.ISOSpeedRatings }}</td>
+          </tr>
+          {% endif %}
+          {% if photo.exif_data.GPSInfo %}
+          <tr>
+            <td style="color:var(--text-subtle);padding:3px 0;padding-right:10px;white-space:nowrap;">GPS</td>
+            <td style="color:var(--text);"><span id="gpsCoords" style="cursor:pointer;color:var(--accent);text-decoration:underline;" onclick="openMap()">View on map</span></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="divider"></div>
 
     <div class="info-section">
@@ -339,6 +401,34 @@ async function toggleDetailArchive() {
       .catch(() => clearInterval(poll));
   }, 4000);
 })();
+
+{% if photo.exif_data %}
+function toggleExif(headerEl) {
+  const panel   = document.getElementById('exifPanel');
+  const chevron = document.getElementById('exifChevron');
+  const hidden  = panel.style.display === 'none';
+  panel.style.display   = hidden ? '' : 'none';
+  chevron.style.transform = hidden ? '' : 'rotate(-90deg)';
+}
+{% if photo.exif_data.GPSInfo %}
+function openMap() {
+  const gps = {{ photo.exif_data.GPSInfo|safe }};
+  // Parse DMS (degrees/minutes/seconds) arrays into decimal degrees
+  function dms(arr, ref) {
+    if (!arr || arr.length < 3) return null;
+    const deg = parseFloat(arr[0]), min = parseFloat(arr[1]), sec = parseFloat(arr[2]);
+    let dd = deg + min / 60 + sec / 3600;
+    if (ref === 'S' || ref === 'W') dd = -dd;
+    return dd;
+  }
+  const lat = dms(gps.GPSLatitude,  gps.GPSLatitudeRef);
+  const lon = dms(gps.GPSLongitude, gps.GPSLongitudeRef);
+  if (lat !== null && lon !== null) {
+    window.open(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}&zoom=15`, '_blank');
+  }
+}
+{% endif %}
+{% endif %}
 </script>
 {% endif %}
 {% endblock %}

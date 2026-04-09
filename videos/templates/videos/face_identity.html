@@ -72,6 +72,86 @@
   }
 
   /* ── Filter bar ── */
+  /* ── Content tabs ── */
+  .fi-tab {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 8px 14px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer; border: none;
+    background: none; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s, border-color .15s;
+  }
+  .fi-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .fi-tab:hover  { color: var(--text); }
+  .fi-tab-count {
+    display: inline-block; background: var(--surface-3);
+    border-radius: 10px; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; color: var(--text-muted);
+  }
+  .fi-tab.active .fi-tab-count { background: var(--accent-soft); color: var(--accent); }
+
+  /* Audio tab card */
+  .audio-video-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .audio-video-card:last-child { border-bottom: none; }
+  .audio-video-thumb {
+    width: 80px; height: 48px; border-radius: 4px;
+    background: var(--surface-3); object-fit: cover; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .audio-video-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; }
+
+  /* ── Stacked avatars on video group cards ── */
+  .co-avatar-stack {
+    display: flex; align-items: center;
+    flex-direction: row-reverse;   /* rightmost avatar on top visually */
+    margin-right: 8px; flex-shrink: 0;
+  }
+  .co-stack-avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--surface-3);
+    border: 2px solid var(--surface);
+    margin-left: -10px;            /* overlap */
+    overflow: visible; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 800; color: var(--text-muted);
+    text-decoration: none;
+    transition: transform .15s;
+    position: relative;
+  }
+  .co-stack-avatar:first-child { margin-left: 0; }
+  .co-stack-avatar:hover { transform: translateY(-4px) scale(1.12); z-index: 99 !important; }
+  .co-stack-avatar img {
+    width: 28px; height: 28px; border-radius: 50%;
+    object-fit: cover; object-position: center top;
+    display: block;
+  }
+  /* Name tooltip */
+  .co-stack-avatar::after {
+    content: attr(data-name);
+    position: absolute; bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,.82); color: #fff;
+    font-size: 11px; font-weight: 600;
+    padding: 3px 8px; border-radius: 5px;
+    white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity .15s;
+    z-index: 999;
+  }
+  .co-stack-avatar::before {
+    content: '';
+    position: absolute; bottom: calc(100% + 1px); left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: rgba(0,0,0,.82);
+    pointer-events: none;
+    opacity: 0; transition: opacity .15s;
+    z-index: 999;
+  }
+  .co-stack-avatar:hover::after,
+  .co-stack-avatar:hover::before { opacity: 1; }
+
   .fi-filter-bar {
     display: flex; gap: 8px; margin-bottom: 20px;
     flex-wrap: wrap; align-items: center;
@@ -257,6 +337,88 @@
   .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
   .btn-danger:hover { background: var(--red); color: #fff; }
 
+  /* ── Co-appearance ── */
+  .co-section {
+    margin-bottom: 32px;
+  }
+  .co-heading {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px; color: var(--text-subtle);
+    margin-bottom: 12px;
+  }
+  .co-grid {
+    display: flex; flex-wrap: wrap; gap: 10px;
+  }
+  .co-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border);
+    text-decoration: none; color: var(--text);
+    transition: border-color .15s, background .15s;
+    min-width: 160px;
+  }
+  .co-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .co-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--surface-3); flex-shrink: 0;
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 11px; font-weight: 700;
+    border: 2px solid var(--border-2);
+  }
+  .co-avatar img { width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+  .co-info { min-width: 0; }
+  .co-name {
+    font-size: 13px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 120px;
+  }
+  .co-count {
+    font-size: 11px; color: var(--text-muted); margin-top: 1px;
+  }
+
+  /* ── Per-video appearance timeline ── */
+  .fi-timeline-wrap {
+    margin: 8px 0 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .fi-timeline-label {
+    font-size: 10px; color: var(--text-subtle); white-space: nowrap;
+    font-variant-numeric: tabular-nums; font-family: monospace;
+  }
+  .fi-timeline {
+    flex: 1; height: 6px; border-radius: 3px;
+    background: var(--surface-3); position: relative; overflow: visible;
+  }
+  .fi-timeline { cursor: pointer; }
+  .fi-tl-span {
+    position: absolute; top: 0; bottom: 0;
+    background: var(--accent); opacity: .75;
+    border-radius: 2px; min-width: 4px;
+    pointer-events: none;
+  }
+  .fi-timeline:hover .fi-tl-span { opacity: 1; }
+
+  /* Hover scrubber */
+  .fi-tl-cursor {
+    position: absolute; top: -4px; bottom: -4px;
+    width: 2px; background: var(--text);
+    border-radius: 1px; pointer-events: none;
+    opacity: 0; transition: opacity .1s;
+    transform: translateX(-50%);
+  }
+  .fi-tl-label {
+    position: absolute; bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    color: var(--text); font-size: 11px; font-weight: 600;
+    font-family: monospace; font-variant-numeric: tabular-nums;
+    padding: 2px 6px; border-radius: 4px;
+    pointer-events: none; white-space: nowrap;
+    opacity: 0; transition: opacity .1s;
+  }
+  .fi-timeline:hover .fi-tl-cursor,
+  .fi-timeline:hover .fi-tl-label { opacity: 1; }
+
   /* ── Empty ── */
   .no-crops {
     color: var(--text-muted); font-size: 13px; padding: 24px 0;
@@ -353,25 +515,107 @@
   </div>
   {% endif %}
 
-  <!-- Photos containing this person -->
+  <!-- Content tabs: Videos · Photos · Audio — only show tabs with content -->
+  <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px;margin-top:8px;">
+    {% if total_video_count %}
+    <button class="fi-tab active" id="tab-videos" onclick="switchTab('videos')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
+      Videos <span class="fi-tab-count">{{ total_video_count }}</span>
+    </button>
+    {% endif %}
+    {% if total_photo_count %}
+    <button class="fi-tab {% if not total_video_count %}active{% endif %}" id="tab-photos" onclick="switchTab('photos')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.2"/><path d="M21 16l-5-5-8 8"/></svg>
+      Photos <span class="fi-tab-count">{{ total_photo_count }}</span>
+    </button>
+    {% endif %}
+    {% if has_audio %}
+    <button class="fi-tab" id="tab-audio" onclick="switchTab('audio')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      Audio <span class="fi-tab-count" id="audioTabCount">…</span>
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- Audio panel — lazy loaded -->
+  {% if has_audio %}
+  <div id="tabpanel-audio" style="display:none;">
+    <div id="audioTabContent" style="padding:8px 0;color:var(--text-muted);font-size:13px;">Loading…</div>
+  </div>
+  {% endif %}
+
+  <!-- Co-appearances -->
+  {% if co_appearances %}
+  <div class="co-section" id="coAppearances">
+    <div class="co-heading">Often appears with</div>
+    <div class="co-grid">
+      {% for co in co_appearances %}
+      <a href="{% url 'face_identity' co.identity.pk %}" class="co-card">
+        <div class="co-avatar">
+          {% if co.identity.thumbnail_url %}
+          <img src="{{ co.identity.thumbnail_url }}" alt="" />
+          {% else %}
+          {{ co.identity.name|slice:":1"|upper }}
+          {% endif %}
+        </div>
+        <div class="co-info">
+          <div class="co-name">{{ co.identity.name }}</div>
+          <div class="co-count">
+            {% if co.video_count %}{{ co.video_count }} video{{ co.video_count|pluralize }}{% endif %}
+            {% if co.video_count and co.photo_count %} · {% endif %}
+            {% if co.photo_count %}{{ co.photo_count }} photo{{ co.photo_count|pluralize }}{% endif %}
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Face crops grouped by source (videos/photos) -->
+  <!-- Each group gets a data-kind attribute so JS tab switching can show/hide -->
   {% for grp in video_groups %}
-  <div class="fi-video-section" data-video-id="{% if grp.kind == 'video' %}{{ grp.video.id }}{% else %}{{ grp.photo.id }}{% endif %}">
+  <div class="fi-video-section" data-kind="{{ grp.kind }}" data-video-id="{% if grp.kind == 'video' %}{{ grp.video.id }}{% else %}{{ grp.photo.id }}{% endif %}">
     <div class="fi-video-heading">
       <div class="fi-video-thumb-sm">
         {% if grp.kind == 'video' and grp.video.thumbnail_url %}<img src="{{ grp.video.thumbnail_url }}" alt="" />{% endif %}
         {% if grp.kind == 'photo' and grp.photo.thumbnail_url %}<img src="{{ grp.photo.thumbnail_url }}" alt="" />{% endif %}
       </div>
-      <div>
+      <div style="flex:1;min-width:0;">
         <div class="fi-video-title">{% if grp.kind == 'video' %}{{ grp.video.title }}{% else %}{{ grp.photo.title|default:"Untitled photo" }}{% endif %}</div>
         <div class="fi-video-sub">{{ grp.faces|length }} appearance{{ grp.faces|length|pluralize }}</div>
       </div>
+      {% if grp.co_identities %}
+      <div class="co-avatar-stack">
+        {% for co in grp.co_identities %}
+        <a href="{% url 'face_identity' co.pk %}" class="co-stack-avatar" data-name="{{ co.name }}" style="z-index:{{ forloop.revcounter }};" onclick="event.stopPropagation();">
+          {% if co.thumbnail_url %}
+          <img src="{{ co.thumbnail_url }}" alt="{{ co.name }}" />
+          {% else %}
+          {{ co.name|slice:":1"|upper }}
+          {% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% if grp.kind == 'video' %}
       <a href="{% url 'watch' grp.video.id %}" class="fi-video-link">Watch →</a>
       {% else %}
       <a href="{% url 'photo_detail' grp.photo.id %}" class="fi-video-link">Open photo →</a>
       {% endif %}
     </div>
+
+    {% if grp.kind == 'video' and grp.video.duration %}
+    <div class="fi-timeline-wrap">
+      <span class="fi-timeline-label">0s</span>
+      <div class="fi-timeline"
+           data-duration="{{ grp.video.duration }}"
+           data-video-id="{{ grp.video.id }}"
+           data-timestamps="[{% for ts in grp.all_timestamps %}{{ ts }}{% if not forloop.last %},{% endif %}{% endfor %}]">
+      </div>
+      <span class="fi-timeline-label">{{ grp.video.duration|floatformat:0 }}s</span>
+    </div>
+    {% endif %}
 
     <div class="crop-grid">
       {% for face in grp.faces %}
@@ -497,6 +741,209 @@
 <script>
 const IDENTITY_ID = {{ identity.pk }};
 const CSRF = '{{ csrf_token }}';
+
+/* ── Content tabs: Videos / Photos / Audio ───────────────────────────────── */
+let _audioLoaded  = false;
+
+function switchTab(tab) {
+  // Update tab buttons
+  document.querySelectorAll('.fi-tab').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById('tab-' + tab);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  // Show/hide group cards by data-kind
+  const allGroups = document.querySelectorAll('.fi-video-section[data-kind]');
+  allGroups.forEach(el => {
+    if (tab === 'videos')      el.style.display = el.dataset.kind === 'video' ? '' : 'none';
+    else if (tab === 'photos') el.style.display = el.dataset.kind === 'photo' ? '' : 'none';
+    else                       el.style.display = 'none';  // audio hides crop groups
+  });
+
+  // Co-appearances: hide on audio tab for cleaner look
+  const co = document.getElementById('coAppearances');
+  if (co) co.style.display = tab === 'audio' ? 'none' : '';
+
+  // Filter bar: hide on audio tab
+  const fb = document.querySelector('.fi-filter-bar');
+  if (fb) fb.style.display = tab === 'audio' ? 'none' : '';
+
+  // Audio tab panel
+  const audioPanel = document.getElementById('tabpanel-audio');
+  if (audioPanel) audioPanel.style.display = tab === 'audio' ? 'block' : 'none';
+
+  // Lazy load audio on first open
+  if (tab === 'audio' && !_audioLoaded) {
+    _audioLoaded = true;
+    loadAudioTab();
+  }
+}
+
+async function loadAudioTab() {
+  const container = document.getElementById('audioTabContent');
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/audio/`);
+    if (!res.ok) { container.textContent = 'Could not load audio data.'; return; }
+    const data = await res.json();
+
+    // Update badge count
+    const badge = document.getElementById('audioTabCount');
+    if (badge) badge.textContent = data.videos ? data.videos.length : 0;
+
+    if (!data.linked_speakers || !data.linked_speakers.length) {
+      container.innerHTML = `
+        <div style="text-align:center;padding:40px 20px;color:var(--text-muted);">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4;margin-bottom:12px;display:block;margin-inline:auto;">
+            <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+          </svg>
+          <div style="font-weight:600;margin-bottom:6px;">No voice linked</div>
+          <div style="font-size:12px;max-width:280px;margin:auto;line-height:1.6;">
+            Link a speaker identity to this person on the
+            <a href="/speakers/" style="color:var(--accent);">Speakers page</a>
+            to see which videos they speak in.
+          </div>
+        </div>`;
+      return;
+    }
+
+    const ROLE_COLORS = { speaker: 'var(--accent)', narrator: 'var(--green)', background: 'var(--text-muted)' };
+    const speakersHtml = data.linked_speakers.map(s =>
+      `<a href="/speakers/${s.id}/" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;text-decoration:none;margin-right:6px;margin-bottom:6px;">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+        ${s.name} <span style="color:${ROLE_COLORS[s.role]||'var(--text-muted)'};margin-left:3px;font-size:10px;">${s.role}</span>
+      </a>`
+    ).join('');
+
+    const videosHtml = data.videos.length ? data.videos.map(v =>
+      `<div class="audio-video-card">
+        <div class="audio-video-thumb">
+          ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" loading="lazy" />` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-subtle)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 8 16 11 10 14 10 8"/></svg>`}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <a href="${v.watch_url}" style="font-size:13px;font-weight:700;color:var(--text);text-decoration:none;">${v.title}</a>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+            ${v.seg_count} speech segment${v.seg_count !== 1 ? 's' : ''}
+            ${v.duration ? ` · ${Math.round(v.duration)}s` : ''}
+          </div>
+        </div>
+        <a href="${v.watch_url}" style="font-size:11px;color:var(--accent);text-decoration:none;padding:4px 10px;border-radius:4px;background:var(--accent-soft);font-weight:600;flex-shrink:0;">Watch</a>
+      </div>`
+    ).join('') : `<div style="font-size:13px;color:var(--text-muted);padding:12px 0;">No videos found for linked speaker${data.linked_speakers.length > 1 ? 's' : ''} in your channel.</div>`;
+
+    container.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Linked Speaker${data.linked_speakers.length > 1 ? 's' : ''}</div>
+        <div style="display:flex;flex-wrap:wrap;">${speakersHtml}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Videos (${data.videos.length})</div>
+      ${videosHtml}`;
+  } catch(e) {
+    container.textContent = 'Failed to load audio data.';
+  }
+}
+
+// On load: set correct initial tab state
+document.addEventListener('DOMContentLoaded', () => {
+  const hasVideos = {{ total_video_count|default:0 }} > 0;
+  const hasPhotos = {{ total_photo_count|default:0 }} > 0;
+
+  if (hasVideos) {
+    // Default: show videos, hide photos
+    document.querySelectorAll('.fi-video-section[data-kind="photo"]').forEach(el => {
+      el.style.display = 'none';
+    });
+  } else if (hasPhotos) {
+    // Photo-only identity: photos are already rendered visible, nothing to hide
+    // The tab button already has 'active' class from template
+  }
+
+  // Load audio tab count badge in background (doesn't block page)
+  {% if has_audio %}
+  fetch(`/api/faces/${IDENTITY_ID}/audio/`)
+    .then(r => r.json())
+    .then(data => {
+      const badge = document.getElementById('audioTabCount');
+      if (badge && data.videos) badge.textContent = data.videos.length;
+      _audioLoaded = false;  // reset so full load happens on tab click
+    })
+    .catch(() => {});
+  {% endif %}
+});
+
+/* ── Per-video timelines ──────────────────────────────────────────────────── */
+(function () {
+  const GAP = {{ frame_interval }} * 2.5; // merge detections closer than 2.5× frame interval
+
+  function toSpans(timestamps, gap) {
+    if (!timestamps.length) return [];
+    const sorted = [...timestamps].sort((a, b) => a - b);
+    const spans = [];
+    let start = sorted[0], end = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] - end <= gap) {
+        end = sorted[i];
+      } else {
+        spans.push([start, end]);
+        start = end = sorted[i];
+      }
+    }
+    spans.push([start, end]);
+    return spans;
+  }
+
+  document.querySelectorAll('.fi-timeline').forEach(el => {
+    const duration   = parseFloat(el.dataset.duration);
+    const videoId    = el.dataset.videoId;
+    const timestamps = JSON.parse(el.dataset.timestamps || '[]');
+    if (!duration || !timestamps.length) return;
+
+    toSpans(timestamps, GAP).forEach(([start, end]) => {
+      const leftPct  = Math.min(100, (start / duration) * 100);
+      const widthPct = Math.min(100 - leftPct, ((end - start) / duration) * 100);
+      const span = document.createElement('div');
+      span.className  = 'fi-tl-span';
+      span.title      = `${Math.round(start)}s – ${Math.round(end)}s`;
+      span.style.left  = `${leftPct}%`;
+      span.style.width = `max(4px, ${widthPct}%)`;
+      el.appendChild(span);
+    });
+
+    // Hover scrubber — vertical line + time label following the mouse
+    const cursor = document.createElement('div');
+    cursor.className = 'fi-tl-cursor';
+    const label = document.createElement('div');
+    label.className = 'fi-tl-label';
+    cursor.appendChild(label);
+    el.appendChild(cursor);
+
+    el.addEventListener('mousemove', e => {
+      const rect = el.getBoundingClientRect();
+      const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const t    = pct * duration;
+      const h = Math.floor(t / 3600);
+      const m = Math.floor((t % 3600) / 60);
+      const s = Math.floor(t % 60);
+      label.textContent = h > 0
+        ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+        : `${m}:${String(s).padStart(2,'0')}`;
+      // Clamp label so it doesn't overflow the bar edges
+      const labelHalf = 24;
+      const barW = rect.width;
+      const rawLeft = pct * barW;
+      cursor.style.left = `${rawLeft}px`;
+      label.style.left  = `${Math.max(labelHalf, Math.min(barW - labelHalf, rawLeft) - rawLeft)}px`;
+    });
+
+    // Click anywhere on the bar → seek to that exact timestamp
+    el.addEventListener('click', e => {
+      const rect = el.getBoundingClientRect();
+      const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const t    = Math.round(pct * duration);
+      window.location.href = `/watch/${videoId}/?t=${t}`;
+    });
+  });
+})();
 
 /* ── Status filtering ─────────────────────────────────────────────────────── */
 let activeFilter = 'all';

@@ -817,6 +817,23 @@
         <div id="faceIdentitiesPanel" style="display:none;"></div>
       </div>
 
+      <!-- Speakers in this Video -->
+      <div style="margin-top:24px;" id="speakersSectionPublic">
+        <div style="font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            Speakers in this Video
+          </div>
+          <button id="speakersToggleBtn" class="btn btn-ghost btn-sm" onclick="toggleSpeakers()" style="font-size:12px;">Show</button>
+        </div>
+        <div id="speakersPanel" style="display:none;"></div>
+      </div>
+
       <!-- Comments -->
       <div style="margin-top:28px;" id="commentsSection">
         <div style="font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px;">
@@ -1294,7 +1311,7 @@
           </div>
 
           <!-- Upload subtitle file -->
-          <details>
+          <details style="margin-top:12px;">
             <summary style="font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Upload Subtitle File
@@ -1318,6 +1335,45 @@
               <div id="subUploadStatus" style="font-size:12px;min-height:16px;"></div>
             </div>
           </details>
+        </div>
+
+        <!-- ── Audio section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color:var(--text-muted);flex-shrink:0;">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <label class="w-label" style="margin:0;">Audio</label>
+          </div>
+
+          <!-- Speaker Diarization -->
+          <div style="padding:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+              <div style="min-width:0;">
+                <div style="font-size:13px;font-weight:600;">Speaker Diarization</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.5;">
+                  Identifies who said what — labels each transcript segment with the speaker's voice.<br>
+                  Requires <code style="font-size:10px;background:var(--surface-3);padding:1px 4px;border-radius:3px;">HF_TOKEN</code> in server settings.
+                </div>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="diarizeBtn" onclick="runDiarization()" style="flex-shrink:0;" title="Run speaker diarization via pyannote.audio">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                Run
+              </button>
+            </div>
+            <div id="diarizeStatus" style="font-size:12px;color:var(--text-muted);margin-top:8px;min-height:16px;"></div>
+            {% if request.user.is_authenticated %}
+            <div style="margin-top:8px;">
+              <a href="{% url 'transcript_editor' video.id %}" style="font-size:12px;color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-weight:500;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                Open Transcript Editor →
+              </a>
+            </div>
+            {% endif %}
+          </div>
         </div>
         {% endif %}
 
@@ -2606,13 +2662,13 @@
   async function toggleFaces() {
     const panel = document.getElementById('faceIdentitiesPanel');
     const btn   = document.getElementById('facesToggleBtn');
-    if (panel.style.display !== 'none') {
-      panel.style.display = 'none';
-      btn.textContent = 'Show';
-    } else {
-      panel.style.display = '';
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
       btn.textContent = 'Hide';
       if (!panel._loaded) await loadFaces();
+    } else {
+      panel.style.display = 'none';
+      btn.textContent = 'Show';
     }
   }
 
@@ -2680,10 +2736,9 @@
       body: JSON.stringify({ name: name.trim() }),
     });
     if (res.ok) {
-      const updated = await res.json();
-      const el = document.getElementById(`fname-${identityId}`);
-      if (el) el.textContent = updated.name;
-      showToast('success', 'Face tagged', `Now labelled "${updated.name}"`);
+      await res.json();
+      showToast('success', 'Face tagged', `Now labelled "${name.trim()}"`);
+      await loadFaces();
     } else {
       showToast('error', 'Failed to tag face');
     }
@@ -2725,6 +2780,53 @@
       loadFaces();
     } else {
       showToast('error', 'Merge failed');
+    }
+  }
+
+  // ── Speakers in this Video ─────────────────────────────────────────────────
+  async function toggleSpeakers() {
+    const panel = document.getElementById('speakersPanel');
+    const btn   = document.getElementById('speakersToggleBtn');
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
+      btn.textContent = 'Hide';
+      if (!panel._loaded) await loadSpeakers();
+    } else {
+      panel.style.display = 'none';
+      btn.textContent = 'Show';
+    }
+  }
+
+  async function loadSpeakers() {
+    const panel = document.getElementById('speakersPanel');
+    panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0;">Loading…</div>';
+    try {
+      const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/speakers/`, { credentials: 'include' });
+      if (!res.ok) { panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No speaker data — run diarization first.</div>'; return; }
+      const speakers = await res.json();
+      if (!speakers.length) {
+        panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No speakers detected yet. Run diarization to identify speakers in this video.</div>';
+        panel._loaded = true; return;
+      }
+      const ROLE_COLORS = { speaker: 'var(--accent)', narrator: 'var(--green)', background: 'var(--text-muted)' };
+      panel.innerHTML = speakers.map(s => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--surface-3);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:var(--text-muted);">
+            ${s.face_thumbnail ? `<img src="${s.face_thumbnail}" style="width:100%;height:100%;object-fit:cover;" />` : (s.name||'?').charAt(0).toUpperCase()}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <a href="/speakers/${s.id}/" style="font-size:13px;font-weight:700;color:var(--text);text-decoration:none;">${s.name}</a>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:1px;">
+              <span style="color:${ROLE_COLORS[s.role] || 'var(--text-muted)'};font-weight:600;">${s.role}</span>
+              <span style="margin:0 4px;">·</span>${s.segment_count} segment${s.segment_count !== 1 ? 's' : ''}
+              ${s.face_name ? `<span style="margin:0 4px;">·</span><span style="color:var(--green);">↔ ${s.face_name}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `).join('');
+      panel._loaded = true;
+    } catch(e) {
+      panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load speakers.</div>';
     }
   }
 
@@ -2778,6 +2880,29 @@
     } else {
       const err = await res.json().catch(() => ({}));
       showToast('error', 'Could not queue captions', err.error || '');
+    }
+  }
+
+  async function runDiarization() {
+    const btn    = document.getElementById('diarizeBtn');
+    const status = document.getElementById('diarizeStatus');
+    btn.disabled = true;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="animation:spin .8s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Queuing…`;
+    status.style.color = 'var(--text-muted)';
+    status.textContent = '';
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/diarize/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg> Run`;
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      status.style.color = 'var(--green)';
+      status.textContent = `✓ Queued — ${data.segment_count} segments will be labelled. Check back in a few minutes.`;
+    } else {
+      status.style.color = 'var(--red)';
+      status.textContent = data.error || 'Failed to queue diarization.';
     }
   }
   {% endif %}

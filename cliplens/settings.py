@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -10,6 +11,37 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY', 'freestream-dev-secret-key-2024')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+def _origin_from_url(url: str) -> str | None:
+    try:
+        p = urlparse((url or "").strip())
+    except Exception:
+        return None
+    if not p.scheme or not p.netloc:
+        return None
+    return f"{p.scheme}://{p.netloc}"
+
+
+# ── Site URL — used in templates and API responses for absolute URLs ──────────
+# Change SITE_URL in .env — do NOT hardcode here.
+SITE_URL = os.getenv('SITE_URL', 'http://localhost:8000').rstrip('/')
+
+# Django 4.0+ CSRF validates the Origin header against this list.
+# Chrome always sends Origin on form POSTs; Safari may omit Origin on same-site POSTs.
+_site_origin = _origin_from_url(SITE_URL)
+_default_csrf_trusted = [
+    o for o in [
+        _site_origin,
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'http://0.0.0.0:8000',
+    ] if o
+]
+CSRF_TRUSTED_ORIGINS = [
+    o.strip().rstrip('/')
+    for o in os.getenv('CSRF_TRUSTED_ORIGINS', ','.join(_default_csrf_trusted)).split(',')
+    if o.strip()
+]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -169,6 +201,18 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+# ── Logging (dev-friendly) ────────────────────────────────────────────────────
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "videos.auth": {"handlers": ["console"], "level": "INFO"},
+    },
+}
+
 # Static & Media
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
@@ -209,12 +253,8 @@ REST_FRAMEWORK = {
 }
 
 # FFmpeg — must be installed and on PATH (or set FFMPEG_PATH env var)
-FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')
-FFPROBE_PATH = os.getenv('FFPROBE_PATH', 'ffprobe')
-
-# ── Site URL — used in templates and API responses for absolute URLs ──────────
-# Change SITE_URL in .env — do NOT hardcode here.
-SITE_URL = os.getenv('SITE_URL', 'http://localhost:8000').rstrip('/')
+FFMPEG_PATH  = os.getenv('FFMPEG_PATH',  '') or 'ffmpeg'
+FFPROBE_PATH = os.getenv('FFPROBE_PATH', '') or 'ffprobe'
 
 # ── Celery ────────────────────────────────────────────────────────────────────
 CELERY_BROKER_URL         = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
@@ -233,6 +273,7 @@ CELERY_TASK_ROUTES = {
     'videos.tasks.analyze_photo_task':          {'queue': 'processing'},
     'videos.tasks.extract_audio_tracks_task':   {'queue': 'processing'},
     'videos.tasks.reindex_segments_task':       {'queue': 'default'},
+    'videos.tasks.run_diarization_task':        {'queue': 'captions'},
 }
 
 
@@ -261,6 +302,13 @@ FACE_MAX_CROPS_PER_VIDEO    = int(os.getenv('FACE_MAX_CROPS_PER_VIDEO', '6'))
 # Higher = stricter; only very confident matches skip manual review.
 FACE_AUTO_CONFIRM_THRESHOLD = float(os.getenv('FACE_AUTO_CONFIRM_THRESHOLD', '0.82'))
 
+# Cosine similarity threshold for cross-video speaker matching (0.0–1.0).
+# A new speaker embedding is matched to an existing SpeakerIdentity when
+# cosine_sim >= threshold.  0.75 is a good balance for wespeaker-resnet34.
+# Raise to 0.85+ if you get false merges; lower to 0.65 if same person
+# isn't being matched across videos.
+SPEAKER_MATCH_THRESHOLD = float(os.getenv('SPEAKER_MATCH_THRESHOLD', '0.75'))
+
 # ── Captions / Whisper ────────────────────────────────────────────────────────
 # Model size: tiny | base | small | medium | large-v2 | large-v3
 # Larger = more accurate but slower. 'base' is a good dev default.
@@ -268,6 +316,15 @@ WHISPER_MODEL_SIZE  = os.getenv('WHISPER_MODEL_SIZE', 'base')
 WHISPER_DEVICE      = os.getenv('WHISPER_DEVICE', 'cpu')   # 'cuda' if GPU available
 WHISPER_COMPUTE_TYPE= os.getenv('WHISPER_COMPUTE_TYPE', 'int8')
 AUTO_CAPTION_ON_UPLOAD = os.getenv('AUTO_CAPTION_ON_UPLOAD', 'true').lower() == 'true'
+
+# ── Speaker Diarization (pyannote.audio) ──────────────────────────────────────
+# Required for the "Run Diarization" feature on videos.
+# Get a free token at https://huggingface.co/settings/tokens
+# Then accept terms at: https://huggingface.co/pyannote/speaker-diarization-3.1
+HF_TOKEN = os.getenv('HF_TOKEN', '')
+# Set to 1 after initial model download to skip HuggingFace version-check pings (eliminates timeout noise)
+if os.getenv('HF_HUB_OFFLINE', '0') == '1':
+    os.environ['HF_HUB_OFFLINE'] = '1'
 
 # HLS segment duration in seconds
 HLS_SEGMENT_DURATION = int(os.getenv('HLS_SEGMENT_DURATION', 6))

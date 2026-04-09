@@ -35,6 +35,7 @@ from .models import (
     Playlist, PlaylistItem, WatchHistory, SavedVideo,
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
     FaceIdentity, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
+    SpeakerIdentity,
 )
 from .serializers import (
     VideoListSerializer, VideoDetailSerializer, VideoUploadSerializer,
@@ -881,6 +882,60 @@ def player_page(request):
             data['videos'] = list(data['videos'].values())
             data['photos'] = list(data['photos'].values())
         people_matches = list(seen_people.values())
+
+        # ── Combined voice signal: add speech moments for matched identities ──
+        # For every FaceIdentity match that has a linked SpeakerIdentity, fetch
+        # their VideoSegments and add them as 'voice_videos' on the people result.
+        # Example: search "Kashish" → face detections + transcript moments where
+        # her linked speaker spoke, even in videos where her face wasn't detected.
+        _matched_face_ids = list(seen_people.keys())
+        if _matched_face_ids:
+            # speakers linked to matched face identities
+            _linked_speakers = list(
+                SpeakerIdentity.objects
+                .filter(face_identity_id__in=_matched_face_ids)
+                .values('id', 'face_identity_id', 'name')
+            )
+            if _linked_speakers:
+                _spk_to_face = {s['id']: s['face_identity_id'] for s in _linked_speakers}
+                _spk_ids     = list(_spk_to_face.keys())
+                _voice_segs  = (
+                    VideoSegment.objects
+                    .filter(
+                        speaker_identity_id__in=_spk_ids,
+                        video__visibility=Video.VISIBILITY_PUBLIC,
+                        video__status=Video.STATUS_READY,
+                    )
+                    .select_related('video', 'video__channel')
+                    .order_by('speaker_identity_id', 'video_id', 'start_seconds')[:400]
+                )
+                # group voice segments by face_identity_id → video_id
+                from collections import defaultdict as _vdd
+                _voice_vid_map = _vdd(lambda: _vdd(list))
+                for seg in _voice_segs:
+                    fid = _spk_to_face[seg.speaker_identity_id]
+                    _voice_vid_map[fid][str(seg.video_id)].append(seg)
+
+                for iid, data in seen_people.items():
+                    vid_voice = _voice_vid_map.get(iid, {})
+                    voice_videos = []
+                    for vid_id_str, segs in vid_voice.items():
+                        # Skip if this video is already in face results (avoid duplication)
+                        already = any(str(pv['video'].id) == vid_id_str for pv in data['videos'])
+                        voice_videos.append({
+                            'video':     segs[0].video,
+                            'moments':   [
+                                {
+                                    'timestamp': s.start_seconds,
+                                    'time_fmt':  _fmt_seconds_display(s.start_seconds),
+                                    'text':      (s.text or '')[:120],
+                                    'is_voice':  True,
+                                }
+                                for s in segs[:6]
+                            ],
+                            'already_in_face': already,
+                        })
+                    data['voice_videos'] = voice_videos
 
         frame_matches = scene_matches  # backwards compat alias
 
@@ -2655,6 +2710,58 @@ def _build_subtitle_content(cues: list, fmt: str) -> str:
 
 
 @login_required
+def transcript_editor_page(request, video_id):
+    """
+    GET /videos/<id>/transcript/
+    Dedicated transcript + speaker assignment editor.
+    Shows all VideoSegments in order with their text and speaker label.
+    Editors can reassign speakers inline without leaving the page.
+    """
+    video = get_object_or_404(Video, id=video_id)
+    if not _is_video_owner(request.user, video):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied
+
+    # All segments ordered by time
+    segments = (
+        VideoSegment.objects
+        .filter(video=video)
+        .select_related('speaker_identity')
+        .order_by('start_seconds')
+    )
+
+    # Speakers visible in this video (for the reassign dropdown)
+    video_speakers = list(
+        SpeakerIdentity.objects
+        .filter(segments__video=video)
+        .distinct()
+        .order_by('name')
+    )
+
+    # Also include ALL global speakers so user can assign a segment to a speaker
+    # who hasn't been detected in this video yet (e.g. after a partial diarization)
+    user_channels = _user_channels(request.user)
+    user_channel_ids = list(user_channels.values_list('id', flat=True))
+    all_speakers = list(
+        SpeakerIdentity.objects
+        .filter(segments__video__channel_id__in=user_channel_ids)
+        .distinct()
+        .order_by('name')
+    )
+
+    has_diarization = any(s.speaker_label for s in segments)
+
+    return render(request, 'videos/transcript_editor.html', {
+        'video':           video,
+        'segments':        segments,
+        'video_speakers':  video_speakers,
+        'all_speakers':    all_speakers,
+        'has_diarization': has_diarization,
+        'unread_count':    _unread_count(request),
+    })
+
+
+@login_required
 def subtitle_editor_page(request, video_id, subtitle_id):
     """Web editor for a single subtitle track — accessible to channel editors."""
     video    = get_object_or_404(Video, id=video_id)
@@ -2757,6 +2864,40 @@ def video_frames_analyze(request, video_id):
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
+@api_view(['POST'])
+@api_login_required
+def run_diarization(request, video_id):
+    """
+    POST /api/videos/<id>/diarize/
+    Triggers speaker diarization via pyannote.audio.
+    Requires HF_TOKEN to be set in server settings.
+    """
+    video = get_object_or_404(Video, id=video_id)
+    if not _is_video_owner(request.user, video):
+        return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+    hf_token = getattr(settings, 'HF_TOKEN', '')
+    if not hf_token:
+        return Response(
+            {'error': 'HF_TOKEN is not configured on this server. Add it to .env and restart Celery.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    segment_count = VideoSegment.objects.filter(video=video).count()
+    if segment_count == 0:
+        return Response(
+            {'error': 'No transcript segments found. Run Whisper auto-generate first.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        from .tasks import run_diarization_task
+        task = run_diarization_task.apply_async(args=[str(video_id)], queue='captions')
+        return Response({'task_id': task.id, 'segment_count': segment_count})
+    except Exception as exc:
+        return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
 # ─── Face Recognition API ────────────────────────────────────────────────────
 
 @api_view(['GET'])
@@ -2775,7 +2916,10 @@ def video_faces_list(request, video_id):
         .values_list('identity_id', flat=True)
         .distinct()
     )
-    identities = FaceIdentity.objects.filter(id__in=identity_ids)
+    # Tagged (user-named) first, then auto-named / “untagged” placeholders.
+    identities = FaceIdentity.objects.filter(id__in=identity_ids).order_by(
+        'is_auto_named', 'name', 'id'
+    )
     serializer = FaceIdentitySerializer(
         identities, many=True, context={'video_id': video_id}
     )
@@ -3027,6 +3171,73 @@ def face_identity_page(request, identity_id):
 
     all_groups = list(grouped.values())
 
+    # ── Full timestamps for timeline (ALL detections, not just cropped ones) ──
+    # Uses one bulk query across all videos on this page to avoid N+1.
+    from collections import defaultdict as _ts_dd
+    video_ids_in_groups = [g['video'].id for g in all_groups if g['kind'] == 'video']
+    if video_ids_in_groups:
+        _all_ts = (
+            DetectedFace.objects
+            .filter(identity=identity, video_id__in=video_ids_in_groups)
+            .values_list('video_id', 'timestamp')
+            .order_by('video_id', 'timestamp')
+        )
+        _ts_map = _ts_dd(list)
+        for _vid_id, _ts in _all_ts:
+            _ts_map[str(_vid_id)].append(_ts)
+        for g in all_groups:
+            if g['kind'] == 'video':
+                g['all_timestamps'] = _ts_map.get(str(g['video'].id), [])
+            else:
+                g['all_timestamps'] = []
+    else:
+        for g in all_groups:
+            g['all_timestamps'] = []
+
+    # ── Co-identity stacked avatars per video group ────────────────────────────
+    # For each video, fetch the OTHER named identities that also appear in it.
+    # Used to show stacked avatar circles on the video card (like GitHub contributors).
+    # One bulk query — no N+1.
+    if video_ids_in_groups:
+        _co_rows = (
+            DetectedFace.objects
+            .filter(video_id__in=video_ids_in_groups)
+            .exclude(identity=identity)
+            .exclude(identity__isnull=True)
+            .filter(identity__is_auto_named=False)
+            .select_related('identity')
+            .values('video_id', 'identity_id', 'identity__name')
+            .distinct()
+        )
+        from collections import defaultdict as _co_dd
+        _co_vid_map = _co_dd(list)
+        _seen_co = _co_dd(set)
+        for row in _co_rows:
+            vid_id = str(row['video_id'])
+            iid    = row['identity_id']
+            if iid not in _seen_co[vid_id]:
+                _seen_co[vid_id].add(iid)
+                # thumbnail comes from FaceIdentity — fetch lazily below
+                _co_vid_map[vid_id].append(iid)
+
+        # Batch fetch FaceIdentity objects for thumbnail URLs
+        all_co_ids = {iid for ids in _co_vid_map.values() for iid in ids}
+        _co_identity_map = {fi.pk: fi for fi in FaceIdentity.objects.filter(pk__in=all_co_ids)}
+
+        for g in all_groups:
+            if g['kind'] == 'video':
+                vid_id = str(g['video'].id)
+                g['co_identities'] = [
+                    _co_identity_map[iid]
+                    for iid in _co_vid_map.get(vid_id, [])[:5]
+                    if iid in _co_identity_map
+                ]
+            else:
+                g['co_identities'] = []
+    else:
+        for g in all_groups:
+            g['co_identities'] = []
+
     paginator = Paginator(all_groups, 5)
     page_obj  = paginator.get_page(request.GET.get('page', 1))
 
@@ -3053,24 +3264,83 @@ def face_identity_page(request, identity_id):
         )
         can_delete = (total_all == my_faces_cnt)
 
+    # ── Co-appearances ────────────────────────────────────────────────────────
+    # Find identities who appear in the same videos or photos as this identity,
+    # ranked by total shared sources.
+    from collections import defaultdict as _dd
+    from django.db.models import Count as _Count
+
+    my_video_ids = (
+        DetectedFace.objects.filter(identity=identity, video__isnull=False)
+        .values_list('video_id', flat=True).distinct()
+    )
+    my_photo_ids = (
+        DetectedFace.objects.filter(identity=identity, photo__isnull=False)
+        .values_list('photo_id', flat=True).distinct()
+    )
+
+    _co = _dd(lambda: {'video_count': 0, 'photo_count': 0})
+    # Only user-tagged identities (not Person #N). Counts / top-N are computed in that set
+    # so ordering stays correct. Tagging someone adds them here on the next page load — no cache.
+    _tagged_co_q = (
+        Q(identity__is_auto_named=False)
+        & ~Q(identity=identity)
+        & Q(identity__isnull=False)
+    )
+    for row in (DetectedFace.objects
+                .filter(video_id__in=my_video_ids)
+                .filter(_tagged_co_q)
+                .values('identity_id')
+                .annotate(cnt=_Count('video_id', distinct=True))):
+        _co[row['identity_id']]['video_count'] = row['cnt']
+    for row in (DetectedFace.objects
+                .filter(photo_id__in=my_photo_ids)
+                .filter(_tagged_co_q)
+                .values('identity_id')
+                .annotate(cnt=_Count('photo_id', distinct=True))):
+        _co[row['identity_id']]['photo_count'] = row['cnt']
+
+    _sorted_co = sorted(_co.items(),
+                        key=lambda x: x[1]['video_count'] + x[1]['photo_count'],
+                        reverse=True)[:20]
+    _co_id_map = {i.pk: i for i in FaceIdentity.objects.filter(
+        pk__in=[pk for pk, _ in _sorted_co],
+    )}
+    co_appearances = [
+        {
+            'identity':    _co_id_map[pk],
+            'video_count': counts['video_count'],
+            'photo_count': counts['photo_count'],
+            'total':       counts['video_count'] + counts['photo_count'],
+        }
+        for pk, counts in _sorted_co if pk in _co_id_map
+    ]
+
     # Build back URL — only trust paths that start with /faces/ to prevent open redirect
     raw_back = request.GET.get('from', '')
     from django.urls import reverse as _reverse
     back_url = raw_back if raw_back.startswith('/faces') else _reverse('faces')
+
+    _total_video_count = sum(1 for g in all_groups if g['kind'] == 'video')
+    _total_photo_count = sum(1 for g in all_groups if g['kind'] == 'photo')
+    _has_audio         = identity.speaker_identities.exists()
 
     return render(request, 'videos/face_identity.html', {
         'identity':          identity,
         'page_obj':          page_obj,
         'video_groups':      page_obj.object_list,
         'total_faces_count': total_faces_count,
-        'total_video_count': sum(1 for g in all_groups if g['kind'] == 'video'),
+        'total_video_count': _total_video_count,
+        'total_photo_count': _total_photo_count,
+        'has_audio':         _has_audio,
         'photos':            [],
-        'total_photo_count': sum(1 for g in all_groups if g['kind'] == 'photo'),
         'all_identities':    all_identities,
         'can_edit':          can_edit,
         'can_delete':        can_delete,
         'back_url':          back_url,
-        'unread_count':      _unread_count(request),
+        'co_appearances':       co_appearances,
+        'frame_interval':       getattr(settings, 'FRAME_INTERVAL_SECONDS', 5),
+        'unread_count':         _unread_count(request),
     })
 
 
@@ -3152,10 +3422,21 @@ def face_identity_rename(request, identity_id):
     name = request.data.get('name', '').strip()
     if not name:
         return Response({'error': 'name is required.'}, status=400)
+    old_name = identity.name
     identity.name = name
     identity.is_auto_named = False
     identity.save(update_fields=['name', 'is_auto_named'])
-    return Response({'id': identity.pk, 'name': identity.name})
+
+    # Cascade rename to any linked SpeakerIdentity that shared the old name.
+    # Only update speakers whose name still matches the old face name (i.e. they
+    # were auto-synced from this face, not independently named by the user).
+    synced = (
+        SpeakerIdentity.objects
+        .filter(face_identity=identity, name=old_name)
+        .update(name=name, is_auto_named=False)
+    )
+
+    return Response({'id': identity.pk, 'name': identity.name, 'speakers_synced': synced})
 
 
 @api_view(['POST'])
@@ -3244,6 +3525,91 @@ def face_identity_delete(request, identity_id):
     DetectedFace.objects.filter(identity=identity).delete()
     identity.delete()
     return Response(status=204)
+
+
+@api_view(['GET'])
+@api_login_required
+def face_identity_audio_tab(request, identity_id):
+    """
+    GET /api/faces/<id>/audio/
+    Returns videos where this FaceIdentity has a linked SpeakerIdentity that
+    appears in the video's segments. Used for the Audio tab on the face detail page.
+    Load-on-request — not included in the initial page render.
+    """
+    identity      = get_object_or_404(FaceIdentity, id=identity_id)
+    user_channels = _user_channels(request.user)
+    if not user_channels.exists():
+        return Response([])
+
+    user_channel_ids = list(user_channels.values_list('id', flat=True))
+
+    # All SpeakerIdentity rows manually linked to this face
+    speaker_identities = SpeakerIdentity.objects.filter(face_identity=identity)
+    if not speaker_identities.exists():
+        return Response({'linked_speakers': [], 'videos': []})
+
+    # Videos in user's channels that have segments from those speakers
+    video_qs = (
+        Video.objects
+        .filter(
+            segments__speaker_identity__in=speaker_identities,
+            channel_id__in=user_channel_ids,
+        )
+        .distinct()
+        .annotate(
+            seg_count=Count(
+                'segments',
+                filter=Q(segments__speaker_identity__in=speaker_identities),
+            )
+        )
+        .order_by('-created_at')
+        .only('id', 'title', 'thumbnail', 'duration')
+    )
+
+    speakers_data = [
+        {'id': s.pk, 'name': s.name, 'role': s.role}
+        for s in speaker_identities
+    ]
+    videos_data = [
+        {
+            'id':          str(v.id),
+            'title':       v.title,
+            'thumbnail':   v.thumbnail.url if v.thumbnail else None,
+            'duration':    v.duration,
+            'seg_count':   v.seg_count,
+            'watch_url':   f'/watch/{v.id}/',
+        }
+        for v in video_qs
+    ]
+    return Response({'linked_speakers': speakers_data, 'videos': videos_data})
+
+
+@api_view(['POST'])
+@api_login_required
+def segment_set_speaker(request, segment_id):
+    """
+    POST /api/segments/<id>/set-speaker/
+    Body: {"speaker_identity_id": 4}  — or null to clear
+    Lets the user correct which speaker pyannote assigned to a segment.
+    Only the channel owner/editor can call this.
+    """
+    seg = get_object_or_404(VideoSegment, id=segment_id)
+    user_channels = _user_channels(request.user)
+    if not user_channels.filter(id=seg.video.channel_id).exists():
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    si_id = request.data.get('speaker_identity_id')
+    if si_id is None:
+        seg.speaker_identity = None
+        seg.speaker_label    = ''
+        seg.save(update_fields=['speaker_identity', 'speaker_label'])
+        return Response({'ok': True, 'speaker_identity_id': None})
+
+    si = get_object_or_404(SpeakerIdentity, id=si_id)
+    seg.speaker_identity = si
+    seg.speaker_label    = si.name   # keep label in sync for display
+    seg.save(update_fields=['speaker_identity', 'speaker_label'])
+    return Response({'ok': True, 'speaker_identity_id': si.pk, 'speaker_name': si.name})
 
 
 # ─── End Screens API ─────────────────────────────────────────────────────────
@@ -4150,3 +4516,322 @@ def album_photos(request, album_id):
             photo_count=AlbumPhoto.objects.filter(album=album).count()
         )
         return Response({'ok': True})
+
+
+# ─── Speaker Identity Pages ───────────────────────────────────────────────────
+
+@login_required
+def speakers_page(request):
+    """
+    GET /speakers/
+    Lists SpeakerIdentity rows that have segments in the current user's channel videos.
+    """
+    user_channels = _user_channels(request.user)
+    has_channel   = user_channels.exists()
+
+    q            = request.GET.get('q', '').strip()
+    active_filter = request.GET.get('filter', 'all')
+
+    if has_channel:
+        user_channel_ids = list(user_channels.values_list('id', flat=True))
+        # Speakers visible to this user = those whose segments appear in their videos
+        qs = (
+            SpeakerIdentity.objects
+            .filter(segments__video__channel_id__in=user_channel_ids)
+            .distinct()
+            .annotate(
+                video_count=Count(
+                    'segments__video',
+                    filter=Q(segments__video__channel_id__in=user_channel_ids),
+                    distinct=True,
+                ),
+                segment_count=Count(
+                    'segments',
+                    filter=Q(segments__video__channel_id__in=user_channel_ids),
+                ),
+            )
+            .order_by('name')
+        )
+        if q:
+            qs = qs.filter(name__icontains=q)
+        if active_filter == 'named':
+            qs = qs.filter(is_auto_named=False)
+        elif active_filter == 'auto':
+            qs = qs.filter(is_auto_named=True)
+        elif active_filter == 'narrator':
+            qs = qs.filter(role=SpeakerIdentity.ROLE_NARRATOR)
+        elif active_filter == 'background':
+            qs = qs.filter(role=SpeakerIdentity.ROLE_BACKGROUND)
+    else:
+        qs = SpeakerIdentity.objects.none()
+
+    total_all        = qs.filter(is_auto_named=False).count() + qs.filter(is_auto_named=True).count() if has_channel else 0
+    total_named      = qs.filter(is_auto_named=False).count() if has_channel else 0
+    total_auto       = qs.filter(is_auto_named=True).count() if has_channel else 0
+    total_narrator   = qs.filter(role=SpeakerIdentity.ROLE_NARRATOR).count() if has_channel else 0
+    total_background = qs.filter(role=SpeakerIdentity.ROLE_BACKGROUND).count() if has_channel else 0
+
+    # Re-evaluate after filter (for pagination — qs already filtered above)
+    from django.core.paginator import Paginator
+    paginator = Paginator(list(qs), 30)
+    page_obj  = paginator.get_page(request.GET.get('page', 1))
+
+    return render(request, 'videos/speakers.html', {
+        'speakers':       page_obj,
+        'page_obj':       page_obj,
+        'total_all':      total_all,
+        'total_named':    total_named,
+        'total_auto':     total_auto,
+        'total_narrator': total_narrator,
+        'total_background': total_background,
+        'active_filter':  active_filter,
+        'search_query':   q,
+        'has_channel':    has_channel,
+        'unread_count':   _unread_count(request),
+    })
+
+
+@login_required
+def speaker_identity_page(request, speaker_id):
+    """
+    GET /speakers/<id>/
+    Detail page for a SpeakerIdentity: per-video segment count, timeline, rename/merge/delete UI.
+    """
+    speaker       = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    user_channels = _user_channels(request.user)
+
+    # Gather videos this speaker appears in (current user's channels only)
+    user_channel_ids = list(user_channels.values_list('id', flat=True))
+    videos_qs = (
+        Video.objects
+        .filter(
+            segments__speaker_identity=speaker,
+            channel_id__in=user_channel_ids,
+        )
+        .distinct()
+        .order_by('-created_at')
+        .only('id', 'title', 'thumbnail', 'duration', 'views_count', 'channel_id')
+    )
+
+    # Per-video segment list and timeline data
+    video_groups = []
+    for vid in videos_qs:
+        segs = (
+            VideoSegment.objects
+            .filter(video=vid, speaker_identity=speaker)
+            .order_by('start_seconds')
+            .values('start_seconds', 'end_seconds', 'text')
+        )
+        video_groups.append({
+            'video':    vid,
+            'segments': list(segs),
+        })
+
+    # Face identity list for link-face dropdown
+    face_identities = []
+    if user_channel_ids:
+        fi_ids = (
+            DetectedFace.objects
+            .filter(Q(video__channel_id__in=user_channel_ids) | Q(photo__channel_id__in=user_channel_ids))
+            .values_list('identity_id', flat=True)
+            .distinct()
+        )
+        face_identities = (
+            FaceIdentity.objects
+            .filter(id__in=fi_ids, is_auto_named=False)
+            .order_by('name')
+            .only('id', 'name', 'is_auto_named')
+        )
+
+    # All speakers for merge dropdown (exclude self)
+    all_speakers = (
+        SpeakerIdentity.objects
+        .filter(segments__video__channel_id__in=user_channel_ids)
+        .distinct()
+        .exclude(id=speaker_id)
+        .order_by('name')
+    )
+
+    return render(request, 'videos/speaker_identity.html', {
+        'speaker':         speaker,
+        'video_groups':    video_groups,
+        'face_identities': face_identities,
+        'all_speakers':    all_speakers,
+        'unread_count':    _unread_count(request),
+    })
+
+
+# ─── Speaker Identity API ─────────────────────────────────────────────────────
+
+@api_view(['POST', 'PATCH'])
+@api_login_required
+def speaker_rename(request, speaker_id):
+    """
+    POST /api/speakers/<id>/rename/
+    Body: {"name": "Alice"}
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    name    = request.data.get('name', '').strip()
+    if not name:
+        return Response({'error': 'name is required.'}, status=400)
+    speaker.name          = name
+    speaker.is_auto_named = False
+    speaker.save(update_fields=['name', 'is_auto_named'])
+    return Response({'id': speaker.pk, 'name': speaker.name})
+
+
+@api_view(['POST'])
+@api_login_required
+def speaker_set_role(request, speaker_id):
+    """
+    POST /api/speakers/<id>/set-role/
+    Body: {"role": "narrator"} — one of speaker/narrator/background
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    role    = request.data.get('role', '').strip()
+    valid   = {SpeakerIdentity.ROLE_SPEAKER, SpeakerIdentity.ROLE_NARRATOR, SpeakerIdentity.ROLE_BACKGROUND}
+    if role not in valid:
+        return Response({'error': f'role must be one of {sorted(valid)}.'}, status=400)
+    speaker.role = role
+    speaker.save(update_fields=['role'])
+    return Response({'id': speaker.pk, 'role': speaker.role})
+
+
+@api_view(['POST'])
+@api_login_required
+def speaker_link_face(request, speaker_id):
+    """
+    POST /api/speakers/<id>/link-face/
+    Body: {"face_identity_id": 42}  or  {"face_identity_id": null} to unlink
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    fi_id   = request.data.get('face_identity_id')
+    if fi_id is None:
+        speaker.face_identity = None
+        speaker.save(update_fields=['face_identity'])
+        return Response({'id': speaker.pk, 'face_identity_id': None})
+    fi = get_object_or_404(FaceIdentity, id=fi_id)
+    speaker.face_identity = fi
+    update_fields = ['face_identity']
+    # If the speaker is still auto-named, adopt the face identity's name
+    renamed = False
+    if speaker.is_auto_named and not fi.is_auto_named:
+        speaker.name          = fi.name
+        speaker.is_auto_named = False
+        update_fields += ['name', 'is_auto_named']
+        renamed = True
+    speaker.save(update_fields=update_fields)
+    return Response({
+        'id':               speaker.pk,
+        'face_identity_id': fi.pk,
+        'face_identity_name': fi.name,
+        'renamed':          renamed,
+        'new_name':         speaker.name,
+    })
+
+
+@api_view(['POST'])
+@api_login_required
+def speaker_merge(request, speaker_id):
+    """
+    POST /api/speakers/<id>/merge/
+    Body: {"into_id": 7}
+    Moves all segments from speaker_id → into_id, then deletes speaker_id.
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    into_id = request.data.get('into_id')
+    if not into_id:
+        return Response({'error': 'into_id is required.'}, status=400)
+    if int(into_id) == speaker_id:
+        return Response({'error': 'Cannot merge a speaker into itself.'}, status=400)
+    target = get_object_or_404(SpeakerIdentity, id=into_id)
+    moved  = VideoSegment.objects.filter(speaker_identity=speaker).update(speaker_identity=target)
+
+    # Recalculate embedding: weighted average by segment count so the identity
+    # with more data contributes proportionally more to the merged embedding.
+    if speaker.speaker_embedding is not None or target.speaker_embedding is not None:
+        import numpy as np
+        src_count = moved                               # segments being merged in
+        tgt_count = VideoSegment.objects.filter(speaker_identity=target).count()
+        total     = src_count + tgt_count
+        if total > 0 and speaker.speaker_embedding is not None and target.speaker_embedding is not None:
+            src_emb = np.array(speaker.speaker_embedding)
+            tgt_emb = np.array(target.speaker_embedding)
+            merged  = (src_emb * src_count + tgt_emb * tgt_count) / total
+            norm    = np.linalg.norm(merged)
+            if norm > 0:
+                target.speaker_embedding = (merged / norm).tolist()
+        elif target.speaker_embedding is None and speaker.speaker_embedding is not None:
+            target.speaker_embedding = speaker.speaker_embedding
+        target.save(update_fields=['speaker_embedding'])
+
+    speaker.delete()
+    return Response({'ok': True, 'moved_segments': moved, 'into': {'id': target.pk, 'name': target.name}})
+
+
+@api_view(['DELETE'])
+@api_login_required
+def speaker_delete(request, speaker_id):
+    """
+    DELETE /api/speakers/<id>/delete/
+    Unlinks segments (sets speaker_identity=NULL) then deletes the identity.
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    VideoSegment.objects.filter(speaker_identity=speaker).update(speaker_identity=None)
+    speaker.delete()
+    return Response(status=204)
+
+
+@api_view(['GET'])
+@api_login_required
+def speaker_list_api(request):
+    """
+    GET /api/speakers/list/
+    Returns all SpeakerIdentity rows visible to the current user (for merge dropdown).
+    """
+    user_channels = _user_channels(request.user)
+    if not user_channels.exists():
+        return Response([])
+    user_channel_ids = list(user_channels.values_list('id', flat=True))
+    speakers = (
+        SpeakerIdentity.objects
+        .filter(segments__video__channel_id__in=user_channel_ids)
+        .distinct()
+        .order_by('name')
+    )
+    return Response([
+        {'id': s.pk, 'name': s.name, 'role': s.role, 'is_auto': s.is_auto_named}
+        for s in speakers
+    ])
+
+
+@api_view(['GET'])
+def video_speakers_list(request, video_id):
+    """
+    GET /api/videos/<id>/speakers/
+    Returns SpeakerIdentity rows that appear in this video's segments.
+    Public endpoint (no login required) — used by watch page.
+    """
+    video = get_object_or_404(Video, id=video_id)
+    speakers = (
+        SpeakerIdentity.objects
+        .filter(segments__video=video)
+        .distinct()
+        .annotate(
+            segment_count=Count('segments', filter=Q(segments__video=video))
+        )
+        .order_by('name')
+        .select_related('face_identity')
+    )
+    data = []
+    for s in speakers:
+        data.append({
+            'id':            s.pk,
+            'name':          s.name,
+            'role':          s.role,
+            'is_auto':       s.is_auto_named,
+            'segment_count': s.segment_count,
+            'face_name':     s.face_identity.name if s.face_identity else None,
+            'face_thumbnail': s.face_identity.thumbnail_url if s.face_identity else None,
+        })
+    return Response(data)

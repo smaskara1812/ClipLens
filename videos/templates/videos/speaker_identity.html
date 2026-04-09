@@ -1,0 +1,615 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}{{ speaker.name }} — Speakers — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .spk-layout {
+    max-width: 960px; margin: 0 auto;
+    padding: 32px 24px 60px;
+  }
+
+  /* ── Breadcrumb ── */
+  .spk-breadcrumb {
+    font-size: 12px; color: var(--text-muted); margin-bottom: 20px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .spk-breadcrumb a { color: var(--text-muted); text-decoration: none; }
+  .spk-breadcrumb a:hover { color: var(--accent); }
+
+  /* ── Speaker hero ── */
+  .spk-hero {
+    display: flex; align-items: flex-start; gap: 24px;
+    margin-bottom: 32px; flex-wrap: wrap;
+  }
+  .spk-avatar {
+    width: 96px; height: 96px; border-radius: 50%;
+    background: var(--surface-3); overflow: hidden; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; font-weight: 800; color: var(--text-muted);
+    border: 2px solid var(--border);
+  }
+  .spk-avatar img { width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+  .spk-info { flex: 1; min-width: 0; }
+  .spk-name {
+    font-size: 24px; font-weight: 800; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .spk-role-pill {
+    font-size: 11px; font-weight: 700; padding: 3px 9px;
+    border-radius: 99px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .spk-role-pill.speaker    { background: var(--accent); color: #fff; }
+  .spk-role-pill.narrator   { background: var(--green); color: #fff; }
+  .spk-role-pill.background { background: var(--surface-3); color: var(--text-muted); }
+  .spk-auto-pill {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 4px; background: var(--surface-3); color: var(--text-muted);
+  }
+  .spk-meta { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }
+
+  /* Action buttons */
+  .spk-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .spk-btn {
+    padding: 7px 16px; border-radius: var(--radius-sm);
+    font-size: 12px; font-weight: 600; cursor: pointer; border: none;
+    transition: opacity .15s; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .spk-btn:hover { opacity: .82; }
+  .spk-btn.primary { background: var(--accent); color: #fff; }
+  .spk-btn.ghost   { background: var(--surface-3); color: var(--text); border: 1px solid var(--border); }
+  .spk-btn.danger  { background: transparent; color: var(--red); border: 1px solid var(--red); }
+  .spk-btn svg     { width: 13px; height: 13px; }
+
+  /* Face link badge */
+  .face-link-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    background: var(--green-bg); color: var(--green);
+    font-size: 12px; font-weight: 600; margin-top: 8px;
+    border: 1px solid var(--green);
+  }
+
+  /* ── Section headers ── */
+  .spk-section-title {
+    font-size: 15px; font-weight: 700; margin-bottom: 14px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Video group ── */
+  .video-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 18px; overflow: hidden;
+  }
+  .video-group-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; cursor: pointer;
+    transition: background .12s;
+  }
+  .video-group-header:hover { background: var(--surface-2); }
+  .vg-thumb {
+    width: 80px; height: 48px; border-radius: 4px;
+    background: var(--surface-3); object-fit: cover; flex-shrink: 0;
+  }
+  .vg-title { font-size: 13px; font-weight: 700; flex: 1; min-width: 0; }
+  .vg-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .vg-toggle { color: var(--text-muted); transition: transform .2s; }
+  .vg-toggle.open { transform: rotate(180deg); }
+
+  /* Segment timeline bar */
+  .seg-timeline-wrap {
+    padding: 10px 16px 4px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .seg-timeline-label {
+    font-size: 10px; color: var(--text-muted); margin-bottom: 5px;
+    display: flex; justify-content: space-between;
+  }
+  .seg-timeline {
+    position: relative; height: 16px; background: var(--surface-3);
+    border-radius: 3px; overflow: visible; cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .seg-span {
+    position: absolute; top: 0; height: 100%;
+    background: var(--accent); opacity: .85;
+    border-radius: 2px; transition: opacity .12s;
+  }
+  .seg-span:hover { opacity: 1; }
+  .seg-timeline-cursor {
+    position: absolute; top: -4px; bottom: -4px;
+    width: 1px; background: var(--text); pointer-events: none;
+    display: none;
+  }
+  .seg-timeline-tooltip {
+    position: absolute; bottom: 22px;
+    background: rgba(0,0,0,.8); color: #fff;
+    font-size: 10px; font-weight: 600; padding: 2px 5px;
+    border-radius: 3px; pointer-events: none; display: none;
+    transform: translateX(-50%); white-space: nowrap;
+  }
+
+  /* Segments list */
+  .seg-list {
+    display: none; border-top: 1px solid var(--border);
+  }
+  .seg-list.open { display: block; }
+  .seg-item {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .seg-item:last-child { border-bottom: none; }
+  .seg-time {
+    flex-shrink: 0; color: var(--accent); font-weight: 600;
+    font-size: 11px; font-family: monospace; padding-top: 1px;
+    cursor: pointer; text-decoration: none;
+  }
+  .seg-time:hover { text-decoration: underline; }
+  .seg-text { color: var(--text); line-height: 1.5; flex: 1; }
+
+  /* ── Modals ── */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.5); z-index: 500;
+    align-items: center; justify-content: center;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-box {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius); padding: 24px 28px;
+    width: 400px; max-width: calc(100vw - 32px);
+    box-shadow: 0 8px 32px rgba(0,0,0,.25);
+  }
+  .modal-title  { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .modal-label  { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .modal-note   { font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }
+  .modal-input {
+    width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; outline: none;
+    transition: border-color .15s; box-sizing: border-box;
+  }
+  .modal-input:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal-btn {
+    padding: 8px 18px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: opacity .15s;
+  }
+  .modal-btn:hover { opacity: .85; }
+  .modal-btn.primary { background: var(--accent); color: #fff; }
+  .modal-btn.ghost   { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
+  .modal-btn.danger  { background: var(--red); color: #fff; }
+
+  /* Role selector */
+  .role-selector { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .role-opt {
+    padding: 6px 14px; border-radius: var(--radius-sm);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    border: 2px solid var(--border); background: var(--surface-2);
+    color: var(--text-muted); transition: all .12s;
+  }
+  .role-opt.selected { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .role-opt:hover { border-color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="spk-layout">
+
+  <!-- Breadcrumb -->
+  <div class="spk-breadcrumb">
+    <a href="{% url 'speakers' %}">Speakers</a>
+    <span>›</span>
+    <span>{{ speaker.name }}</span>
+  </div>
+
+  <!-- Hero -->
+  <div class="spk-hero">
+    <div class="spk-avatar">
+      {% if speaker.face_identity and speaker.face_identity.thumbnail_url %}
+        <img src="{{ speaker.face_identity.thumbnail_url }}" alt="{{ speaker.name }}" />
+      {% else %}
+        {{ speaker.name|slice:":1"|upper }}
+      {% endif %}
+    </div>
+    <div class="spk-info">
+      <div class="spk-name">
+        {{ speaker.name }}
+        <span class="spk-role-pill {{ speaker.role }}">{{ speaker.get_role_display }}</span>
+        {% if speaker.is_auto_named %}<span class="spk-auto-pill">Auto-named</span>{% endif %}
+      </div>
+      <div class="spk-meta">
+        {{ video_groups|length }} video{{ video_groups|length|pluralize }} · speaker label: <code style="font-size:11px;background:var(--surface-3);padding:1px 5px;border-radius:3px;">SPEAKER_{{ speaker.id }}</code>
+      </div>
+      {% if speaker.face_identity %}
+      <div class="face-link-badge">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/></svg>
+        Linked to <a href="{% url 'face_identity' speaker.face_identity.id %}" style="color:var(--green);text-decoration:underline;">{{ speaker.face_identity.name }}</a>
+      </div>
+      {% endif %}
+      <div class="spk-actions">
+        <button class="spk-btn primary" onclick="openRenameModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Rename
+        </button>
+        <button class="spk-btn ghost" onclick="openRoleModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+          Set Role
+        </button>
+        <button class="spk-btn ghost" onclick="openLinkFaceModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/></svg>
+          Link Face
+        </button>
+        <button class="spk-btn ghost" onclick="openMergeModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3m-1-4-3 3m0 0-3-3m3 3V3"/></svg>
+          Merge into…
+        </button>
+        <button class="spk-btn danger" onclick="openDeleteModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Video appearance groups -->
+  {% if video_groups %}
+  <div class="spk-section-title">Appears in {{ video_groups|length }} video{{ video_groups|length|pluralize }}</div>
+
+  {% for grp in video_groups %}
+  <div class="video-group" id="vgrp-{{ forloop.counter }}">
+    <!-- Header: click toggles segment list -->
+    <div class="video-group-header" onclick="toggleGroup({{ forloop.counter }})">
+      {% if grp.video.thumbnail %}
+      <img class="vg-thumb" src="{{ grp.video.thumbnail.url }}" alt="" loading="lazy" />
+      {% else %}
+      <div class="vg-thumb" style="display:flex;align-items:center;justify-content:center;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-subtle)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 8 16 11 10 14 10 8"/></svg>
+      </div>
+      {% endif %}
+      <div style="flex:1;min-width:0;">
+        <div class="vg-title">{{ grp.video.title }}</div>
+        <div class="vg-meta">{{ grp.segments|length }} segment{{ grp.segments|length|pluralize }}{% if grp.video.duration %} · {{ grp.video.duration|floatformat:0 }}s total{% endif %}</div>
+      </div>
+      <a href="{% url 'watch' grp.video.id %}" onclick="event.stopPropagation()" style="font-size:11px;color:var(--accent);text-decoration:none;flex-shrink:0;padding:4px 8px;border-radius:4px;background:var(--accent-soft);font-weight:600;">Watch</a>
+      <svg class="vg-toggle" id="vgtog-{{ forloop.counter }}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+
+    <!-- Timeline bar -->
+    {% if grp.segments %}
+    <div class="seg-timeline-wrap">
+      <div class="seg-timeline-label">
+        <span>0:00</span>
+        <span id="vtl-dur-{{ grp.video.id|slugify }}">{% if grp.video.duration %}{{ grp.video.duration|floatformat:0 }}s{% endif %}</span>
+      </div>
+      <div class="seg-timeline"
+           id="vtl-{{ grp.video.id|slugify }}"
+           data-video-id="{{ grp.video.id }}"
+           data-duration="{{ grp.video.duration|default:0 }}"
+           data-segments="[{% for s in grp.segments %}[{{ s.start_seconds|default:0 }},{{ s.end_seconds|default:0 }}]{% if not forloop.last %},{% endif %}{% endfor %}]">
+        <div class="seg-timeline-cursor" id="vtl-cur-{{ grp.video.id|slugify }}"></div>
+        <div class="seg-timeline-tooltip" id="vtl-tip-{{ grp.video.id|slugify }}"></div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Segment list (collapsed by default) -->
+    <div class="seg-list" id="vseg-{{ forloop.counter }}">
+      {% for s in grp.segments %}
+      <div class="seg-item">
+        <a class="seg-time" href="{% url 'watch' grp.video.id %}?t={{ s.start_seconds|floatformat:0 }}">
+          {% with t=s.start_seconds|floatformat:0|add:0 %}
+          {{ s.start_seconds|floatformat:0 }}s
+          {% endwith %}
+        </a>
+        <div class="seg-text">{{ s.text|default:"—" }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  {% else %}
+  <div style="text-align:center;padding:40px 20px;color:var(--text-muted);font-size:13px;">
+    No segments linked to this speaker yet. Run speaker diarization on a video to populate this.
+  </div>
+  {% endif %}
+
+</div><!-- /.spk-layout -->
+
+
+<!-- ── Rename modal ── -->
+<div class="modal-backdrop" id="renameModal">
+  <div class="modal-box">
+    <div class="modal-title">Rename Speaker</div>
+    <div class="modal-label">New name</div>
+    <input class="modal-input" id="renameInput" type="text" value="{{ speaker.name }}" />
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('renameModal')">Cancel</button>
+      <button class="modal-btn primary" onclick="submitRename()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Role modal ── -->
+<div class="modal-backdrop" id="roleModal">
+  <div class="modal-box">
+    <div class="modal-title">Set Role</div>
+    <div class="modal-label">Select this speaker's role</div>
+    <div class="role-selector">
+      <button class="role-opt {% if speaker.role == 'speaker' %}selected{% endif %}" data-role="speaker" onclick="selectRole(this)">Speaker</button>
+      <button class="role-opt {% if speaker.role == 'narrator' %}selected{% endif %}" data-role="narrator" onclick="selectRole(this)">Narrator</button>
+      <button class="role-opt {% if speaker.role == 'background' %}selected{% endif %}" data-role="background" onclick="selectRole(this)">Background</button>
+    </div>
+    <p class="modal-note">
+      <strong>Speaker</strong> — an active participant in conversation.<br>
+      <strong>Narrator</strong> — voice-over or narration (long uninterrupted speech).<br>
+      <strong>Background</strong> — minimal/incidental speech (short total duration).
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('roleModal')">Cancel</button>
+      <button class="modal-btn primary" onclick="submitRole()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Link Face modal ── -->
+<div class="modal-backdrop" id="linkFaceModal">
+  <div class="modal-box">
+    <div class="modal-title">Link to Face Identity</div>
+    <div class="modal-label">Select the person this voice belongs to</div>
+    <select class="modal-input" id="linkFaceSelect" style="cursor:pointer;">
+      <option value="">— none / unlink —</option>
+      {% for fi in face_identities %}
+      <option value="{{ fi.id }}" {% if speaker.face_identity_id == fi.id %}selected{% endif %}>
+        {{ fi.name }}{% if fi.is_auto_named %} (auto){% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <p class="modal-note">Linking voice to a face lets you cross-reference who is speaking visually. This is a manual assertion — it does not auto-confirm face crops.</p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('linkFaceModal')">Cancel</button>
+      <button class="modal-btn primary" onclick="submitLinkFace()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Merge modal ── -->
+<div class="modal-backdrop" id="mergeModal">
+  <div class="modal-box">
+    <div class="modal-title">Merge into another speaker</div>
+    <div class="modal-label">{{ speaker.name }} will be merged into:</div>
+    <select class="modal-input" id="mergeSelect" style="cursor:pointer;">
+      {% for s in all_speakers %}
+      <option value="{{ s.id }}">{{ s.name }} ({{ s.get_role_display }})</option>
+      {% endfor %}
+    </select>
+    <p class="modal-note">All segments will be re-assigned to the selected speaker and this entry will be deleted.</p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('mergeModal')">Cancel</button>
+      <button class="modal-btn primary" onclick="submitMerge()">Merge</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Delete modal ── -->
+<div class="modal-backdrop" id="deleteModal">
+  <div class="modal-box">
+    <div class="modal-title">Delete speaker?</div>
+    <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">
+      This will permanently delete <strong>{{ speaker.name }}</strong> and unlink all {{ video_groups|length }} video segment group{{ video_groups|length|pluralize }}. This cannot be undone.
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('deleteModal')">Cancel</button>
+      <button class="modal-btn danger" onclick="submitDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const CSRF      = '{{ csrf_token }}';
+const SPEAKER_ID = {{ speaker.id }};
+
+// ── Toggle segment list ──────────────────────────────────────────────────────
+function toggleGroup(n) {
+  const list = document.getElementById('vseg-' + n);
+  const tog  = document.getElementById('vgtog-' + n);
+  list.classList.toggle('open');
+  tog.classList.toggle('open');
+}
+
+// ── Timeline bars ────────────────────────────────────────────────────────────
+document.querySelectorAll('.seg-timeline').forEach(el => {
+  const videoId  = el.dataset.videoId;
+  const duration = parseFloat(el.dataset.duration) || 0;
+  if (!duration) return;
+  const segs = JSON.parse(el.dataset.segments || '[]');
+  const slug  = videoId.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+  // Draw spans
+  segs.forEach(([s, e]) => {
+    const span = document.createElement('div');
+    span.className = 'seg-span';
+    span.style.left  = (s / duration * 100) + '%';
+    span.style.width = Math.max(((e - s) / duration * 100), 0.5) + '%';
+    span.title = `${fmtTime(s)} – ${fmtTime(e)}`;
+    el.appendChild(span);
+  });
+
+  const cursor  = el.querySelector('.seg-timeline-cursor');
+  const tooltip = el.querySelector('.seg-timeline-tooltip');
+
+  el.addEventListener('mousemove', evt => {
+    const rect = el.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (evt.clientX - rect.left) / rect.width));
+    const t    = pct * duration;
+    cursor.style.left  = (pct * 100) + '%';
+    cursor.style.display = 'block';
+    tooltip.style.left   = (pct * 100) + '%';
+    tooltip.textContent  = fmtTime(t);
+    tooltip.style.display = 'block';
+  });
+  el.addEventListener('mouseleave', () => {
+    cursor.style.display = tooltip.style.display = 'none';
+  });
+  el.addEventListener('click', evt => {
+    const rect = el.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (evt.clientX - rect.left) / rect.width));
+    const t    = Math.round(pct * duration);
+    window.location.href = `/watch/${videoId}/?t=${t}`;
+  });
+});
+
+function fmtTime(s) {
+  s = Math.round(s);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+// ── Modals ───────────────────────────────────────────────────────────────────
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+
+['renameModal','roleModal','linkFaceModal','mergeModal','deleteModal'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', function(e) { if (e.target === this) closeModal(id); });
+});
+
+// ── Rename ───────────────────────────────────────────────────────────────────
+function openRenameModal() { openModal('renameModal'); setTimeout(() => document.getElementById('renameInput').select(), 50); }
+async function submitRename() {
+  const name = document.getElementById('renameInput').value.trim();
+  if (!name) return;
+  const btn = document.querySelector('#renameModal .modal-btn.primary');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${SPEAKER_ID}/rename/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Error');
+    document.querySelector('.spk-name').firstChild.textContent = name + ' ';
+    closeModal('renameModal');
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Save'; btn.disabled = false; }
+}
+document.getElementById('renameInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitRename();
+  if (e.key === 'Escape') closeModal('renameModal');
+});
+
+// ── Role ─────────────────────────────────────────────────────────────────────
+function openRoleModal() { openModal('roleModal'); }
+function selectRole(btn) {
+  document.querySelectorAll('.role-opt').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+}
+async function submitRole() {
+  const sel = document.querySelector('.role-opt.selected');
+  if (!sel) return;
+  const role = sel.dataset.role;
+  const btn = document.querySelector('#roleModal .modal-btn.primary');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${SPEAKER_ID}/set-role/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ role }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Error');
+    // Update pill in page
+    const pill = document.querySelector('.spk-role-pill');
+    if (pill) {
+      pill.className = `spk-role-pill ${role}`;
+      pill.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+    }
+    closeModal('roleModal');
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Save'; btn.disabled = false; }
+}
+
+// ── Link Face ─────────────────────────────────────────────────────────────────
+function openLinkFaceModal() { openModal('linkFaceModal'); }
+async function submitLinkFace() {
+  const val    = document.getElementById('linkFaceSelect').value;
+  const fi_id  = val ? parseInt(val) : null;
+  const btn = document.querySelector('#linkFaceModal .modal-btn.primary');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${SPEAKER_ID}/link-face/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ face_identity_id: fi_id }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error');
+    closeModal('linkFaceModal');
+    // If speaker was auto-named and got renamed to match the face, update the heading
+    if (data.renamed && data.new_name) {
+      const nameEl = document.querySelector('.spk-name');
+      if (nameEl) {
+        // First text node is the name — replace it
+        for (const node of nameEl.childNodes) {
+          if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+            node.textContent = data.new_name + ' ';
+            break;
+          }
+        }
+      }
+      // Remove auto-named pill if present
+      const autoPill = document.querySelector('.spk-auto-pill');
+      if (autoPill) autoPill.remove();
+    }
+    location.reload();
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Save'; btn.disabled = false; }
+}
+
+// ── Merge ─────────────────────────────────────────────────────────────────────
+function openMergeModal() {
+  {% if all_speakers %}
+  openModal('mergeModal');
+  {% else %}
+  alert('No other speakers to merge into.');
+  {% endif %}
+}
+async function submitMerge() {
+  const into_id = parseInt(document.getElementById('mergeSelect').value);
+  const btn = document.querySelector('#mergeModal .modal-btn.primary');
+  btn.textContent = 'Merging…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${SPEAKER_ID}/merge/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ into_id }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Error');
+    window.location.href = '{% url "speakers" %}';
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Merge'; btn.disabled = false; }
+}
+
+// ── Delete ─────────────────────────────────────────────────────────────────────
+function openDeleteModal() { openModal('deleteModal'); }
+async function submitDelete() {
+  const btn = document.querySelector('#deleteModal .modal-btn.danger');
+  btn.textContent = 'Deleting…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${SPEAKER_ID}/delete/`, {
+      method: 'DELETE', headers: { 'X-CSRFToken': CSRF },
+    });
+    if (!res.ok && res.status !== 204) throw new Error('Error deleting');
+    window.location.href = '{% url "speakers" %}';
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Delete'; btn.disabled = false; }
+}
+</script>
+{% endblock %}

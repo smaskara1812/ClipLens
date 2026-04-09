@@ -18,9 +18,6 @@ pgvector==0.4.2
 #mssql-django==1.4
 #pyodbc==5.1.0
 
-# Production WSGI server (replaces runserver on Linux)
-gunicorn==23.0.0
-
 # Development tools
 django-debug-toolbar==4.4.6
 
@@ -39,4 +36,7 @@ ultralytics==8.4.33
 insightface==0.7.3
 onnxruntime==1.24.4
 opencv-python==4.13.0.92
-gunicorn==23.0.0
+
+# Speaker diarization (optional — only needed if using the "Run Diarization" feature)
+# Also requires: HF_TOKEN in .env + accepting terms at https://hf.co/pyannote/speaker-diarization-3.1
+pyannote.audio==3.3.2

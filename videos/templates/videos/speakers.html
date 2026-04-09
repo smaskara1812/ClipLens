@@ -1,0 +1,512 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Speakers — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .speakers-layout {
+    max-width: 1100px; margin: 0 auto;
+    padding: 32px 24px 60px;
+  }
+
+  /* ── Header ── */
+  .speakers-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px; gap: 16px; flex-wrap: wrap;
+  }
+  .speakers-title { font-size: 22px; font-weight: 800; }
+  .speakers-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+
+  /* ── Tabs ── */
+  .speakers-tabs {
+    display: flex; gap: 4px; border-bottom: 1px solid var(--border);
+    margin-bottom: 24px; flex-wrap: wrap;
+  }
+  .stab {
+    padding: 8px 14px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer; border: none;
+    background: none; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s, border-color .15s;
+    text-decoration: none;
+  }
+  .stab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .stab .sc {
+    display: inline-block; background: var(--surface-3);
+    border-radius: 10px; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; margin-left: 5px; color: var(--text-muted);
+  }
+  .stab.active .sc { background: var(--accent-soft); color: var(--accent); }
+
+  /* ── Speaker grid ── */
+  .speaker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+  }
+
+  /* ── Speaker card ── */
+  .speaker-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: visible;
+    transition: border-color .15s, transform .15s;
+    color: var(--text);
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+  .speaker-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+
+  .speaker-card-link {
+    display: block; text-decoration: none; color: inherit;
+    overflow: hidden; border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .speaker-card-avatar {
+    aspect-ratio: 1/1; background: var(--surface-3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; font-weight: 800; color: var(--text-muted);
+    position: relative; overflow: hidden;
+  }
+  .speaker-card-avatar img {
+    width: 100%; height: 100%; object-fit: cover; object-position: center top;
+  }
+  .speaker-card-avatar .avatar-initials {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; font-weight: 800;
+    background: linear-gradient(135deg, var(--surface-3), var(--surface-2));
+    color: var(--text-muted);
+  }
+
+  /* Role badge */
+  .role-badge {
+    position: absolute; top: 7px; right: 7px;
+    font-size: 10px; font-weight: 700; padding: 2px 7px;
+    border-radius: 99px; text-transform: uppercase;
+  }
+  .role-badge.speaker    { background: var(--accent); color: #fff; }
+  .role-badge.narrator   { background: var(--green); color: #fff; }
+  .role-badge.background { background: var(--surface-3); color: var(--text-muted); }
+  .role-badge.auto       { background: var(--surface-3); color: var(--text-muted); }
+
+  .speaker-card-body { padding: 10px 12px 12px; }
+  .speaker-card-name-row { display: flex; align-items: center; gap: 6px; }
+  .speaker-card-name {
+    font-size: 13px; font-weight: 700; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    flex: 1; min-width: 0;
+  }
+  .card-menu-btn {
+    flex-shrink: 0; background: none; border: none; cursor: pointer;
+    color: var(--text-muted); padding: 2px 4px;
+    border-radius: 4px; line-height: 1;
+    transition: background .12s, color .12s;
+  }
+  .card-menu-btn:hover { background: var(--surface-3); color: var(--text); }
+
+  .speaker-card-meta {
+    font-size: 11px; color: var(--text-muted); margin-top: 4px;
+    display: flex; gap: 6px; align-items: center;
+  }
+
+  /* Face-linked badge */
+  .face-linked-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600; padding: 2px 6px;
+    border-radius: 4px; margin-top: 5px;
+    background: var(--green-bg); color: var(--green);
+  }
+
+  /* ── Dropdown portal ── */
+  #speakerDropdownPortal {
+    position: fixed;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); box-shadow: 0 4px 20px rgba(0,0,0,.35);
+    z-index: 9999; min-width: 160px; overflow: hidden; display: none;
+  }
+  #speakerDropdownPortal.open { display: block; }
+  .card-dropdown-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 14px; font-size: 13px; font-weight: 500;
+    color: var(--text); cursor: pointer; border: none;
+    background: none; width: 100%; text-align: left;
+    transition: background .12s;
+  }
+  .card-dropdown-item:hover { background: var(--surface-3); }
+  .card-dropdown-item.danger { color: var(--red); }
+  .card-dropdown-item.danger:hover { background: var(--red-bg, #fff0f0); }
+  .card-dropdown-item svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+  /* ── Modals ── */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.5); z-index: 500;
+    align-items: center; justify-content: center;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-box {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius); padding: 24px 28px;
+    width: 380px; max-width: calc(100vw - 32px);
+    box-shadow: 0 8px 32px rgba(0,0,0,.25);
+  }
+  .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .modal-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .modal-input {
+    width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; outline: none;
+    transition: border-color .15s; box-sizing: border-box;
+  }
+  .modal-input:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal-btn {
+    padding: 8px 18px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; cursor: pointer; border: none;
+    transition: opacity .15s;
+  }
+  .modal-btn:hover { opacity: .85; }
+  .modal-btn.primary { background: var(--accent); color: #fff; }
+  .modal-btn.ghost { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
+  .modal-btn.danger { background: var(--red); color: #fff; }
+
+  /* ── Empty state ── */
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--text-muted);
+  }
+  .empty-state svg { width: 48px; height: 48px; margin-bottom: 16px; opacity: .4; }
+  .empty-state h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+  .empty-state p { font-size: 13px; max-width: 300px; margin: 0 auto; line-height: 1.6; }
+
+  /* ── Pagination ── */
+  .speakers-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 32px 0 16px; }
+  .sp-btn { padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border-2); background: var(--surface); color: var(--text); font-size: 13px; font-weight: 500; text-decoration: none; transition: background var(--transition), border-color var(--transition); }
+  .sp-btn:hover { background: var(--surface-3); border-color: var(--accent); }
+  .sp-info { font-size: 13px; color: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="speakers-layout">
+
+  <div class="speakers-header">
+    <div>
+      <div class="speakers-title">Speakers</div>
+      <div class="speakers-subtitle">
+        {{ total_all }} speaker{{ total_all|pluralize }}{% if search_query %} matching "{{ search_query }}"{% else %} detected across your videos{% endif %}
+      </div>
+    </div>
+    <form method="get" style="display:flex;align-items:center;gap:8px;">
+      <input type="hidden" name="filter" value="{{ active_filter }}" />
+      <div style="position:relative;">
+        <svg style="position:absolute;left:9px;top:50%;transform:translateY(-50%);width:13px;height:13px;color:var(--text-muted);pointer-events:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" name="q" value="{{ search_query }}" placeholder="Search speakers…"
+               class="form-input" style="padding:5px 10px 5px 30px;font-size:12px;width:180px;border-radius:var(--radius-sm);" autocomplete="off" />
+        {% if search_query %}
+        <a href="?filter={{ active_filter }}" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--text-muted);text-decoration:none;line-height:1;">×</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
+  {% if not has_channel %}
+  <div style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);padding:14px 16px;font-size:13px;color:var(--text-muted);margin-bottom:20px;">
+    You don't have a channel yet — <a href="{% url 'setup_channel' %}" style="color:var(--accent);font-weight:600;">create one</a> and run speaker diarization to see speakers here.
+  </div>
+  {% endif %}
+
+  <!-- Tabs -->
+  <div class="speakers-tabs">
+    <a href="?filter=all{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'all' %}active{% endif %}">
+      All <span class="sc">{{ total_all }}</span>
+    </a>
+    <a href="?filter=named{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'named' %}active{% endif %}">
+      Named <span class="sc">{{ total_named }}</span>
+    </a>
+    <a href="?filter=auto{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'auto' %}active{% endif %}">
+      Auto <span class="sc">{{ total_auto }}</span>
+    </a>
+    <a href="?filter=narrator{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'narrator' %}active{% endif %}">
+      Narrators <span class="sc">{{ total_narrator }}</span>
+    </a>
+    <a href="?filter=background{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'background' %}active{% endif %}">
+      Background <span class="sc">{{ total_background }}</span>
+    </a>
+  </div>
+
+  {% if speakers %}
+  <div class="speaker-grid">
+    {% for spk in speakers %}
+    <div class="speaker-card" id="spkcard-{{ spk.id }}">
+      <a href="{% url 'speaker_identity' spk.id %}" class="speaker-card-link">
+        <div class="speaker-card-avatar">
+          {% if spk.face_identity and spk.face_identity.thumbnail_url %}
+            <img src="{{ spk.face_identity.thumbnail_url }}" alt="{{ spk.name }}" loading="lazy" />
+          {% else %}
+            <div class="avatar-initials">
+              {{ spk.name|slice:":1"|upper }}
+            </div>
+          {% endif %}
+          <!-- Role badge -->
+          {% if spk.is_auto_named %}
+            <span class="role-badge auto">Auto</span>
+          {% elif spk.role == 'narrator' %}
+            <span class="role-badge narrator">Narrator</span>
+          {% elif spk.role == 'background' %}
+            <span class="role-badge background">Background</span>
+          {% else %}
+            <span class="role-badge speaker">Speaker</span>
+          {% endif %}
+        </div>
+      </a>
+
+      <div class="speaker-card-body">
+        <div class="speaker-card-name-row">
+          <span class="speaker-card-name" title="{{ spk.name }}">{{ spk.name }}</span>
+          <button class="card-menu-btn" onclick="openSpeakerMenu(event, {{ spk.id }}, '{{ spk.name|escapejs }}')" title="Actions">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+        </div>
+        <div class="speaker-card-meta">
+          <span>{{ spk.video_count }} video{{ spk.video_count|pluralize }}</span>
+          <span style="color:var(--border-2)">·</span>
+          <span>{{ spk.segment_count }} segment{{ spk.segment_count|pluralize }}</span>
+        </div>
+        {% if spk.face_identity %}
+        <div class="face-linked-badge">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/></svg>
+          {{ spk.face_identity.name }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+      <line x1="12" y1="19" x2="12" y2="23"/>
+      <line x1="8" y1="23" x2="16" y2="23"/>
+    </svg>
+    <h3>No speakers found{% if active_filter != 'all' %} in this category{% endif %}</h3>
+    <p>{% if active_filter == 'all' %}Run speaker diarization on your videos to detect speakers. Open any video → Edit → Subtitles → Run Diarization.{% else %}Switch to "All" to see all speakers.{% endif %}</p>
+  </div>
+  {% endif %}
+
+</div><!-- /.speakers-layout -->
+
+{% if page_obj.paginator.num_pages > 1 %}
+<div class="speakers-pagination">
+  {% if page_obj.has_previous %}
+  <a href="?filter={{ active_filter }}&page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="sp-btn">← Previous</a>
+  {% endif %}
+  <span class="sp-info">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+  <a href="?filter={{ active_filter }}&page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="sp-btn">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Dropdown portal -->
+<div id="speakerDropdownPortal"></div>
+
+<!-- Rename modal -->
+<div class="modal-backdrop" id="spkRenameModal">
+  <div class="modal-box">
+    <div class="modal-title">Rename Speaker</div>
+    <div class="modal-label">New name</div>
+    <input class="modal-input" id="spkRenameInput" type="text" placeholder="e.g. Alice" />
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('spkRenameModal')">Cancel</button>
+      <button class="modal-btn primary" onclick="submitSpkRename()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Merge modal -->
+<div class="modal-backdrop" id="spkMergeModal">
+  <div class="modal-box">
+    <div class="modal-title">Merge into another speaker</div>
+    <div class="modal-label">This speaker will be merged into:</div>
+    <select class="modal-input" id="spkMergeSelect" style="cursor:pointer;"></select>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+      All segments will be re-assigned to the selected speaker and this entry will be deleted.
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('spkMergeModal')">Cancel</button>
+      <button class="modal-btn primary" onclick="submitSpkMerge()">Merge</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div class="modal-backdrop" id="spkDeleteModal">
+  <div class="modal-box">
+    <div class="modal-title">Delete speaker?</div>
+    <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:4px;">
+      This will permanently delete <strong id="spkDeleteName"></strong> and unlink all their segments.
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('spkDeleteModal')">Cancel</button>
+      <button class="modal-btn danger" onclick="submitSpkDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const CSRF = '{{ csrf_token }}';
+let _activeSpkId   = null;
+let _activeSpkName = null;
+let _spkListCache  = null;
+
+const _portal = document.getElementById('speakerDropdownPortal');
+
+function _closePortal() {
+  _portal.classList.remove('open');
+}
+
+function openSpeakerMenu(evt, id, name) {
+  evt.preventDefault(); evt.stopPropagation();
+  if (_portal.classList.contains('open') && _activeSpkId === id) {
+    _closePortal(); return;
+  }
+  _activeSpkId   = id;
+  _activeSpkName = name;
+  _portal.innerHTML = `
+    <button class="card-dropdown-item" onclick="openSpkRenameModal(event,${id},'${name.replace(/'/g,"\\'")}')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Rename
+    </button>
+    <button class="card-dropdown-item" onclick="openSpkMergeModal(event,${id},'${name.replace(/'/g,"\\'")}')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3m-1-4-3 3m0 0-3-3m3 3V3"/></svg>
+      Merge into…
+    </button>
+    <button class="card-dropdown-item danger" onclick="openSpkDeleteModal(event,${id},'${name.replace(/'/g,"\\'")}')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+      Delete
+    </button>
+  `;
+  const btn  = evt.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  const menuW = 170;
+  let left = rect.right - menuW;
+  if (left < 8) left = 8;
+  _portal.style.top  = (rect.bottom + 6) + 'px';
+  _portal.style.left = left + 'px';
+  _portal.classList.add('open');
+}
+
+document.addEventListener('click', e => { if (!_portal.contains(e.target)) _closePortal(); });
+document.addEventListener('scroll', _closePortal, true);
+
+function closeModal(id)  { document.getElementById(id).classList.remove('open'); }
+function openModal(id)   { _closePortal(); document.getElementById(id).classList.add('open'); }
+
+['spkRenameModal','spkMergeModal','spkDeleteModal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', function(e) {
+    if (e.target === this) closeModal(id);
+  });
+});
+
+// ── Rename ───────────────────────────────────────────────────────────────────
+function openSpkRenameModal(evt, id, name) {
+  evt.stopPropagation();
+  _activeSpkId = id; _activeSpkName = name;
+  document.getElementById('spkRenameInput').value = name;
+  openModal('spkRenameModal');
+  setTimeout(() => document.getElementById('spkRenameInput').select(), 50);
+}
+async function submitSpkRename() {
+  const name = document.getElementById('spkRenameInput').value.trim();
+  if (!name) return;
+  const btn = document.querySelector('#spkRenameModal .modal-btn.primary');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${_activeSpkId}/rename/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Error');
+    const card = document.getElementById('spkcard-' + _activeSpkId);
+    if (card) card.querySelector('.speaker-card-name').textContent = name;
+    _spkListCache = null;
+    closeModal('spkRenameModal');
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Save'; btn.disabled = false; }
+}
+document.getElementById('spkRenameInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitSpkRename();
+  if (e.key === 'Escape') closeModal('spkRenameModal');
+});
+
+// ── Merge ────────────────────────────────────────────────────────────────────
+async function openSpkMergeModal(evt, id, name) {
+  evt.stopPropagation();
+  _activeSpkId = id; _activeSpkName = name;
+  const sel = document.getElementById('spkMergeSelect');
+  sel.innerHTML = '<option disabled>Loading…</option>';
+  openModal('spkMergeModal');
+  try {
+    if (!_spkListCache) {
+      const r = await fetch('/api/speakers/list/');
+      _spkListCache = await r.json();
+    }
+    sel.innerHTML = '';
+    _spkListCache.forEach(s => {
+      if (s.id === id) return;
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.name} (${s.role})`;
+      sel.appendChild(opt);
+    });
+    if (!sel.options.length) { closeModal('spkMergeModal'); alert('No other speakers to merge into.'); }
+  } catch(e) { sel.innerHTML = '<option disabled>Failed to load</option>'; }
+}
+async function submitSpkMerge() {
+  const into_id = parseInt(document.getElementById('spkMergeSelect').value);
+  const btn = document.querySelector('#spkMergeModal .modal-btn.primary');
+  btn.textContent = 'Merging…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${_activeSpkId}/merge/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ into_id }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Error');
+    const card = document.getElementById('spkcard-' + _activeSpkId);
+    if (card) card.remove();
+    _spkListCache = null;
+    closeModal('spkMergeModal');
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Merge'; btn.disabled = false; }
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+function openSpkDeleteModal(evt, id, name) {
+  evt.stopPropagation();
+  _activeSpkId = id; _activeSpkName = name;
+  document.getElementById('spkDeleteName').textContent = name;
+  openModal('spkDeleteModal');
+}
+async function submitSpkDelete() {
+  const btn = document.querySelector('#spkDeleteModal .modal-btn.danger');
+  btn.textContent = 'Deleting…'; btn.disabled = true;
+  try {
+    const res = await fetch(`/api/speakers/${_activeSpkId}/delete/`, {
+      method: 'DELETE', headers: { 'X-CSRFToken': CSRF },
+    });
+    if (!res.ok && res.status !== 204) throw new Error('Error deleting');
+    const card = document.getElementById('spkcard-' + _activeSpkId);
+    if (card) card.remove();
+    _spkListCache = null;
+    closeModal('spkDeleteModal');
+  } catch(e) { alert(e.message); }
+  finally { btn.textContent = 'Delete'; btn.disabled = false; }
+}
+</script>
+{% endblock %}

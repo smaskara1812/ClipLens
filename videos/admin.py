@@ -6,7 +6,8 @@ from .models import (
     Comment, CommentLike, VideoLike, Playlist, PlaylistItem,
     WatchHistory, SavedVideo, WatchTimeEntry, VideoChapter,
     EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
-    FaceIdentity, DetectedFace, UserProfile,
+    FaceIdentity, DetectedFace, SpeakerIdentity, UserProfile,
+    Photo, Album, AlbumPhoto,
 )
 
 
@@ -167,3 +168,75 @@ class DetectedFaceAdmin(admin.ModelAdmin):
     list_filter    = ['identity', 'video']
     readonly_fields= ['timestamp', 'bbox', 'embedding', 'confidence', 'crop_path']
     raw_id_fields  = ['identity', 'video', 'frame']
+
+
+@admin.register(SpeakerIdentity)
+class SpeakerIdentityAdmin(admin.ModelAdmin):
+    list_display   = ['name', 'role', 'is_auto_named', 'face_identity', 'created_at']
+    list_filter    = ['role', 'is_auto_named']
+    search_fields  = ['name', 'face_identity__name']
+    readonly_fields= ['speaker_embedding', 'created_at']
+    raw_id_fields  = ['face_identity']
+
+
+@admin.register(Photo)
+class PhotoAdmin(admin.ModelAdmin):
+    list_display   = ['title', 'channel', 'status', 'visibility', 'created_at']
+    list_filter    = ['status', 'visibility', 'channel']
+    search_fields  = ['title', 'tags', 'labels', 'description', 'face_names']
+    readonly_fields= ['id', 'file_size', 'width', 'height', 'created_at', 'updated_at']
+    list_per_page  = 30
+
+
+@admin.register(Album)
+class AlbumAdmin(admin.ModelAdmin):
+    list_display   = ['title', 'channel', 'created_at']
+    list_filter    = ['channel']
+    search_fields  = ['title']
+    readonly_fields= ['created_at', 'updated_at']
+
+
+@admin.register(AlbumPhoto)
+class AlbumPhotoAdmin(admin.ModelAdmin):
+    list_display  = ['album', 'photo', 'order', 'added_at']
+    list_filter   = ['album']
+    raw_id_fields = ['album', 'photo']
+
+
+@admin.register(PlaylistItem)
+class PlaylistItemAdmin(admin.ModelAdmin):
+    list_display  = ['playlist', 'video', 'order', 'added_at']
+    list_filter   = ['playlist']
+    raw_id_fields = ['playlist', 'video']
+
+
+@admin.register(VideoLike)
+class VideoLikeAdmin(admin.ModelAdmin):
+    list_display  = ['user', 'video', 'created_at']
+    list_filter   = ['created_at']
+    search_fields = ['user__username', 'video__title']
+    raw_id_fields = ['user', 'video']
+
+
+@admin.register(CommentLike)
+class CommentLikeAdmin(admin.ModelAdmin):
+    list_display  = ['user', 'comment', 'created_at']
+    list_filter   = ['created_at']
+    search_fields = ['user__username', 'comment__video__title']
+    raw_id_fields = ['user', 'comment']
+
+
+@admin.register(SavedVideo)
+class SavedVideoAdmin(admin.ModelAdmin):
+    list_display  = ['user', 'video', 'saved_at']
+    list_filter   = ['saved_at']
+    search_fields = ['user__username', 'video__title']
+    raw_id_fields = ['user', 'video']
+
+
+@admin.register(WatchTimeEntry)
+class WatchTimeEntryAdmin(admin.ModelAdmin):
+    list_display  = ['video', 'date', 'total_seconds']
+    list_filter   = ['date']
+    search_fields = ['video__title']
+    raw_id_fields = ['video']

@@ -1,0 +1,578 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Transcript Editor — {{ video.title }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<script src="{% static 'videos/hls.min.js' %}" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js'"></script>
+<style>
+  .te-layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    grid-template-rows: auto 1fr;
+    height: calc(100vh - 56px);   /* subtract topnav height */
+    overflow: hidden;
+  }
+
+  /* ── Left: video + info ── */
+  .te-sidebar {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .te-video-wrap {
+    position: relative; background: #000;
+    aspect-ratio: 16/9; flex-shrink: 0;
+  }
+  .te-video-wrap video { width: 100%; height: 100%; display: block; }
+  .te-video-meta {
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+  }
+  .te-video-title {
+    font-size: 14px; font-weight: 700;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-bottom: 6px;
+  }
+  .te-video-back {
+    font-size: 12px; color: var(--accent); text-decoration: none;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .te-video-back:hover { text-decoration: underline; }
+
+  /* Speaker legend */
+  .te-legend {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .te-legend-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text-muted); margin-bottom: 8px;
+  }
+  .te-legend-list { display: flex; flex-direction: column; gap: 5px; }
+  .te-legend-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 500;
+  }
+  .te-legend-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+  .te-legend-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .te-legend-role { font-size: 10px; color: var(--text-muted); }
+
+  /* Stats */
+  .te-stats {
+    padding: 10px 16px; font-size: 11px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+    display: flex; gap: 14px;
+  }
+  .te-stat strong { color: var(--text); }
+
+  /* ── Top bar ── */
+  .te-topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    background: var(--surface); flex-shrink: 0; gap: 12px;
+  }
+  .te-topbar-left { display: flex; align-items: center; gap: 10px; }
+  .te-filter-select {
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 12px; cursor: pointer; outline: none;
+  }
+  .te-search {
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 12px; outline: none; width: 200px;
+    transition: border-color .15s;
+  }
+  .te-search:focus { border-color: var(--accent); }
+  .te-save-btn {
+    padding: 6px 16px; border-radius: var(--radius-sm);
+    background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 600; border: none; cursor: pointer;
+    transition: opacity .15s; display: none;
+  }
+  .te-save-btn:hover { opacity: .85; }
+  .te-save-btn.visible { display: block; }
+
+  /* ── Segment list ── */
+  .te-segments {
+    flex: 1; overflow-y: auto; padding: 0;
+  }
+  .te-segment {
+    display: flex; align-items: flex-start; gap: 0;
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+    position: relative;
+  }
+  .te-segment:hover { background: var(--surface-2); }
+  .te-segment.playing { background: var(--accent-soft); }
+  .te-segment.unassigned { opacity: .7; }
+
+  /* Speaker colour bar */
+  .te-seg-bar {
+    width: 3px; flex-shrink: 0; align-self: stretch;
+    border-radius: 0;
+  }
+
+  .te-seg-body {
+    flex: 1; padding: 10px 14px; min-width: 0;
+  }
+  .te-seg-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    flex-wrap: wrap;
+  }
+  .te-seg-time {
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    font-family: monospace; cursor: pointer; flex-shrink: 0;
+    text-decoration: none;
+  }
+  .te-seg-time:hover { text-decoration: underline; }
+
+  /* Speaker badge — clickable dropdown trigger */
+  .te-spk-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 99px;
+    font-size: 10px; font-weight: 700;
+    cursor: pointer; border: none; transition: opacity .12s;
+    flex-shrink: 0; max-width: 160px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .te-spk-badge:hover { opacity: .8; }
+  .te-spk-badge.unassigned {
+    background: var(--surface-3); color: var(--text-muted);
+    border: 1px dashed var(--border-2);
+  }
+  .te-spk-badge svg { width: 9px; height: 9px; flex-shrink: 0; }
+
+  .te-seg-text {
+    font-size: 13px; color: var(--text); line-height: 1.6;
+  }
+  .te-seg-text.empty { color: var(--text-muted); font-style: italic; font-size: 12px; }
+
+  /* ── Speaker dropdown (popup) ── */
+  #spkDropdown {
+    position: fixed; z-index: 9999;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); box-shadow: 0 6px 24px rgba(0,0,0,.3);
+    min-width: 220px; max-height: 280px; overflow-y: auto;
+    display: none;
+  }
+  #spkDropdown.open { display: block; }
+  .spk-drop-header {
+    padding: 8px 12px 6px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .spk-drop-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; font-size: 13px; font-weight: 500;
+    color: var(--text); cursor: pointer;
+    transition: background .1s;
+  }
+  .spk-drop-item:hover { background: var(--surface-2); }
+  .spk-drop-item.active { background: var(--accent-soft); }
+  .spk-drop-item.clear { color: var(--text-muted); font-style: italic; }
+  .spk-drop-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .spk-drop-role { font-size: 10px; color: var(--text-muted); margin-left: auto; }
+
+  /* Empty state */
+  .te-empty {
+    text-align: center; padding: 60px 24px; color: var(--text-muted);
+  }
+  .te-empty svg { width: 40px; height: 40px; opacity: .3; margin-bottom: 14px; }
+  .te-empty h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+  .te-empty p  { font-size: 13px; max-width: 300px; margin: 0 auto; line-height: 1.6; }
+
+  /* Toast */
+  .te-toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); padding: 9px 18px;
+    font-size: 13px; font-weight: 500; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+    z-index: 9998; opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  .te-toast.show { opacity: 1; }
+  .te-toast.ok   { border-color: var(--green); color: var(--green); }
+  .te-toast.err  { border-color: var(--red);   color: var(--red);   }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="te-layout">
+
+  <!-- ── Left sidebar: video + legend ── -->
+  <div class="te-sidebar">
+    <div class="te-video-wrap">
+      <video id="teVideo" controls preload="metadata"></video>
+    </div>
+
+    <div class="te-video-meta">
+      <div class="te-video-title" title="{{ video.title }}">{{ video.title }}</div>
+      <a href="{% url 'watch' video.id %}" class="te-video-back">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Back to watch page
+      </a>
+    </div>
+
+    <div class="te-stats">
+      <span><strong>{{ segments|length }}</strong> segments</span>
+      <span><strong>{{ video_speakers|length }}</strong> speaker{{ video_speakers|length|pluralize }}</span>
+      {% if not has_diarization %}
+      <span style="color:var(--yellow);">⚠ No diarization yet</span>
+      {% endif %}
+    </div>
+
+    {% if video_speakers %}
+    <div class="te-legend">
+      <div class="te-legend-title">Speakers in this video</div>
+      <div class="te-legend-list" id="legendList">
+        {% for spk in video_speakers %}
+        <div class="te-legend-item">
+          <div class="te-legend-dot" style="background: var(--spk-color-{{ forloop.counter0|add:1 }}, var(--accent));"></div>
+          <a href="{% url 'speaker_identity' spk.id %}" class="te-legend-name" style="color:var(--text);text-decoration:none;" title="{{ spk.name }}">{{ spk.name }}</a>
+          <span class="te-legend-role">{{ spk.get_role_display }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if not has_diarization %}
+    <div style="padding:12px 16px;font-size:12px;color:var(--text-muted);line-height:1.6;border-top:1px solid var(--border);">
+      Run speaker diarization from the <a href="{% url 'watch' video.id %}" style="color:var(--accent);">watch page</a>
+      (Edit Video → Subtitles → Run Diarization) to label who said what.
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Right: topbar + segment list ── -->
+  <div style="display:flex;flex-direction:column;overflow:hidden;">
+
+    <!-- Topbar -->
+    <div class="te-topbar">
+      <div class="te-topbar-left">
+        <select class="te-filter-select" id="speakerFilter" onchange="applyFilter()">
+          <option value="all">All speakers</option>
+          <option value="unassigned">Unassigned only</option>
+          {% for spk in video_speakers %}
+          <option value="{{ spk.id }}">{{ spk.name }}</option>
+          {% endfor %}
+        </select>
+        <input class="te-search" id="segSearch" type="text" placeholder="Search transcript…" oninput="applyFilter()" />
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="changeCounter" style="font-size:12px;color:var(--text-muted);display:none;"></span>
+        <button class="te-save-btn" id="saveBtn" onclick="saveAllChanges()">Save changes</button>
+      </div>
+    </div>
+
+    <!-- Segments -->
+    <div class="te-segments" id="segmentList">
+      {% if segments %}
+        {% for seg in segments %}
+        <div class="te-segment {% if not seg.speaker_identity %}unassigned{% endif %}"
+             id="seg-{{ seg.id }}"
+             data-id="{{ seg.id }}"
+             data-speaker-id="{{ seg.speaker_identity_id|default:'' }}"
+             data-start="{{ seg.start_seconds|default:0 }}"
+             data-text="{{ seg.text|default:''|lower }}">
+
+          <div class="te-seg-bar"
+               id="segbar-{{ seg.id }}"
+               style="background: {% if seg.speaker_identity %}var(--spk-color-{{ forloop.counter0|add:1 }}, var(--accent)){% else %}var(--border){% endif %};"></div>
+
+          <div class="te-seg-body">
+            <div class="te-seg-header">
+              <a class="te-seg-time" onclick="seekTo({{ seg.start_seconds|default:0 }})">
+                {{ seg.start_seconds|default:0|floatformat:1 }}s
+              </a>
+              <button class="te-spk-badge {% if not seg.speaker_identity %}unassigned{% endif %}"
+                      id="badge-{{ seg.id }}"
+                      style="{% if seg.speaker_identity %}background:var(--spk-color-{{ forloop.counter0|add:1 }}-soft, var(--accent-soft));color:var(--spk-color-{{ forloop.counter0|add:1 }}, var(--accent));{% endif %}"
+                      onclick="openSpkDropdown(event, {{ seg.id }}, {{ seg.speaker_identity_id|default:'null' }})">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                {% if seg.speaker_identity %}{{ seg.speaker_identity.name }}{% else %}Assign speaker{% endif %}
+              </button>
+            </div>
+            <div class="te-seg-text {% if not seg.text %}empty{% endif %}">
+              {{ seg.text|default:"[no transcript]" }}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+      <div class="te-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+        <h3>No transcript yet</h3>
+        <p>Upload this video and let Whisper process it to generate a transcript. Captions are generated automatically after upload.</p>
+      </div>
+      {% endif %}
+    </div>
+
+  </div><!-- /.right -->
+</div><!-- /.te-layout -->
+
+<!-- Speaker dropdown -->
+<div id="spkDropdown">
+  <div class="spk-drop-header">Assign speaker</div>
+</div>
+
+<!-- Toast -->
+<div class="te-toast" id="teToast"></div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const CSRF       = '{{ csrf_token }}';
+const VIDEO_ID   = '{{ video.id }}';
+const VIDEO_DUR  = {{ video.duration|default:0 }};
+
+// ── HLS video initialisation ─────────────────────────────────────────────────
+(function () {
+  const vid = document.getElementById('teVideo');
+  if (!vid) return;
+  {% if video.hls_path %}
+  const src = '{{ video.hls_url }}';
+  if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+    const hls = new Hls();
+    hls.loadSource(src);
+    hls.attachMedia(vid);
+  } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+    vid.src = src;
+  }
+  {% elif video.file %}
+  vid.src = '{{ video.file.url }}';
+  {% endif %}
+})();
+
+// ── Speaker colour palette ────────────────────────────────────────────────────
+// Injects CSS variables so colours are consistent between legend, bars, badges.
+const PALETTE = [
+  ['#3b82f6', '#eff6ff'],   // blue
+  ['#10b981', '#ecfdf5'],   // green
+  ['#f59e0b', '#fffbeb'],   // amber
+  ['#ef4444', '#fef2f2'],   // red
+  ['#8b5cf6', '#f5f3ff'],   // violet
+  ['#06b6d4', '#ecfeff'],   // cyan
+  ['#f97316', '#fff7ed'],   // orange
+  ['#ec4899', '#fdf2f8'],   // pink
+];
+
+// All speakers known for this video (for the dropdown)
+const ALL_SPEAKERS = [
+  {% for spk in all_speakers %}
+  { id: {{ spk.id }}, name: '{{ spk.name|escapejs }}', role: '{{ spk.get_role_display|escapejs }}' },
+  {% endfor %}
+];
+
+// Speakers in THIS video — used to assign palette colours
+const VIDEO_SPEAKERS = [
+  {% for spk in video_speakers %}
+  {{ spk.id }},
+  {% endfor %}
+];
+
+// Build id→index map and inject CSS vars
+const spkColorIdx = {};
+VIDEO_SPEAKERS.forEach((id, i) => { spkColorIdx[id] = i; });
+const root = document.documentElement;
+VIDEO_SPEAKERS.forEach((id, i) => {
+  const [fg, bg] = PALETTE[i % PALETTE.length];
+  root.style.setProperty(`--spk-color-${i+1}`, fg);
+  root.style.setProperty(`--spk-color-${i+1}-soft`, bg);
+});
+
+// ── Pending changes: segmentId → new speaker_identity_id (or null) ──────────
+const _changes = {};
+let _pendingCount = 0;
+
+function _markChanged(segId, spkId) {
+  const prev = document.getElementById('seg-' + segId).dataset.speakerId;
+  const prevInt = prev ? parseInt(prev) : null;
+  if (spkId === prevInt) {
+    delete _changes[segId];
+  } else {
+    _changes[segId] = spkId;
+  }
+  _pendingCount = Object.keys(_changes).length;
+  const counter = document.getElementById('changeCounter');
+  const saveBtn = document.getElementById('saveBtn');
+  if (_pendingCount > 0) {
+    counter.textContent = `${_pendingCount} unsaved change${_pendingCount !== 1 ? 's' : ''}`;
+    counter.style.display = 'block';
+    saveBtn.classList.add('visible');
+  } else {
+    counter.style.display = 'none';
+    saveBtn.classList.remove('visible');
+  }
+}
+
+// ── Speaker dropdown ──────────────────────────────────────────────────────────
+const _drop = document.getElementById('spkDropdown');
+let _activeSegId = null;
+
+function openSpkDropdown(evt, segId, currentSpkId) {
+  evt.stopPropagation();
+  _activeSegId = segId;
+
+  // Build dropdown items
+  const items = ALL_SPEAKERS.map(s => {
+    const isActive = s.id === currentSpkId;
+    const idx      = spkColorIdx[s.id];
+    const [fg]     = idx !== undefined ? PALETTE[idx % PALETTE.length] : ['var(--accent)'];
+    return `<div class="spk-drop-item ${isActive ? 'active' : ''}"
+                 onclick="assignSpeaker(${segId}, ${s.id}, '${s.name.replace(/'/g,"\\'")}')">
+              <div class="spk-drop-dot" style="background:${fg};"></div>
+              ${s.name}
+              <span class="spk-drop-role">${s.role}</span>
+            </div>`;
+  }).join('');
+
+  _drop.innerHTML = `
+    <div class="spk-drop-header">Assign speaker</div>
+    ${items}
+    <div class="spk-drop-item clear" onclick="assignSpeaker(${segId}, null, null)">
+      <div class="spk-drop-dot" style="background:var(--border-2);"></div>
+      Clear assignment
+    </div>`;
+
+  // Position below badge
+  const btn  = evt.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  _drop.style.top  = (rect.bottom + 4) + 'px';
+  _drop.style.left = Math.min(rect.left, window.innerWidth - 240) + 'px';
+  _drop.classList.add('open');
+}
+
+document.addEventListener('click', e => {
+  if (!_drop.contains(e.target)) _drop.classList.remove('open');
+});
+
+function assignSpeaker(segId, spkId, spkName) {
+  _drop.classList.remove('open');
+
+  const segEl  = document.getElementById('seg-' + segId);
+  const badge  = document.getElementById('badge-' + segId);
+  const bar    = document.getElementById('segbar-' + segId);
+
+  // Optimistic UI update
+  const idx = spkId !== null ? spkColorIdx[spkId] : undefined;
+  const [fg, bg] = idx !== undefined ? PALETTE[idx % PALETTE.length] : [null, null];
+
+  if (spkId !== null && spkName) {
+    badge.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>${spkName}`;
+    badge.classList.remove('unassigned');
+    badge.style.background = bg || 'var(--accent-soft)';
+    badge.style.color      = fg || 'var(--accent)';
+    bar.style.background   = fg || 'var(--accent)';
+    segEl.classList.remove('unassigned');
+  } else {
+    badge.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>Assign speaker`;
+    badge.classList.add('unassigned');
+    badge.style.background = '';
+    badge.style.color      = '';
+    bar.style.background   = 'var(--border)';
+    segEl.classList.add('unassigned');
+  }
+
+  _markChanged(segId, spkId);
+}
+
+// ── Save all changes in batch ─────────────────────────────────────────────────
+async function saveAllChanges() {
+  const btn = document.getElementById('saveBtn');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+
+  const entries = Object.entries(_changes);
+  let saved = 0, failed = 0;
+
+  await Promise.all(entries.map(async ([segId, spkId]) => {
+    try {
+      const res = await fetch(`/api/segments/${segId}/set-speaker/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ speaker_identity_id: spkId }),
+      });
+      if (!res.ok) throw new Error();
+      // Commit: update data-speaker-id so _markChanged detects no-op correctly
+      document.getElementById('seg-' + segId).dataset.speakerId = spkId ?? '';
+      delete _changes[segId];
+      saved++;
+    } catch {
+      failed++;
+    }
+  }));
+
+  _pendingCount = Object.keys(_changes).length;
+  btn.disabled = false;
+  btn.textContent = 'Save changes';
+
+  if (_pendingCount === 0) {
+    btn.classList.remove('visible');
+    document.getElementById('changeCounter').style.display = 'none';
+  }
+
+  if (failed === 0) {
+    showToast(`✓ Saved ${saved} change${saved !== 1 ? 's' : ''}`, 'ok');
+  } else {
+    showToast(`${saved} saved, ${failed} failed — try again`, 'err');
+  }
+}
+
+// ── Filter + search ───────────────────────────────────────────────────────────
+function applyFilter() {
+  const filterVal = document.getElementById('speakerFilter').value;
+  const searchVal = document.getElementById('segSearch').value.toLowerCase().trim();
+
+  document.querySelectorAll('.te-segment').forEach(el => {
+    const segSpkId = el.dataset.speakerId;
+    const segText  = el.dataset.text || '';
+
+    let show = true;
+    if (filterVal === 'unassigned') show = !segSpkId;
+    else if (filterVal !== 'all')   show = segSpkId === filterVal;
+
+    if (show && searchVal) show = segText.includes(searchVal);
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+// ── Video seek ────────────────────────────────────────────────────────────────
+function seekTo(t) {
+  const vid = document.getElementById('teVideo');
+  if (vid) { vid.currentTime = t; vid.play(); }
+}
+
+// Highlight active segment as video plays
+const _vid = document.getElementById('teVideo');
+if (_vid) {
+  _vid.addEventListener('timeupdate', () => {
+    const t = _vid.currentTime;
+    document.querySelectorAll('.te-segment').forEach(el => {
+      const start = parseFloat(el.dataset.start);
+      el.classList.toggle('playing', Math.abs(t - start) < 2.5);
+    });
+  });
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg, type='ok') {
+  const el = document.getElementById('teToast');
+  el.textContent = msg;
+  el.className   = `te-toast ${type} show`;
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// Warn before leaving with unsaved changes
+window.addEventListener('beforeunload', e => {
+  if (Object.keys(_changes).length > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+</script>
+{% endblock %}
