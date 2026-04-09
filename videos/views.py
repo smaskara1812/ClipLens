@@ -4596,12 +4596,31 @@ def speaker_identity_page(request, speaker_id):
     """
     GET /speakers/<id>/
     Detail page for a SpeakerIdentity: per-video segment count, timeline, rename/merge/delete UI.
+    Optional GET q= (2+ chars): full-text search over transcript segments for this speaker only
+    (same Postgres FTS / icontains strategy as main player speech search).
     """
     speaker       = get_object_or_404(SpeakerIdentity, id=speaker_id)
     user_channels = _user_channels(request.user)
 
     # Gather videos this speaker appears in (current user's channels only)
     user_channel_ids = list(user_channels.values_list('id', flat=True))
+    phrase_q         = (request.GET.get('q') or '').strip()
+    active_phrase    = len(phrase_q) >= 2
+
+    _speaker_seg_base = VideoSegment.objects.filter(
+        speaker_identity=speaker,
+        video__channel_id__in=user_channel_ids,
+    )
+
+    all_video_count = 0
+    if user_channel_ids:
+        all_video_count = (
+            Video.objects
+            .filter(segments__speaker_identity=speaker, channel_id__in=user_channel_ids)
+            .distinct()
+            .count()
+        )
+
     videos_qs = (
         Video.objects
         .filter(
@@ -4615,17 +4634,48 @@ def speaker_identity_page(request, speaker_id):
 
     # Per-video segment list and timeline data
     video_groups = []
-    for vid in videos_qs:
-        segs = (
-            VideoSegment.objects
-            .filter(video=vid, speaker_identity=speaker)
-            .order_by('start_seconds')
-            .values('start_seconds', 'end_seconds', 'text')
-        )
-        video_groups.append({
-            'video':    vid,
-            'segments': list(segs),
-        })
+    if active_phrase:
+        _cap_total    = 400
+        _cap_per_vid  = 50
+        seg_qs        = _speaker_seg_base.select_related('video')
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _SQ
+            seg_qs = seg_qs.filter(
+                text__search=_SQ(phrase_q, config='english', search_type='plain')
+            )
+        else:
+            seg_qs = seg_qs.filter(_q_icontains_all_terms('text', phrase_q))
+        seg_qs = seg_qs.order_by('video_id', 'start_seconds')[:_cap_total]
+
+        from collections import OrderedDict
+        by_video = OrderedDict()
+        for seg in seg_qs:
+            vid = seg.video
+            eid = vid.id
+            if eid not in by_video:
+                by_video[eid] = {'video': vid, 'segments': []}
+            bucket = by_video[eid]['segments']
+            if len(bucket) >= _cap_per_vid:
+                continue
+            bucket.append({
+                'start_seconds':    seg.start_seconds,
+                'end_seconds':      seg.end_seconds,
+                'text':             seg.text,
+                'highlighted_text': _highlight_query(seg.text or '', phrase_q),
+            })
+        video_groups = sorted(by_video.values(), key=lambda g: g['video'].created_at, reverse=True)
+    else:
+        for vid in videos_qs:
+            segs = (
+                VideoSegment.objects
+                .filter(video=vid, speaker_identity=speaker)
+                .order_by('start_seconds')
+                .values('start_seconds', 'end_seconds', 'text')
+            )
+            video_groups.append({
+                'video':    vid,
+                'segments': list(segs),
+            })
 
     # Face identity list for link-face dropdown
     face_identities = []
@@ -4653,11 +4703,14 @@ def speaker_identity_page(request, speaker_id):
     )
 
     return render(request, 'videos/speaker_identity.html', {
-        'speaker':         speaker,
-        'video_groups':    video_groups,
-        'face_identities': face_identities,
-        'all_speakers':    all_speakers,
-        'unread_count':    _unread_count(request),
+        'speaker':          speaker,
+        'video_groups':     video_groups,
+        'face_identities':  face_identities,
+        'all_speakers':     all_speakers,
+        'unread_count':     _unread_count(request),
+        'phrase_query':     phrase_q,
+        'active_phrase':    active_phrase,
+        'all_video_count':  all_video_count,
     })
 
 

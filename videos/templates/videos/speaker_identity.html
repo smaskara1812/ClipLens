@@ -193,6 +193,39 @@
   }
   .role-opt.selected { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .role-opt:hover { border-color: var(--accent); }
+
+  /* Phrase search (this speaker's transcripts only) */
+  .spk-phrase-search {
+    display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 20px; max-width: 640px;
+    color: var(--text-muted); font-size: 12px;
+  }
+  .spk-phrase-search input[type="search"] {
+    flex: 1; min-width: 200px;
+    padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; outline: none; box-sizing: border-box;
+  }
+  .spk-phrase-search input[type="search"]:focus { border-color: var(--accent); }
+  .spk-phrase-search button[type="submit"] {
+    padding: 9px 18px; border-radius: var(--radius-sm);
+    font-size: 12px; font-weight: 600; cursor: pointer; border: none;
+    background: var(--accent); color: #fff; white-space: nowrap;
+  }
+  .spk-phrase-search button[type="submit"]:hover { opacity: .88; }
+  .spk-phrase-search a.clear {
+    align-self: center; font-size: 12px; color: var(--accent); text-decoration: none;
+    padding: 4px 8px;
+  }
+  .spk-phrase-search a.clear:hover { text-decoration: underline; }
+  .seg-text mark {
+    background: var(--accent-soft); color: var(--text);
+    padding: 0 2px; border-radius: 2px;
+  }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
 </style>
 {% endblock %}
 
@@ -255,10 +288,39 @@
     </div>
   </div>
 
-  <!-- Video appearance groups -->
-  {% if video_groups %}
-  <div class="spk-section-title">Appears in {{ video_groups|length }} video{{ video_groups|length|pluralize }}</div>
+  <form class="spk-phrase-search" method="get" action="{% url 'speaker_identity' speaker.id %}" role="search">
+    <label class="visually-hidden" for="spk-phrase-q">Search this speaker&rsquo;s lines</label>
+    <input id="spk-phrase-q" type="search" name="q" value="{{ phrase_query }}"
+           placeholder="Search what {{ speaker.name }} said across videos…"
+           autocomplete="off" />
+    <button type="submit">Search transcripts</button>
+    {% if active_phrase %}
+    <a class="clear" href="{% url 'speaker_identity' speaker.id %}">Clear</a>
+    {% endif %}
+  </form>
+  {% if phrase_query and not active_phrase %}
+  <p style="font-size:12px;color:var(--text-muted);margin:-12px 0 20px;">Enter at least 2 characters to search.</p>
+  {% endif %}
 
+  <!-- Video appearance groups -->
+  {% if active_phrase %}
+    {% if video_groups %}
+    <div class="spk-section-title">“{{ phrase_query }}” — {{ video_groups|length }} video{{ video_groups|length|pluralize }} with matches</div>
+    {% else %}
+    <div class="spk-section-title">“{{ phrase_query }}” — no matches</div>
+    <div style="text-align:center;padding:28px 20px;color:var(--text-muted);font-size:13px;line-height:1.5;">
+      No transcript segments for {{ speaker.name }} contain that phrase. Try different wording or check the transcript editor on each video.
+    </div>
+    {% endif %}
+  {% elif video_groups %}
+  <div class="spk-section-title">Speaks in {{ video_groups|length }} video{{ video_groups|length|pluralize }}</div>
+  {% else %}
+  <div style="text-align:center;padding:40px 20px;color:var(--text-muted);font-size:13px;">
+    No segments linked to this speaker yet. Run speaker diarization on a video to populate this.
+  </div>
+  {% endif %}
+
+  {% if video_groups %}
   {% for grp in video_groups %}
   <div class="video-group" id="vgrp-{{ forloop.counter }}">
     <!-- Header: click toggles segment list -->
@@ -275,7 +337,7 @@
         <div class="vg-meta">{{ grp.segments|length }} segment{{ grp.segments|length|pluralize }}{% if grp.video.duration %} · {{ grp.video.duration|floatformat:0 }}s total{% endif %}</div>
       </div>
       <a href="{% url 'watch' grp.video.id %}" onclick="event.stopPropagation()" style="font-size:11px;color:var(--accent);text-decoration:none;flex-shrink:0;padding:4px 8px;border-radius:4px;background:var(--accent-soft);font-weight:600;">Watch</a>
-      <svg class="vg-toggle" id="vgtog-{{ forloop.counter }}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      <svg class="vg-toggle{% if active_phrase %} open{% endif %}" id="vgtog-{{ forloop.counter }}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
 
     <!-- Timeline bar -->
@@ -297,7 +359,7 @@
     {% endif %}
 
     <!-- Segment list (collapsed by default) -->
-    <div class="seg-list" id="vseg-{{ forloop.counter }}">
+    <div class="seg-list{% if active_phrase %} open{% endif %}" id="vseg-{{ forloop.counter }}">
       {% for s in grp.segments %}
       <div class="seg-item">
         <a class="seg-time" href="{% url 'watch' grp.video.id %}?t={{ s.start_seconds|floatformat:0 }}">
@@ -305,17 +367,12 @@
           {{ s.start_seconds|floatformat:0 }}s
           {% endwith %}
         </a>
-        <div class="seg-text">{{ s.text|default:"—" }}</div>
+        <div class="seg-text">{% if s.highlighted_text %}{{ s.highlighted_text|safe }}{% else %}{{ s.text|default:"—" }}{% endif %}</div>
       </div>
       {% endfor %}
     </div>
   </div>
   {% endfor %}
-
-  {% else %}
-  <div style="text-align:center;padding:40px 20px;color:var(--text-muted);font-size:13px;">
-    No segments linked to this speaker yet. Run speaker diarization on a video to populate this.
-  </div>
   {% endif %}
 
 </div><!-- /.spk-layout -->
@@ -400,7 +457,7 @@
   <div class="modal-box">
     <div class="modal-title">Delete speaker?</div>
     <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">
-      This will permanently delete <strong>{{ speaker.name }}</strong> and unlink all {{ video_groups|length }} video segment group{{ video_groups|length|pluralize }}. This cannot be undone.
+      This will permanently delete <strong>{{ speaker.name }}</strong> and unlink all {{ all_video_count }} video{{ all_video_count|pluralize }}. This cannot be undone.
     </p>
     <div class="modal-actions">
       <button class="modal-btn ghost" onclick="closeModal('deleteModal')">Cancel</button>
