@@ -11,6 +11,8 @@
 
 ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, and visual semantics.w
 
+ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, speaker identities, and visual semantics.
+
 ---
 
 ## 2. Core Capabilities
@@ -100,6 +102,17 @@ Photos are first-class assets alongside videos:
 - Editors can rename, merge, and tag identities via the People page
 - Running-average embeddings are maintained per identity as the system sees more faces
 
+### 2.6 Speaker Identity & Voice Recognition (Diarization)
+
+- Speaker diarization uses **pyannote.audio** (`pyannote/speaker-diarization-3.1`) to label who spoke when
+- Each Whisper transcript segment (`VideoSegment`) can be tagged with:
+  - `speaker_label` — a stable global label like `SPEAKER_02`
+  - `speaker_identity` — a resolved `SpeakerIdentity` row (name, role, optional face link)
+- Cross-video “same voice” matching uses a **256-d WeSpeaker** embedding (`pyannote/wespeaker-voxceleb-resnet34-LM`) with cosine similarity (threshold `SPEAKER_MATCH_THRESHOLD`, default `0.75`)
+- Speakers have a dedicated UI: `/speakers/` list + `/speakers/<id>/` detail (rename, role, link face, merge, delete)
+
+**Implementation details:** see `documentation files/SPEAKER_IDENTITY.md`.
+
 ---
 
 ## 3. Data Models (Processing-relevant)
@@ -129,6 +142,8 @@ face_count | face_names
 ```
 video (FK) | start_seconds | end_seconds
 text  — transcript text, FTS+trgm indexed
+speaker_label — diarization label (e.g. SPEAKER_02)
+speaker_identity — FK to SpeakerIdentity (resolved identity after diarization)
 ```
 
 ### 3.4 DetectedFace (one per face detected in a frame)
@@ -156,6 +171,14 @@ clip_embedding — vector(512), HNSW indexed
 face_count | face_names
 status (pending/processing/ready/failed)
 visibility (public/private)
+```
+
+### 3.7 SpeakerIdentity
+
+```
+name | is_auto_named | role (speaker/narrator/background)
+speaker_embedding — vector(256) for cross-video voice matching
+face_identity (optional FK) — manual bridge between voice and face identity
 ```
 
 ---
@@ -193,7 +216,7 @@ Celery task queued (queue='processing')
 | Queue        | Tasks                                                          | Typical runtime |
 | ------------ | -------------------------------------------------------------- | --------------- |
 | `processing` | HLS encoding, frame analysis, photo analysis, audio extraction | 1–30 min        |
-| `captions`   | faster-whisper transcription                                   | 30s–10 min      |
+| `captions`   | faster-whisper transcription, speaker diarization (pyannote)    | 30s–10 min      |
 | `default`    | segment re-indexing, misc                                      | <5s             |
 
 
@@ -230,6 +253,8 @@ All caps apply after active filters (channel/category/duration/date) have narrow
 | CLIP ViT-B/32                     | Visual embeddings + semantic search | ~600 MB | ~1 GB   |
 | faster-whisper (medium)           | Speech transcription                | ~1.5 GB | ~2 GB   |
 | InsightFace buffalo_l             | Face detection + ArcFace embeddings | ~300 MB | ~600 MB |
+| pyannote speaker-diarization-3.1  | Speaker diarization (who spoke when) | ~?     | ~?      |
+| WeSpeaker ResNet34 (voxceleb)     | Speaker embeddings (256-d)          | ~?     | ~?      |
 
 
 **Cache strategy:** CLIP model is loaded once per Django process (module-level cache with threading lock). All other models are loaded inside the Celery task and released when the task completes — Celery workers are typically long-lived so models may stay warm across tasks.
@@ -250,6 +275,8 @@ YOLO_MODEL                    = 'yolov8n'
 FUZZY_SEARCH_ENABLED          = True
 FUZZY_SEARCH_SIMILARITY_THRESHOLD = 0.22
 AUTO_CAPTION_ON_UPLOAD        = True
+SPEAKER_MATCH_THRESHOLD       = 0.75
+HF_TOKEN                      = ''   # required for pyannote diarization models
 ```
 
 ---
