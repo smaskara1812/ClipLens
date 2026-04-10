@@ -83,9 +83,11 @@ There is no self-hosted solution that provides AI-grade multimodal search (seman
 **Feature:** Automatically analyze ingested videos and photos to extract structured metadata for search.
 
 **Acceptance Criteria:**
-- YOLO object detection runs on sampled video frames and stores labels per frame
-- InsightFace face detection runs on sampled frames, crops faces, and stores crops with embeddings
-- BLIP or Florence-2 generates a natural language scene description per sampled frame
+- Frame extraction uses a scene-aware FFmpeg filter: baseline 1 frame every `FRAME_INTERVAL_SECONDS` (default 5s) **plus** one additional frame at every hard scene cut (pixel-level change > `SCENE_CHANGE_THRESHOLD`). Near-duplicate frames within `SCENE_CHANGE_MIN_GAP` seconds of an already-kept frame are deduplicated before any AI model is run.
+- Real frame timestamps are derived from FFmpeg's `showinfo` filter output (not inferred from frame index), ensuring `VideoFrame.timestamp` values are accurate for variable-rate scene-cut extraction.
+- YOLO object detection runs on all extracted frames (interval + scene-cut) and stores labels per frame
+- InsightFace face detection runs on all extracted frames, crops faces, and stores crops with embeddings
+- BLIP or Florence-2 generates a natural language scene description per extracted frame
 - OpenAI CLIP generates 512-dim embeddings per frame for semantic search
 - Whisper (faster-whisper) transcribes audio to text segments with timestamps
 - All pipeline stages run asynchronously via Celery; the UI remains responsive during processing

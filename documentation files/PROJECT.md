@@ -63,7 +63,7 @@ ClipStream is not:
 
 ### Processing layer (Celery)
 
-- **Video**: FFmpeg → HLS → frame extraction → YOLO → BLIP/Florence-2 → CLIP → InsightFace → Whisper
+- **Video**: FFmpeg → HLS → scene-aware frame extraction (baseline interval + hard cuts) → YOLO → BLIP/Florence-2 → CLIP → InsightFace → Whisper
 - **Photo**: YOLO → BLIP/Florence-2 → CLIP → InsightFace → Pillow thumbnail
 - Workers pick up tasks from `processing` and `captions` queues
 - Status transitions: `pending → processing → ready | failed`
@@ -71,7 +71,7 @@ ClipStream is not:
 
 ### Storage layer (Postgres + pgvector)
 
-- `VideoFrame`: one row per sampled frame, holds YOLO labels, BLIP caption, CLIP `vector(512)`
+- `VideoFrame`: one row per sampled frame (interval + scene-cut frames), holds YOLO labels, BLIP caption, CLIP `vector(512)`, real timestamp from FFmpeg
 - `VideoSegment`: one row per Whisper segment (start/end time + text)
 - `DetectedFace`: one row per detected face (bbox, ArcFace embedding JSON, identity FK)
 - `Photo`: one row per uploaded image, same AI fields as VideoFrame

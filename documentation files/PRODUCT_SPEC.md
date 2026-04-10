@@ -18,16 +18,18 @@ ClipStream is a self-hosted media intelligence platform. Its primary value is no
 ### 2.1 Video Ingestion Pipeline
 
 
-| Stage                | Technology                   | Output                                                |
-| -------------------- | ---------------------------- | ----------------------------------------------------- |
-| Transcoding          | FFmpeg → HLS (multi-quality) | Adaptive bitrate stream                               |
-| Frame extraction     | FFmpeg `fps=1/N`             | JPEG frames at configurable interval                  |
-| Object detection     | YOLOv8n                      | Per-frame label set (comma-separated)                 |
-| Scene captioning     | BLIP or Florence-2           | Per-frame natural language description                |
-| CLIP encoding        | CLIP ViT-B/32                | Per-frame 512-d embedding (pgvector)                  |
-| Face detection       | InsightFace buffalo_l        | ArcFace 512-d embeddings, bounding boxes, crop images |
-| Face clustering      | Greedy cosine clustering     | Automatic identity grouping across all frames         |
-| Speech transcription | faster-whisper               | WebVTT subtitles + searchable transcript segments     |
+| Stage                | Technology                             | Output                                                |
+| -------------------- | -------------------------------------- | ----------------------------------------------------- |
+| Transcoding          | FFmpeg → HLS (multi-quality)           | Adaptive bitrate stream                               |
+| Frame extraction     | FFmpeg `select` filter (scene-aware)   | JPEG frames at baseline interval + hard scene cuts    |
+| Object detection     | YOLOv8n                                | Per-frame label set (comma-separated)                 |
+| Scene captioning     | BLIP or Florence-2                     | Per-frame natural language description                |
+| CLIP encoding        | CLIP ViT-B/32                          | Per-frame 512-d embedding (pgvector)                  |
+| Face detection       | InsightFace buffalo_l                  | ArcFace 512-d embeddings, bounding boxes, crop images |
+| Face clustering      | Greedy cosine clustering               | Automatic identity grouping across all frames         |
+| Speech transcription | faster-whisper                         | WebVTT subtitles + searchable transcript segments     |
+
+**Scene-aware frame extraction:** instead of a fixed `fps=1/N` filter, the system uses an FFmpeg `select` expression that fires on every hard scene cut (pixel-level change > configurable threshold) **in addition to** the regular baseline interval. This means people and objects that only appear in a short shot between two 5-second boundaries are captured, where they would previously be invisible to all AI analysis. Near-duplicate frames (scene cut landing within 0.5s of an interval frame) are deduplicated automatically.
 
 
 All stages run asynchronously via **Celery** (`processing` and `captions` queues backed by Redis).
@@ -239,7 +241,7 @@ All caps apply after active filters (channel/category/duration/date) have narrow
 ## 7. Settings Reference
 
 ```python
-FRAME_INTERVAL_SECONDS        = 5       # sample 1 frame every N seconds of video
+FRAME_INTERVAL_SECONDS        = 5       # sample 1 frame every N seconds of video (baseline)
 FRAME_ANALYSIS_ENABLED        = True
 SCENE_DESCRIPTION_ENABLED     = True
 SCENE_CAPTION_MODEL           = 'blip'  # or 'florence2'
@@ -250,6 +252,11 @@ YOLO_MODEL                    = 'yolov8n'
 FUZZY_SEARCH_ENABLED          = True
 FUZZY_SEARCH_SIMILARITY_THRESHOLD = 0.22
 AUTO_CAPTION_ON_UPLOAD        = True
+
+# Scene-change frame extraction
+SCENE_CHANGE_ENABLED          = True    # add frames at hard cuts (in addition to interval)
+SCENE_CHANGE_THRESHOLD        = 0.35    # 0–1; lower = more sensitive; raise for stable content
+SCENE_CHANGE_MIN_GAP          = 0.5     # seconds; dedup window to avoid double-processing
 ```
 
 ---

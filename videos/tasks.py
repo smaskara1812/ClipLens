@@ -350,16 +350,42 @@ def analyze_video_frames_task(self, video_id: str):
     yolo_model_name = getattr(settings, 'YOLO_MODEL', 'yolov8n')
     face_enabled    = getattr(settings, 'FACE_RECOGNITION_ENABLED', True)
 
+    scene_change_enabled   = getattr(settings, 'SCENE_CHANGE_ENABLED',   True)
+    scene_change_threshold = getattr(settings, 'SCENE_CHANGE_THRESHOLD', 0.35)
+    scene_change_min_gap   = getattr(settings, 'SCENE_CHANGE_MIN_GAP',   0.5)
+
     tmp_dir = None
     try:
         # ── Step 1: extract frames ────────────────────────────────────────────
         tmp_dir = tempfile.mkdtemp(prefix='fs_frames_')
         frame_pattern = os.path.join(tmp_dir, 'frame_%05d.jpg')
 
+        # Build the -vf filter.
+        # Scene-change mode:  fires on every hard cut (pixel diff > threshold)
+        #   OR every FRAME_INTERVAL_SECONDS — whichever comes first.
+        # showinfo is appended so FFmpeg writes pts_time:X.XXX for every output
+        #   frame to stderr; we parse that to get real timestamps instead of
+        #   inferring them from the sequential frame index.
+        if scene_change_enabled:
+            # eq(n,0)                       → always keep the very first frame
+            # gt(scene,T)                   → keep any hard-cut frame
+            # gte(t-prev_selected_t, N)     → keep a frame every N seconds
+            #   (prev_selected_t is a built-in select-filter variable — the
+            #    timestamp of the last selected frame, NaN before the first one)
+            # NOTE: 'fr' is NOT available in select expressions — use 't' / 'n'.
+            vf_filter = (
+                f"select='eq(n,0)+gt(scene,{scene_change_threshold})"
+                f"+gte(t-prev_selected_t,{interval})',"
+                f"showinfo"
+            )
+        else:
+            vf_filter = f"fps=1/{interval},showinfo"
+
         cmd = [
             settings.FFMPEG_PATH,
             '-i', str(source_path),
-            '-vf', f'fps=1/{interval}',
+            '-vf', vf_filter,
+            '-vsync', 'vfr',
             '-q:v', '3',
             '-f', 'image2',
             frame_pattern,
@@ -378,7 +404,51 @@ def analyze_video_frames_task(self, video_id: str):
             logger.info(f'analyze_video_frames_task: no frames extracted for {video_id}')
             return
 
-        logger.info(f'analyze_video_frames_task: {len(frame_files)} frames for {video_id}')
+        # ── Parse actual timestamps from showinfo stderr output ───────────────
+        # showinfo writes a line per frame containing pts_time:X.XXXXXX
+        import re as _re
+        raw_timestamps = [
+            float(m.group(1))
+            for m in (_re.search(r'pts_time:(\S+)', ln) for ln in result.stderr.splitlines())
+            if m
+        ]
+
+        if len(raw_timestamps) == len(frame_files):
+            frame_timestamps = raw_timestamps
+        else:
+            # Fallback: infer from sequential index (old behaviour)
+            logger.warning(
+                f'analyze_video_frames_task: showinfo timestamp count '
+                f'({len(raw_timestamps)}) != frame file count ({len(frame_files)}) '
+                f'for {video_id} — falling back to interval-based timestamps'
+            )
+            frame_timestamps = [float(i * interval) for i in range(len(frame_files))]
+
+        # ── Step 1b: deduplicate near-adjacent frames ─────────────────────────
+        # A scene-cut frame that lands within scene_change_min_gap seconds of a
+        # regular interval frame is redundant — drop it (and its file) to avoid
+        # double-processing the same visual content.
+        kept_files: list = []
+        kept_timestamps: list = []
+        last_kept_t = -999.0
+        for f, t in zip(frame_files, frame_timestamps):
+            if t - last_kept_t >= scene_change_min_gap:
+                kept_files.append(f)
+                kept_timestamps.append(t)
+                last_kept_t = t
+            else:
+                try:
+                    Path(f).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        frame_files      = kept_files
+        frame_timestamps = kept_timestamps
+
+        logger.info(
+            f'analyze_video_frames_task: {len(frame_files)} frames for {video_id} '
+            f'(scene-change extraction: {scene_change_enabled})'
+        )
 
         # ── Step 2: load models ───────────────────────────────────────────────
         from ultralytics import YOLO
@@ -468,8 +538,7 @@ def analyze_video_frames_task(self, video_id: str):
         frame_objects   = []   # VideoFrame rows
         raw_faces       = []   # {frame_idx, timestamp, bbox, embedding, confidence, img_path}
 
-        for idx, frame_path in enumerate(frame_files):
-            timestamp = float(idx * interval)
+        for idx, (frame_path, timestamp) in enumerate(zip(frame_files, frame_timestamps)):
 
             # --- YOLO ---
             yolo_results = yolo.predict(
@@ -1066,6 +1135,35 @@ def _extract_photo_exif(img_path):
     exif = {}
     taken_at = None
 
+    def _json_safe(v):
+        # Pillow EXIF can include bytes (esp. GPS). JSONField can't.
+        if isinstance(v, memoryview):
+            v = v.tobytes()
+        if isinstance(v, (bytes, bytearray)):
+            if len(v) == 1:
+                # Common for GPSAltitudeRef (0/1) and similar flags.
+                return int(v[0])
+            try:
+                s = v.decode('utf-8', errors='replace')
+                # Postgres JSON cannot contain NUL (\u0000).
+                s = s.replace('\x00', '')
+                return s[:200]
+            except Exception:
+                return v.hex()[:400]
+        if isinstance(v, (tuple, list)):
+            return [_json_safe(x) for x in v]
+        if isinstance(v, dict):
+            return {str(k): _json_safe(val) for k, val in v.items()}
+        if isinstance(v, str):
+            return v.replace('\x00', '')  # keep caller’s truncation rules
+        # Last resort: stringify, but ensure no NULs sneak in.
+        try:
+            s = str(v)
+        except Exception:
+            return None
+        return s.replace('\x00', '')[:200]
+        return v
+
     for tag_id, value in raw.items():
         tag = TAGS.get(tag_id, None)
         if not tag or tag not in KEEP_TAGS:
@@ -1077,29 +1175,54 @@ def _extract_photo_exif(img_path):
                 for gps_id, gps_val in gps_raw.items():
                     gps_tag = GPSTAGS.get(gps_id, str(gps_id))
                     if isinstance(gps_val, (tuple, list)):
-                        gps[gps_tag] = [float(v) if hasattr(v, 'numerator') else v for v in gps_val]
+                        gps[gps_tag] = [
+                            float(v) if hasattr(v, 'numerator') else _json_safe(v)
+                            for v in gps_val
+                        ]
                     elif hasattr(gps_val, 'numerator'):
                         gps[gps_tag] = float(gps_val)
                     else:
-                        gps[gps_tag] = gps_val
+                        gps[gps_tag] = _json_safe(gps_val)
                 if gps:
                     exif['GPSInfo'] = gps
             except Exception:
                 pass
         elif tag in ('DateTimeOriginal', 'DateTime', 'DateTimeDigitized'):
             try:
-                dt = datetime.datetime.strptime(str(value), '%Y:%m:%d %H:%M:%S')
+                raw_dt = str(value)
+                dt = None
+                # Common EXIF format
+                try:
+                    dt = datetime.datetime.strptime(raw_dt, '%Y:%m:%d %H:%M:%S')
+                except Exception:
+                    dt = None
+                # Some pipelines/devices store ISO-ish strings already
+                if dt is None:
+                    try:
+                        dt = datetime.datetime.fromisoformat(raw_dt.replace('Z', '+00:00'))
+                    except Exception:
+                        dt = None
+                if dt is None:
+                    raise ValueError('unparseable datetime')
                 exif[tag] = dt.isoformat()
-                if tag == 'DateTimeOriginal' and taken_at is None:
-                    taken_at = dt.replace(tzinfo=datetime.timezone.utc)
+                # iPhone often provides DateTime (not DateTimeOriginal).
+                # Use the first available datetime as taken_at.
+                if taken_at is None:
+                    # If dt is naive, assume UTC. If aware, normalize to UTC.
+                    if dt.tzinfo is None:
+                        taken_at = dt.replace(tzinfo=datetime.timezone.utc)
+                    else:
+                        taken_at = dt.astimezone(datetime.timezone.utc)
             except (ValueError, TypeError):
-                exif[tag] = str(value)
+                exif[tag] = _json_safe(str(value))[:200]
         elif hasattr(value, 'numerator'):
             exif[tag] = float(value)
         elif isinstance(value, (int, float, bool)):
             exif[tag] = value
         elif isinstance(value, str):
-            exif[tag] = value[:200]
+            exif[tag] = _json_safe(value)[:200]
+        elif isinstance(value, (bytes, bytearray)):
+            exif[tag] = _json_safe(value)
         # skip bytes / unknown types
 
     return exif, taken_at

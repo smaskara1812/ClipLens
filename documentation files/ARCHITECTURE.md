@@ -248,7 +248,15 @@ USER UPLOADS VIDEO
 │  analyze_video_frames_task                                               │
 │  Queue: default                                                          │
 │                                                                          │
-│  1. Extract 1 frame every 5s → media/frames/<video_id>/frame_0000.jpg   │
+│  1. Scene-aware frame extraction                                         │
+│     Base: 1 frame every FRAME_INTERVAL_SECONDS (default 5s)             │
+│     + 1 frame at every hard scene cut (pixel diff > SCENE_CHANGE_       │
+│       THRESHOLD, default 0.35)                                           │
+│     Near-duplicate frames within SCENE_CHANGE_MIN_GAP (0.5s) of an      │
+│     already-kept frame are dropped to avoid double-processing.           │
+│     Real timestamps extracted from FFmpeg showinfo filter (not inferred  │
+│     from frame index) → accurate VideoFrame.timestamp values.            │
+│     Output → media/frames/<video_id>/frame_NNNNN.jpg                    │
 │                                                                          │
 │  2. Load models (once per task):                                         │
 │     ├── YOLOv8n                                                          │
@@ -377,8 +385,13 @@ HLS_SEGMENT_DURATION=6                              # seconds per .ts segment
 
 # ── Frame Analysis ───────────────────────────────────────────────────────────
 FRAME_ANALYSIS_ENABLED=true     # set false to skip during dev (much faster uploads)
-FRAME_INTERVAL_SECONDS=5        # extract 1 frame every N seconds
+FRAME_INTERVAL_SECONDS=5        # extract 1 frame every N seconds (baseline interval)
 YOLO_MODEL=yolov8n              # yolov8n / yolov8s / yolov8m (bigger = slower + better)
+
+# ── Scene-Change Frame Extraction ────────────────────────────────────────────
+SCENE_CHANGE_ENABLED=true       # add extra frames at hard scene cuts
+SCENE_CHANGE_THRESHOLD=0.35     # 0–1; lower = more sensitive to cuts (0.3 for fast-cut content)
+SCENE_CHANGE_MIN_GAP=0.5        # drop scene-cut frames within N secs of an interval frame
 
 # ── Scene Description ────────────────────────────────────────────────────────
 SCENE_DESCRIPTION_ENABLED=true

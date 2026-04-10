@@ -294,6 +294,16 @@ FUZZY_SEARCH_SIMILARITY_THRESHOLD = float(os.getenv('FUZZY_SEARCH_SIMILARITY_THR
 FRAME_INTERVAL_SECONDS   = int(os.getenv('FRAME_INTERVAL_SECONDS', '5'))   # 1 frame per N secs
 YOLO_MODEL               = os.getenv('YOLO_MODEL', 'yolov8n')              # nano/small/medium
 
+# ── Scene-change frame extraction ─────────────────────────────────────────────
+# When SCENE_CHANGE_ENABLED=true, FFmpeg also extracts a frame at every hard cut
+# (pixel-level difference > SCENE_CHANGE_THRESHOLD) in addition to the regular
+# FRAME_INTERVAL_SECONDS baseline.  Near-duplicate frames (closer than
+# SCENE_CHANGE_MIN_GAP seconds to an already-kept frame) are dropped so a cut
+# that lands right on the interval doesn't double-process the same instant.
+SCENE_CHANGE_ENABLED      = os.getenv('SCENE_CHANGE_ENABLED', 'true').lower() == 'true'
+SCENE_CHANGE_THRESHOLD    = float(os.getenv('SCENE_CHANGE_THRESHOLD', '0.35'))   # 0–1; lower = more sensitive
+SCENE_CHANGE_MIN_GAP      = float(os.getenv('SCENE_CHANGE_MIN_GAP', '0.5'))      # seconds; dedup window
+
 # ── Face recognition settings ─────────────────────────────────────────────────
 # Max crop *images* saved per identity per video (keeps storage bounded).
 # All DetectedFace rows are still created; only the N most frontal faces get images.

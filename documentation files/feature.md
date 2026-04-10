@@ -38,6 +38,7 @@ Search merges several signals so one query can surface **moments** across the li
 | **Scene description search** | Find content described in **natural language** per frame (configurable caption models). |
 | **Semantic visual search (CLIP)** | Find scenes by **meaning** even when exact words never appear in captions (e.g. “celebration” vs. a literal caption). |
 | **People & faces** | Detect faces, cluster identities within a video, **tag and merge** people, and **match across videos** to reuse names when the same person appears again. |
+| **Scene-aware frame extraction** | AI analysis now captures frames at every hard camera cut, not just at fixed intervals. People and objects in brief shots are no longer invisible to the system. |
 
 **Privacy note:** These models run **on your hardware**; there is **no requirement** to call external AI APIs for these features.
 
