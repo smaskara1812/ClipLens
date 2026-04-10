@@ -88,7 +88,7 @@
             {% else %}<div class="pl-thumb-ph">▶</div>{% endif %}
             <div class="pl-count-badge">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>
-              {{ pl.video_count }} video{{ pl.video_count|pluralize }}
+              {{ pl.items_total }} video{{ pl.items_total|pluralize }}
             </div>
             {% if not pl.is_public %}
             <div class="pl-private-badge">

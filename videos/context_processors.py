@@ -19,13 +19,16 @@ def sidebar_context(request):
         subscribed_channels = list(
             Channel.objects.filter(subscribers__user=request.user).order_by('name')
         )
-        owned_channels = list(
-            Channel.objects.filter(
-                Q(owner=request.user) | Q(editors=request.user)
+        owned_channels = getattr(request, '_owned_channels_cache', None)
+        if owned_channels is None:
+            owned_channels = list(
+                Channel.objects.filter(
+                    Q(owner=request.user) | Q(editors=request.user)
+                )
+                .distinct()
+                .order_by('name')
             )
-            .distinct()
-            .order_by('name')
-        )
+            request._owned_channels_cache = owned_channels
 
         _unread_key = f'unread_{request.user.pk}'
         unread_count = _cache.get(_unread_key)

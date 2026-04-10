@@ -318,6 +318,48 @@
       <pre class="cmd-output" id="out-regenerate_captions"></pre>
     </div>
 
+    <!-- ── run_diarization ──────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_diarization">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(6,182,212,.12);">🎙️</div>
+        <div>
+          <div class="cmd-title">Run Diarization</div>
+          <div class="cmd-desc">Run pyannote speaker diarization and map transcript segments to speakers.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="run_diarization-video_id">
+            <option value="">— all non-diarized videos —</option>
+            {% for v in videos %}
+            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Include status</label>
+          <input class="form-input" id="run_diarization-include_status" value="ready" placeholder="ready,processing" />
+          <span class="field-hint">Command only processes videos that have segments and no diarization labels yet.</span>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_diarization-dry_run" /> Dry Run</label>
+        <label class="toggle-row"><input type="checkbox" id="run_diarization-force" /> Force re-run (include already diarized videos)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('run_diarization', {
+          video_id: document.getElementById('run_diarization-video_id').value || undefined,
+          include_status: document.getElementById('run_diarization-include_status').value,
+          dry_run: document.getElementById('run_diarization-dry_run').checked,
+          force: document.getElementById('run_diarization-force').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-run_diarization"></pre>
+    </div>
+
     <!-- ── propagate_identities ─────────────────────────────────────────── -->
     <div class="cmd-card" id="card-propagate_identities">
       <div class="cmd-card-head">

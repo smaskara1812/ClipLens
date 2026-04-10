@@ -416,6 +416,7 @@ def setup_channel_page(request):
 @editor_required
 def upload_page(request):
     channels = list(_user_channels(request.user))
+    request._owned_channels_cache = channels
     if not channels:
         return redirect('setup_channel')
     categories = Category.objects.all()
@@ -1296,11 +1297,15 @@ def analytics_page(request):
     import datetime
     import json
 
-    all_channels = list(_user_channels(request.user))
+    all_channels = list(
+        _user_channels(request.user).annotate(
+            subscribers_total=Count('subscribers', distinct=True)
+        )
+    )
+    request._owned_channels_cache = all_channels
     if not all_channels:
         return render(request, 'videos/analytics.html', {
             'all_channels': [], 'channel': None, 'videos': [],
-            'unread_count': _unread_count(request),
         })
 
     # Channel selector — ?channel=<uuid> or omit for combined view
@@ -1325,11 +1330,7 @@ def analytics_page(request):
                   )
                   .order_by('-created_at'))
         watch_q = {'video__channel': channel}
-        _sub_key = f'fs:sub_count_{channel.pk}'
-        total_subscribers = cache.get(_sub_key)
-        if total_subscribers is None:
-            total_subscribers = channel.subscribers.count()
-            cache.set(_sub_key, total_subscribers, 60 * 5)
+        total_subscribers = channel.subscribers_total
     else:
         videos = (Video.objects
                   .filter(channel__in=all_channels)
@@ -1340,7 +1341,7 @@ def analytics_page(request):
                   )
                   .order_by('-created_at'))
         watch_q = {'video__channel__in': all_channels}
-        total_subscribers = sum(c.subscribers.count() for c in all_channels)
+        total_subscribers = sum(c.subscribers_total for c in all_channels)
 
     videos = list(videos)
     total_views    = sum(v.views_count    for v in videos)
@@ -1370,7 +1371,6 @@ def analytics_page(request):
         'total_subscribers': total_subscribers,
         'chart_labels':      json.dumps(chart_labels),
         'chart_data':        json.dumps(chart_data),
-        'unread_count':      _unread_count(request),
     })
 
 
@@ -1442,7 +1442,12 @@ def history_page(request):
 
 @login_required
 def playlists_page(request):
-    playlists = list(Playlist.objects.filter(owner=request.user).order_by('-updated_at'))
+    playlists = list(
+        Playlist.objects
+        .filter(owner=request.user)
+        .annotate(items_total=Count('items'))
+        .order_by('-updated_at')
+    )
 
     # Precompute thumbnails in ONE query instead of N×2 via the property.
     # Fetch all first thumbnail-having items across all playlists, ordered so the
@@ -1511,10 +1516,15 @@ def admin_commands_page(request):
     channels   = list(Channel.objects.values('name', 'slug').order_by('name'))
     categories = list(Category.objects.values('name', 'slug').order_by('name'))
     users      = list(User.objects.values('id', 'username').order_by('username'))
+    videos     = list(
+        Video.objects.values('id', 'title', 'status')
+        .order_by('-created_at')[:400]
+    )
     return render(request, 'videos/admin_commands.html', {
         'channels':   channels,
         'categories': categories,
         'users':      users,
+        'videos':     videos,
     })
 
 
@@ -1539,6 +1549,7 @@ def admin_commands_run(request):
         'assign_role', 'reanalyse_videos', 'rename_auto_identities',
         'ingest_videos', 'regenerate_captions', 'propagate_identities',
         'auto_confirm_similar', 'patch_master_playlists', 'fill_blip_descriptions',
+        'run_diarization',
     }
     if cmd not in ALLOWED:
         return Response({'error': f'Command not allowed: {cmd}'}, status=status.HTTP_400_BAD_REQUEST)
@@ -3205,20 +3216,17 @@ def face_identity_page(request, identity_id):
             .exclude(identity=identity)
             .exclude(identity__isnull=True)
             .filter(identity__is_auto_named=False)
-            .select_related('identity')
             .values('video_id', 'identity_id', 'identity__name')
-            .distinct()
+            .annotate(appearances=Count('id'))
+            .order_by('video_id', '-appearances', 'identity__name')
         )
         from collections import defaultdict as _co_dd
         _co_vid_map = _co_dd(list)
-        _seen_co = _co_dd(set)
         for row in _co_rows:
             vid_id = str(row['video_id'])
-            iid    = row['identity_id']
-            if iid not in _seen_co[vid_id]:
-                _seen_co[vid_id].add(iid)
-                # thumbnail comes from FaceIdentity — fetch lazily below
-                _co_vid_map[vid_id].append(iid)
+            iid = row['identity_id']
+            # Ordered by appearances desc per video, then name for stable ties.
+            _co_vid_map[vid_id].append(iid)
 
         # Batch fetch FaceIdentity objects for thumbnail URLs
         all_co_ids = {iid for ids in _co_vid_map.values() for iid in ids}
@@ -3268,7 +3276,6 @@ def face_identity_page(request, identity_id):
     # Find identities who appear in the same videos or photos as this identity,
     # ranked by total shared sources.
     from collections import defaultdict as _dd
-    from django.db.models import Count as _Count
 
     my_video_ids = (
         DetectedFace.objects.filter(identity=identity, video__isnull=False)
@@ -3291,13 +3298,13 @@ def face_identity_page(request, identity_id):
                 .filter(video_id__in=my_video_ids)
                 .filter(_tagged_co_q)
                 .values('identity_id')
-                .annotate(cnt=_Count('video_id', distinct=True))):
+                .annotate(cnt=Count('video_id', distinct=True))):
         _co[row['identity_id']]['video_count'] = row['cnt']
     for row in (DetectedFace.objects
                 .filter(photo_id__in=my_photo_ids)
                 .filter(_tagged_co_q)
                 .values('identity_id')
-                .annotate(cnt=_Count('photo_id', distinct=True))):
+                .annotate(cnt=Count('photo_id', distinct=True))):
         _co[row['identity_id']]['photo_count'] = row['cnt']
 
     _sorted_co = sorted(_co.items(),
@@ -4526,18 +4533,20 @@ def speakers_page(request):
     GET /speakers/
     Lists SpeakerIdentity rows that have segments in the current user's channel videos.
     """
-    user_channels = _user_channels(request.user)
-    has_channel   = user_channels.exists()
+    user_channels = list(_user_channels(request.user))
+    request._owned_channels_cache = user_channels
+    has_channel   = bool(user_channels)
 
     q            = request.GET.get('q', '').strip()
     active_filter = request.GET.get('filter', 'all')
 
     if has_channel:
-        user_channel_ids = list(user_channels.values_list('id', flat=True))
+        user_channel_ids = [ch.id for ch in user_channels]
         # Speakers visible to this user = those whose segments appear in their videos
-        qs = (
+        base_qs = (
             SpeakerIdentity.objects
             .filter(segments__video__channel_id__in=user_channel_ids)
+            .select_related('face_identity')
             .distinct()
             .annotate(
                 video_count=Count(
@@ -4553,7 +4562,15 @@ def speakers_page(request):
             .order_by('name')
         )
         if q:
-            qs = qs.filter(name__icontains=q)
+            base_qs = base_qs.filter(name__icontains=q)
+        totals = base_qs.aggregate(
+            total_all=Count('id'),
+            total_named=Count('id', filter=Q(is_auto_named=False)),
+            total_auto=Count('id', filter=Q(is_auto_named=True)),
+            total_narrator=Count('id', filter=Q(role=SpeakerIdentity.ROLE_NARRATOR)),
+            total_background=Count('id', filter=Q(role=SpeakerIdentity.ROLE_BACKGROUND)),
+        )
+        qs = base_qs
         if active_filter == 'named':
             qs = qs.filter(is_auto_named=False)
         elif active_filter == 'auto':
@@ -4564,12 +4581,19 @@ def speakers_page(request):
             qs = qs.filter(role=SpeakerIdentity.ROLE_BACKGROUND)
     else:
         qs = SpeakerIdentity.objects.none()
+        totals = {
+            'total_all': 0,
+            'total_named': 0,
+            'total_auto': 0,
+            'total_narrator': 0,
+            'total_background': 0,
+        }
 
-    total_all        = qs.filter(is_auto_named=False).count() + qs.filter(is_auto_named=True).count() if has_channel else 0
-    total_named      = qs.filter(is_auto_named=False).count() if has_channel else 0
-    total_auto       = qs.filter(is_auto_named=True).count() if has_channel else 0
-    total_narrator   = qs.filter(role=SpeakerIdentity.ROLE_NARRATOR).count() if has_channel else 0
-    total_background = qs.filter(role=SpeakerIdentity.ROLE_BACKGROUND).count() if has_channel else 0
+    total_all        = totals['total_all']
+    total_named      = totals['total_named']
+    total_auto       = totals['total_auto']
+    total_narrator   = totals['total_narrator']
+    total_background = totals['total_background']
 
     # Re-evaluate after filter (for pagination — qs already filtered above)
     from django.core.paginator import Paginator
@@ -4587,7 +4611,6 @@ def speakers_page(request):
         'active_filter':  active_filter,
         'search_query':   q,
         'has_channel':    has_channel,
-        'unread_count':   _unread_count(request),
     })
 
 
@@ -4599,11 +4622,12 @@ def speaker_identity_page(request, speaker_id):
     Optional GET q= (2+ chars): full-text search over transcript segments for this speaker only
     (same Postgres FTS / icontains strategy as main player speech search).
     """
-    speaker       = get_object_or_404(SpeakerIdentity, id=speaker_id)
-    user_channels = _user_channels(request.user)
+    speaker       = get_object_or_404(SpeakerIdentity.objects.select_related('face_identity'), id=speaker_id)
+    user_channels = list(_user_channels(request.user))
+    request._owned_channels_cache = user_channels
 
     # Gather videos this speaker appears in (current user's channels only)
-    user_channel_ids = list(user_channels.values_list('id', flat=True))
+    user_channel_ids = [ch.id for ch in user_channels]
     phrase_q         = (request.GET.get('q') or '').strip()
     active_phrase    = len(phrase_q) >= 2
 
