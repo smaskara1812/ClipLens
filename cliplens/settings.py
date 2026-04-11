@@ -312,6 +312,12 @@ FACE_MAX_CROPS_PER_VIDEO    = int(os.getenv('FACE_MAX_CROPS_PER_VIDEO', '6'))
 # Higher = stricter; only very confident matches skip manual review.
 FACE_AUTO_CONFIRM_THRESHOLD = float(os.getenv('FACE_AUTO_CONFIRM_THRESHOLD', '0.82'))
 
+# Face detection quality gates — applied per-detection before clustering.
+# Raising these reduces junk crops (blurry, tiny, side-profile faces).
+FACE_MIN_DET_SCORE = float(os.getenv('FACE_MIN_DET_SCORE', '0.20'))  # InsightFace confidence 0–1
+FACE_MIN_AREA_PX   = int(os.getenv('FACE_MIN_AREA_PX',   '200'))    # min bbox area in pixels (60×60)
+FACE_MAX_YAW_DEG   = float(os.getenv('FACE_MAX_YAW_DEG', '80'))      # max head yaw before skipping
+
 # Cosine similarity threshold for cross-video speaker matching (0.0–1.0).
 # A new speaker embedding is matched to an existing SpeakerIdentity when
 # cosine_sim >= threshold.  0.75 is a good balance for wespeaker-resnet34.

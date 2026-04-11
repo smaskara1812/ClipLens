@@ -611,16 +611,26 @@ def analyze_video_frames_task(self, video_id: str):
                         continue
                     faces = face_app.get(img)
                     for face in faces:
-                        if face.det_score < 0.50:
+                        # ── Quality gates ─────────────────────────────────────
+                        # 1. Detection confidence (InsightFace score 0–1)
+                        if face.det_score < getattr(settings, 'FACE_MIN_DET_SCORE', 0.65):
                             continue
-                        emb = face.embedding.tolist() if face.embedding is not None else None
-                        if emb is None:
+                        # 2. Face size — skip tiny faces (crowd, background)
+                        x1, y1, x2, y2 = face.bbox
+                        face_area = max(0, x2 - x1) * max(0, y2 - y1)
+                        if face_area < getattr(settings, 'FACE_MIN_AREA_PX', 3600):  # 60×60 px
                             continue
-                        # Capture pose (yaw/pitch/roll) for frontal-face scoring
+                        # 3. Pose — skip extreme profiles / back-of-head shots
                         try:
                             pose = face.pose.tolist() if face.pose is not None else [0.0, 0.0, 0.0]
                         except Exception:
                             pose = [0.0, 0.0, 0.0]
+                        if abs(pose[0]) > getattr(settings, 'FACE_MAX_YAW_DEG', 60):
+                            continue
+                        # ──────────────────────────────────────────────────────
+                        emb = face.embedding.tolist() if face.embedding is not None else None
+                        if emb is None:
+                            continue
                         raw_faces.append({
                             'frame_idx':  idx,
                             'timestamp':  timestamp,
