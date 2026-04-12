@@ -360,6 +360,63 @@
       <pre class="cmd-output" id="out-run_diarization"></pre>
     </div>
 
+    <!-- ── rebuild_speaker_face_suggestions ─────────────────────────────── -->
+    <div class="cmd-card" id="card-rebuild_speaker_face_suggestions">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(168,85,247,.12);">🔗</div>
+        <div>
+          <div class="cmd-title">Rebuild voice→face suggestions</div>
+          <div class="cmd-desc">
+            Recompute pending speaker↔face matches from existing segments and detected faces only.
+            No pyannote — use after restore, new faces, or heuristic tuning.
+          </div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="rebuild_speaker_face_suggestions-video_id">
+            <option value="">— all eligible ready videos —</option>
+            {% for v in videos %}
+            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Channel slug <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="rebuild_speaker_face_suggestions-channel">
+            <option value="">— any channel —</option>
+            {% for ch in channels %}
+            <option value="{{ ch.slug }}">{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Max videos</label>
+          <input class="form-input" id="rebuild_speaker_face_suggestions-limit" type="number" min="1" placeholder="no limit" style="max-width:120px;" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="rebuild_speaker_face_suggestions-dry_run" /> Dry run (list candidates only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const limRaw = document.getElementById('rebuild_speaker_face_suggestions-limit').value;
+          const lim = parseInt(limRaw, 10);
+          runCommand('rebuild_speaker_face_suggestions', {
+            video_id: document.getElementById('rebuild_speaker_face_suggestions-video_id').value || undefined,
+            channel: document.getElementById('rebuild_speaker_face_suggestions-channel').value || undefined,
+            limit: (Number.isFinite(lim) && lim > 0) ? lim : undefined,
+            dry_run: document.getElementById('rebuild_speaker_face_suggestions-dry_run').checked
+          });
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+        <span class="cmd-dryrun-hint">Large libraries may take a while — use channel, video, or limit to scope.</span>
+      </div>
+      <pre class="cmd-output" id="out-rebuild_speaker_face_suggestions"></pre>
+    </div>
+
     <!-- ── propagate_identities ─────────────────────────────────────────── -->
     <div class="cmd-card" id="card-propagate_identities">
       <div class="cmd-card-head">

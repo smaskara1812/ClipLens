@@ -408,6 +408,8 @@ class VideoSegment(models.Model):
         ordering = ['start_seconds']
         indexes  = [
             models.Index(fields=['video', 'start_seconds']),
+            models.Index(fields=['speaker_identity', 'video', 'start_seconds'], name='videoseg_spk_vid_start'),
+            models.Index(fields=['speaker_identity'], name='videoseg_speaker'),
         ]
 
     def __str__(self):
@@ -520,6 +522,7 @@ class DetectedFace(models.Model):
             models.Index(fields=['video', 'timestamp']),
             models.Index(fields=['photo', 'timestamp']),
             models.Index(fields=['identity']),
+            models.Index(fields=['video', 'identity', 'timestamp'], name='detface_vid_ident_ts'),
             # Composite indexes for faces_page GROUP BY + conditional COUNTs
             models.Index(fields=['identity', 'status'], name='detface_identity_status'),
             models.Index(fields=['identity', 'video'],  name='detface_identity_video'),
@@ -584,6 +587,64 @@ class SpeakerIdentity(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.role})'
+
+
+class SpeakerFaceSuggestion(models.Model):
+    """
+    Pending suggestion that a speaker voice matches a face identity.
+    Created after diarization from temporal overlap; user confirms or rejects.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    speaker_identity = models.ForeignKey(
+        'SpeakerIdentity',
+        on_delete=models.CASCADE,
+        related_name='face_suggestions',
+    )
+    face_identity = models.ForeignKey(
+        'FaceIdentity',
+        on_delete=models.CASCADE,
+        related_name='speaker_suggestions',
+    )
+    video = models.ForeignKey(
+        'Video',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='speaker_face_suggestions',
+        help_text='Source video where this co-occurrence was observed.',
+    )
+    score = models.FloatField(default=0.0, help_text='Higher = stronger evidence (overlap ratio vs speech).')
+    overlap_seconds = models.FloatField(default=0.0, help_text='Estimated speech/face overlap in seconds.')
+    evidence = models.JSONField(default=dict, blank=True, help_text='Heuristic metadata for review.')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-score', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['speaker_identity', 'face_identity', 'video'],
+                name='spk_face_suggestion_unique_triplet',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['speaker_identity', 'status'], name='spkfacesugg_spk_status'),
+            models.Index(fields=['face_identity', 'status'], name='spkfacesugg_face_status'),
+            models.Index(fields=['video'], name='spkfacesugg_video'),
+        ]
+
+    def __str__(self):
+        return f'{self.speaker_identity.name} → {self.face_identity.name} ({self.status})'
 
 
 # ── Subtitles / Captions ─────────────────────────────────────────────────────

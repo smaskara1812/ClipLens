@@ -22,6 +22,7 @@ from django.db import connection
 from django.db.models import Q, Sum, Count, F
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework import status
@@ -35,7 +36,7 @@ from .models import (
     Playlist, PlaylistItem, WatchHistory, SavedVideo,
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
     FaceIdentity, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
-    SpeakerIdentity,
+    SpeakerIdentity, SpeakerFaceSuggestion,
 )
 from .serializers import (
     VideoListSerializer, VideoDetailSerializer, VideoUploadSerializer,
@@ -1550,6 +1551,7 @@ def admin_commands_run(request):
         'ingest_videos', 'regenerate_captions', 'propagate_identities',
         'auto_confirm_similar', 'patch_master_playlists', 'fill_blip_descriptions',
         'run_diarization',
+        'rebuild_speaker_face_suggestions',
     }
     if cmd not in ALLOWED:
         return Response({'error': f'Command not allowed: {cmd}'}, status=status.HTTP_400_BAD_REQUEST)
@@ -4558,6 +4560,14 @@ def speakers_page(request):
                     'segments',
                     filter=Q(segments__video__channel_id__in=user_channel_ids),
                 ),
+                pending_suggestion_count=Count(
+                    'face_suggestions',
+                    filter=Q(
+                        face_suggestions__status=SpeakerFaceSuggestion.STATUS_PENDING,
+                        face_suggestions__video__channel_id__in=user_channel_ids,
+                    ),
+                    distinct=True,
+                ),
             )
             .order_by('name')
         )
@@ -4726,11 +4736,22 @@ def speaker_identity_page(request, speaker_id):
         .order_by('name')
     )
 
+    pending_suggestions = (
+        SpeakerFaceSuggestion.objects
+        .filter(
+            speaker_identity=speaker,
+            status=SpeakerFaceSuggestion.STATUS_PENDING,
+        )
+        .select_related('face_identity', 'video')
+        .order_by('-score', '-overlap_seconds', '-created_at')[:10]
+    )
+
     return render(request, 'videos/speaker_identity.html', {
         'speaker':          speaker,
         'video_groups':     video_groups,
         'face_identities':  face_identities,
         'all_speakers':     all_speakers,
+        'pending_suggestions': pending_suggestions,
         'unread_count':     _unread_count(request),
         'phrase_query':     phrase_q,
         'active_phrase':    active_phrase,
@@ -4805,6 +4826,74 @@ def speaker_link_face(request, speaker_id):
         'renamed':          renamed,
         'new_name':         speaker.name,
     })
+
+
+@api_view(['POST'])
+@api_login_required
+def speaker_suggestion_accept(request, speaker_id, suggestion_id):
+    """
+    POST /api/speakers/<id>/suggestions/<suggestion_id>/accept/
+    Accept a pending voice→face suggestion and link this speaker to that face.
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    suggestion = get_object_or_404(
+        SpeakerFaceSuggestion.objects.select_related('face_identity'),
+        id=suggestion_id,
+        speaker_identity=speaker,
+    )
+    if suggestion.status != SpeakerFaceSuggestion.STATUS_PENDING:
+        return Response({'error': 'Suggestion already decided.'}, status=400)
+
+    face = suggestion.face_identity
+    speaker.face_identity = face
+    update_fields = ['face_identity']
+    if speaker.is_auto_named and not face.is_auto_named:
+        speaker.name = face.name
+        speaker.is_auto_named = False
+        update_fields += ['name', 'is_auto_named']
+    speaker.save(update_fields=update_fields)
+
+    now = timezone.now()
+    suggestion.status = SpeakerFaceSuggestion.STATUS_ACCEPTED
+    suggestion.decided_at = now
+    suggestion.save(update_fields=['status', 'decided_at', 'updated_at'])
+
+    SpeakerFaceSuggestion.objects.filter(
+        speaker_identity=speaker,
+        status=SpeakerFaceSuggestion.STATUS_PENDING,
+    ).exclude(id=suggestion.id).update(
+        status=SpeakerFaceSuggestion.STATUS_REJECTED,
+        decided_at=now,
+    )
+
+    return Response({
+        'ok': True,
+        'speaker_id': speaker.pk,
+        'face_identity_id': face.pk,
+        'face_identity_name': face.name,
+        'speaker_name': speaker.name,
+    })
+
+
+@api_view(['POST'])
+@api_login_required
+def speaker_suggestion_reject(request, speaker_id, suggestion_id):
+    """
+    POST /api/speakers/<id>/suggestions/<suggestion_id>/reject/
+    Reject a pending voice→face suggestion.
+    """
+    speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
+    suggestion = get_object_or_404(
+        SpeakerFaceSuggestion,
+        id=suggestion_id,
+        speaker_identity=speaker,
+    )
+    if suggestion.status != SpeakerFaceSuggestion.STATUS_PENDING:
+        return Response({'error': 'Suggestion already decided.'}, status=400)
+    suggestion.status = SpeakerFaceSuggestion.STATUS_REJECTED
+    suggestion.decided_at = timezone.now()
+    suggestion.save(update_fields=['status', 'decided_at', 'updated_at'])
+    return Response({'ok': True, 'suggestion_id': suggestion.id})
 
 
 @api_view(['POST'])

@@ -1671,6 +1671,123 @@ def analyze_photo_task(self, photo_id: str):
 
 # ── Speaker Diarization task ──────────────────────────────────────────────────
 
+def _upsert_speaker_face_suggestions(video, segments: list) -> int:
+    """
+    Per-video speaker→face suggestions from temporal overlap (pending only).
+    Tuned to reduce false links from short interjections between longer turns.
+    """
+    from .models import DetectedFace, SpeakerFaceSuggestion
+
+    if not segments:
+        return 0
+
+    face_window_half = float(getattr(settings, 'VOICE_FACE_WINDOW_HALF_SECONDS', 0.75))
+    min_seg_seconds = float(getattr(settings, 'VOICE_FACE_MIN_SEGMENT_SECONDS', 1.25))
+    merge_gap_seconds = float(getattr(settings, 'VOICE_FACE_MERGE_GAP_SECONDS', 0.5))
+    min_overlap_seconds = float(getattr(settings, 'VOICE_FACE_MIN_OVERLAP_SECONDS', 1.5))
+    min_overlap_hits = int(getattr(settings, 'VOICE_FACE_MIN_HITS', 2))
+    min_score = float(getattr(settings, 'VOICE_FACE_MIN_SCORE', 0.18))
+
+    face_rows = list(
+        DetectedFace.objects
+        .filter(video=video, identity__isnull=False)
+        .exclude(identity__name='')
+        .values('identity_id', 'timestamp')
+    )
+    if not face_rows:
+        return 0
+
+    face_windows = {}
+    for row in face_rows:
+        fid = row['identity_id']
+        ts = float(row['timestamp'] or 0.0)
+        face_windows.setdefault(fid, []).append((max(0.0, ts - face_window_half), ts + face_window_half))
+
+    speaker_segments = {}
+    for seg in segments:
+        si = getattr(seg, 'speaker_identity', None)
+        if not si:
+            continue
+        s_start = float(seg.start_seconds or 0.0)
+        s_end = float(seg.end_seconds or 0.0)
+        if (s_end - s_start) < min_seg_seconds:
+            continue
+        speaker_segments.setdefault(si.pk, []).append((s_start, s_end))
+
+    merged_by_speaker = {}
+    for speaker_id, spans in speaker_segments.items():
+        if not spans:
+            continue
+        spans = sorted(spans, key=lambda x: x[0])
+        merged = [list(spans[0])]
+        for s_start, s_end in spans[1:]:
+            prev_start, prev_end = merged[-1]
+            if s_start <= (prev_end + merge_gap_seconds):
+                merged[-1][1] = max(prev_end, s_end)
+            else:
+                merged.append([s_start, s_end])
+        merged_by_speaker[speaker_id] = [(a, b) for a, b in merged]
+
+    upserts = 0
+    for speaker_id, spans in merged_by_speaker.items():
+        total_speech = sum(max(0.0, e - s) for s, e in spans)
+        if total_speech <= 0:
+            continue
+
+        for face_id, windows in face_windows.items():
+            overlap = 0.0
+            hits = 0
+            for s_start, s_end in spans:
+                for f_start, f_end in windows:
+                    ov = min(s_end, f_end) - max(s_start, f_start)
+                    if ov > 0:
+                        overlap += ov
+                        hits += 1
+            if overlap < min_overlap_seconds or hits < min_overlap_hits:
+                continue
+
+            score = overlap / max(total_speech, 0.001)
+            if score < min_score:
+                continue
+
+            evidence = {
+                'heuristic': 'temporal_overlap',
+                'overlap_seconds': round(overlap, 3),
+                'speaker_total_seconds': round(total_speech, 3),
+                'overlap_ratio': round(score, 4),
+                'hit_windows': hits,
+                'filters': {
+                    'min_segment_seconds': min_seg_seconds,
+                    'merge_gap_seconds': merge_gap_seconds,
+                    'min_overlap_seconds': min_overlap_seconds,
+                    'min_hits': min_overlap_hits,
+                    'min_score': min_score,
+                    'face_window_half_seconds': face_window_half,
+                },
+            }
+            sug, created = SpeakerFaceSuggestion.objects.get_or_create(
+                speaker_identity_id=speaker_id,
+                face_identity_id=face_id,
+                video=video,
+                defaults={
+                    'score': float(score),
+                    'overlap_seconds': float(overlap),
+                    'evidence': evidence,
+                    'status': SpeakerFaceSuggestion.STATUS_PENDING,
+                },
+            )
+            if not created and sug.status != SpeakerFaceSuggestion.STATUS_PENDING:
+                continue
+            if not created:
+                sug.score = float(score)
+                sug.overlap_seconds = float(overlap)
+                sug.evidence = evidence
+                sug.decided_at = None
+                sug.save(update_fields=['score', 'overlap_seconds', 'evidence', 'updated_at', 'decided_at'])
+            upserts += 1
+    return upserts
+
+
 @shared_task(
     bind=True,
     name='videos.tasks.run_diarization_task',
@@ -1994,11 +2111,23 @@ def run_diarization_task(self, video_id: str):
         f'SpeakerIdentity records for {video_id}'
     )
 
+    suggestions_created = 0
+    try:
+        suggestions_created = _upsert_speaker_face_suggestions(video, segments)
+        if suggestions_created:
+            logger.info(
+                f'run_diarization_task: upserted {suggestions_created} '
+                f'speaker-face suggestion(s) for {video_id}'
+            )
+    except Exception as sugg_exc:
+        logger.warning(f'run_diarization_task: suggestion generation skipped — {sugg_exc}')
+
     return {
         'ok':               True,
         'segments_updated': updated,
         'speakers':         len(local_speakers),
         'labels':           list(remap.values()),
+        'suggestions':      suggestions_created,
         'identities': [
             {
                 'id':      si.pk,

@@ -6,7 +6,7 @@ from .models import (
     Comment, CommentLike, VideoLike, Playlist, PlaylistItem,
     WatchHistory, SavedVideo, WatchTimeEntry, VideoChapter,
     EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
-    FaceIdentity, DetectedFace, SpeakerIdentity, UserProfile,
+    FaceIdentity, DetectedFace, SpeakerIdentity, SpeakerFaceSuggestion, UserProfile,
     Photo, Album, AlbumPhoto,
 )
 
@@ -177,6 +177,14 @@ class SpeakerIdentityAdmin(admin.ModelAdmin):
     search_fields  = ['name', 'face_identity__name']
     readonly_fields= ['speaker_embedding', 'created_at']
     raw_id_fields  = ['face_identity']
+
+
+@admin.register(SpeakerFaceSuggestion)
+class SpeakerFaceSuggestionAdmin(admin.ModelAdmin):
+    list_display = ['speaker_identity', 'face_identity', 'video', 'score', 'status', 'created_at']
+    list_filter = ['status', 'video']
+    search_fields = ['speaker_identity__name', 'face_identity__name', 'video__title']
+    raw_id_fields = ['speaker_identity', 'face_identity', 'video']
 
 
 @admin.register(Photo)

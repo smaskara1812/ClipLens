@@ -116,6 +116,15 @@
     background: var(--green-bg); color: var(--green);
   }
 
+  .sugg-pending-pill {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 700; padding: 2px 7px;
+    border-radius: 99px; margin-top: 5px;
+    background: var(--accent-soft); color: var(--accent);
+    text-decoration: none;
+  }
+  a.sugg-pending-pill:hover { opacity: .88; }
+
   /* ── Dropdown portal ── */
   #speakerDropdownPortal {
     position: fixed;
@@ -276,6 +285,11 @@
           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/></svg>
           {{ spk.face_identity.name }}
         </div>
+        {% endif %}
+        {% if spk.pending_suggestion_count %}
+        <a href="{% url 'speaker_identity' spk.id %}" class="sugg-pending-pill" title="Review suggested face matches">
+          {{ spk.pending_suggestion_count }} match{{ spk.pending_suggestion_count|pluralize }} to review
+        </a>
         {% endif %}
       </div>
     </div>

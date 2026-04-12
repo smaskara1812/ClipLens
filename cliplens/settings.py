@@ -325,6 +325,15 @@ FACE_MAX_YAW_DEG   = float(os.getenv('FACE_MAX_YAW_DEG', '80'))      # max head 
 # isn't being matched across videos.
 SPEAKER_MATCH_THRESHOLD = float(os.getenv('SPEAKER_MATCH_THRESHOLD', '0.75'))
 
+# Voice→face suggestion heuristics (after diarization). Tune if suggestions are too
+# sparse or too noisy; see videos.tasks._upsert_speaker_face_suggestions.
+VOICE_FACE_WINDOW_HALF_SECONDS = float(os.getenv('VOICE_FACE_WINDOW_HALF_SECONDS', '0.75'))
+VOICE_FACE_MIN_SEGMENT_SECONDS = float(os.getenv('VOICE_FACE_MIN_SEGMENT_SECONDS', '1.25'))
+VOICE_FACE_MERGE_GAP_SECONDS = float(os.getenv('VOICE_FACE_MERGE_GAP_SECONDS', '0.5'))
+VOICE_FACE_MIN_OVERLAP_SECONDS = float(os.getenv('VOICE_FACE_MIN_OVERLAP_SECONDS', '1.5'))
+VOICE_FACE_MIN_HITS = int(os.getenv('VOICE_FACE_MIN_HITS', '2'))
+VOICE_FACE_MIN_SCORE = float(os.getenv('VOICE_FACE_MIN_SCORE', '0.18'))
+
 # ── Captions / Whisper ────────────────────────────────────────────────────────
 # Model size: tiny | base | small | medium | large-v2 | large-v3
 # Larger = more accurate but slower. 'base' is a good dev default.

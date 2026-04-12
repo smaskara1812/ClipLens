@@ -113,6 +113,8 @@ urlpatterns = [
     path('api/speakers/<int:speaker_id>/rename/',           views.speaker_rename),
     path('api/speakers/<int:speaker_id>/set-role/',         views.speaker_set_role),
     path('api/speakers/<int:speaker_id>/link-face/',        views.speaker_link_face),
+    path('api/speakers/<int:speaker_id>/suggestions/<int:suggestion_id>/accept/', views.speaker_suggestion_accept),
+    path('api/speakers/<int:speaker_id>/suggestions/<int:suggestion_id>/reject/', views.speaker_suggestion_reject),
     path('api/speakers/<int:speaker_id>/merge/',            views.speaker_merge),
     path('api/speakers/<int:speaker_id>/delete/',           views.speaker_delete),
 
