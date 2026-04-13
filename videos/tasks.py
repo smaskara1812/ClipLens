@@ -1708,6 +1708,9 @@ def _upsert_speaker_face_suggestions(video, segments: list) -> int:
         si = getattr(seg, 'speaker_identity', None)
         if not si:
             continue
+        # Skip speakers that are already matched/identified (not auto-named)
+        if not si.is_auto_named:
+            continue
         s_start = float(seg.start_seconds or 0.0)
         s_end = float(seg.end_seconds or 0.0)
         if (s_end - s_start) < min_seg_seconds:
