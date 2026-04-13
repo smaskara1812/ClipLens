@@ -2722,6 +2722,317 @@ def _build_subtitle_content(cues: list, fmt: str) -> str:
         return '\n'.join(lines)
 
 
+def _xray_pct(value: float, duration: float) -> float:
+    if duration <= 0:
+        return 0.0
+    return max(0.0, min(100.0, (float(value) / float(duration)) * 100.0))
+
+
+def _xray_merge_ranges(ranges: list[tuple[float, float]], merge_gap: float) -> list[tuple[float, float]]:
+    if not ranges:
+        return []
+    merged: list[list[float]] = []
+    for start, end in sorted(ranges):
+        start = max(0.0, float(start))
+        end = max(start, float(end))
+        if not merged or start > merged[-1][1] + merge_gap:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return [(start, end) for start, end in merged]
+
+
+def _xray_windows_from_timestamps(timestamps: list[float], frame_interval: float, duration: float, merge_gap: float) -> list[tuple[float, float]]:
+    half = max(frame_interval / 2.0, 0.25)
+    windows = [
+        (max(0.0, ts - half), min(duration, ts + half))
+        for ts in timestamps
+    ]
+    return _xray_merge_ranges(windows, merge_gap)
+
+
+def _xray_windows_from_segments(segments: list[tuple[float, float]], duration: float, merge_gap: float) -> list[tuple[float, float]]:
+    bounded = [
+        (max(0.0, start), min(duration, end))
+        for start, end in segments
+        if end > start
+    ]
+    return _xray_merge_ranges(bounded, merge_gap)
+
+
+def _xray_total_seconds(windows: list[tuple[float, float]]) -> float:
+    return sum(max(0.0, end - start) for start, end in windows)
+
+
+def _xray_serialise_windows(windows: list[tuple[float, float]], duration: float) -> list[dict]:
+    rows = []
+    for start, end in windows:
+        width_pct = max(0.6, _xray_pct(end, duration) - _xray_pct(start, duration)) if duration > 0 else 100.0
+        rows.append({
+            'start': start,
+            'end': end,
+            'start_label': _fmt_seconds_display(start),
+            'end_label': _fmt_seconds_display(end),
+            'left_pct': _xray_pct(start, duration),
+            'width_pct': min(100.0, width_pct),
+        })
+    return rows
+
+
+def _build_video_xray_context(video, filter_mode: str) -> dict:
+    import json
+
+    duration = float(video.duration or 0.0)
+    frame_interval = float(getattr(settings, 'FRAME_INTERVAL_SECONDS', 5))
+    merge_gap = float(getattr(settings, 'VIDEO_XRAY_MERGE_GAP_SECONDS', max(frame_interval * 1.5, 2.5)))
+    crowd_face_threshold = int(getattr(settings, 'VIDEO_XRAY_CROWD_FACE_THRESHOLD', 8))
+    crowd_min_area_px = int(getattr(settings, 'VIDEO_XRAY_CROWD_MIN_AREA_PX', 2500))
+    min_appearances = int(getattr(settings, 'VIDEO_XRAY_MIN_APPEARANCES', 2))
+    min_face_seconds = float(getattr(settings, 'VIDEO_XRAY_MIN_FACE_SECONDS', max(frame_interval, 3.0)))
+
+    raw_faces = list(
+        DetectedFace.objects
+        .filter(video=video, identity__isnull=False)
+        .select_related('identity', 'frame')
+        .order_by('timestamp', 'id')
+    )
+    frame_counts: dict[object, int] = {}
+    for face in raw_faces:
+        frame_key = face.frame_id or round(face.timestamp, 3)
+        frame_counts[frame_key] = frame_counts.get(frame_key, 0) + 1
+
+    face_tracks: dict[int, dict] = {}
+    filtered_face_hits = 0
+    for face in raw_faces:
+        try:
+            bbox = json.loads(face.bbox or '[]')
+        except Exception:
+            bbox = []
+        area = 0.0
+        if isinstance(bbox, list) and len(bbox) >= 4:
+            area = max(0.0, float(bbox[2]) - float(bbox[0])) * max(0.0, float(bbox[3]) - float(bbox[1]))
+        frame_key = face.frame_id or round(face.timestamp, 3)
+        frame_face_count = frame_counts.get(frame_key, 1)
+        is_crowd_frame = frame_face_count >= crowd_face_threshold
+
+        keep_hit = True
+        if filter_mode == 'smart':
+            keep_hit = (not is_crowd_frame) or area >= crowd_min_area_px or not face.identity.is_auto_named
+        elif filter_mode == 'named':
+            keep_hit = not face.identity.is_auto_named
+
+        track = face_tracks.setdefault(face.identity_id, {
+            'identity': face.identity,
+            'timestamps': [],
+            'all_hits': 0,
+            'filtered_hits': 0,
+            'crowd_hits': 0,
+        })
+        track['all_hits'] += 1
+        if is_crowd_frame:
+            track['crowd_hits'] += 1
+        if keep_hit:
+            track['timestamps'].append(float(face.timestamp))
+        else:
+            track['filtered_hits'] += 1
+            filtered_face_hits += 1
+
+    speaker_segments = list(
+        VideoSegment.objects
+        .filter(video=video, speaker_identity__isnull=False)
+        .select_related('speaker_identity', 'speaker_identity__face_identity')
+        .order_by('start_seconds', 'end_seconds', 'id')
+    )
+    speaker_tracks: dict[int, dict] = {}
+    for seg in speaker_segments:
+        speaker = seg.speaker_identity
+        track = speaker_tracks.setdefault(speaker.id, {
+            'speaker': speaker,
+            'segments': [],
+            'total_seconds': 0.0,
+        })
+        start = float(seg.start_seconds or 0.0)
+        end = float(seg.end_seconds or start)
+        if end <= start:
+            continue
+        track['segments'].append((start, end))
+        track['total_seconds'] += end - start
+
+    tracks_map: dict[str, dict] = {}
+
+    def ensure_track(key: str, *, name: str, subtitle: str = '', thumbnail_url: str | None = None):
+        track = tracks_map.get(key)
+        if track is None:
+            track = {
+                'key': key,
+                'name': name,
+                'subtitle': subtitle,
+                'thumbnail_url': thumbnail_url,
+                'face_windows': [],
+                'voice_windows': [],
+                'face_seconds': 0.0,
+                'voice_seconds': 0.0,
+                'face_hits': 0,
+                'voice_segments': 0,
+                'filtered_hits': 0,
+                'crowd_hits': 0,
+                'is_named_face': False,
+                'is_named_speaker': False,
+            }
+            tracks_map[key] = track
+            return track
+        if thumbnail_url and not track.get('thumbnail_url'):
+            track['thumbnail_url'] = thumbnail_url
+        if subtitle and not track.get('subtitle'):
+            track['subtitle'] = subtitle
+        if name and (track['name'].startswith('Person ') or track['name'].startswith('Speaker ')):
+            track['name'] = name
+        return track
+
+    for face_id, payload in face_tracks.items():
+        identity = payload['identity']
+        windows = _xray_windows_from_timestamps(payload['timestamps'], frame_interval, duration, merge_gap)
+        face_seconds = _xray_total_seconds(windows)
+        should_include = bool(windows)
+        if filter_mode == 'smart':
+            should_include = should_include and (
+                (not identity.is_auto_named)
+                or len(payload['timestamps']) >= min_appearances
+                or face_seconds >= min_face_seconds
+            )
+        elif filter_mode == 'named':
+            should_include = should_include and (not identity.is_auto_named)
+        if not should_include:
+            continue
+
+        track = ensure_track(
+            f'face:{face_id}',
+            name=identity.name,
+            subtitle='Face track',
+            thumbnail_url=identity.thumbnail_url,
+        )
+        track['face_windows'] = windows
+        track['face_seconds'] = face_seconds
+        track['face_hits'] = len(payload['timestamps'])
+        track['filtered_hits'] = payload['filtered_hits']
+        track['crowd_hits'] = payload['crowd_hits']
+        track['is_named_face'] = not identity.is_auto_named
+
+    for speaker_id, payload in speaker_tracks.items():
+        speaker = payload['speaker']
+        linked_face = speaker.face_identity
+        key = f'face:{linked_face.id}' if linked_face else f'speaker:{speaker_id}'
+        subtitle = f'Voice track · {speaker.get_role_display()}'
+        track = ensure_track(
+            key,
+            name=speaker.name,
+            subtitle=subtitle,
+            thumbnail_url=linked_face.thumbnail_url if linked_face else None,
+        )
+        track['voice_windows'] = _xray_windows_from_segments(payload['segments'], duration, merge_gap=0.35)
+        track['voice_seconds'] = _xray_total_seconds(track['voice_windows'])
+        track['voice_segments'] = len(payload['segments'])
+        track['is_named_speaker'] = not speaker.is_auto_named
+        if linked_face and not track['subtitle'].startswith('Face + voice'):
+            track['subtitle'] = f'Face + voice · {speaker.get_role_display()}'
+        elif not track['face_windows']:
+            track['subtitle'] = subtitle
+
+    palette = [
+        '#6366f1', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4',
+        '#8b5cf6', '#ef4444', '#14b8a6', '#84cc16', '#f97316',
+    ]
+
+    tracks = []
+    for idx, track in enumerate(sorted(
+        tracks_map.values(),
+        key=lambda item: (
+            -(item['voice_seconds'] + item['face_seconds']),
+            -(1 if item['is_named_face'] or item['is_named_speaker'] else 0),
+            item['name'].lower(),
+        ),
+    )):
+        color = palette[idx % len(palette)]
+        track['color'] = color
+        track['face_segments'] = _xray_serialise_windows(track['face_windows'], duration)
+        track['voice_segments_ui'] = _xray_serialise_windows(track['voice_windows'], duration)
+        track['face_seconds_label'] = _fmt_seconds_display(track['face_seconds'])
+        track['voice_seconds_label'] = _fmt_seconds_display(track['voice_seconds'])
+        track['combined_seconds'] = track['face_seconds'] + track['voice_seconds']
+        track['combined_seconds_label'] = _fmt_seconds_display(track['combined_seconds'])
+        tracks.append(track)
+
+    overlap_events = []
+    for track in tracks:
+        for start, end in _xray_merge_ranges(track['face_windows'] + track['voice_windows'], 0.15):
+            overlap_events.append((start, 1))
+            overlap_events.append((end, -1))
+    overlap_events.sort(key=lambda item: (item[0], -item[1]))
+
+    overlap_ranges = []
+    active = 0
+    current_start = None
+    for time, delta in overlap_events:
+        prev_active = active
+        active += delta
+        if prev_active < 2 and active >= 2:
+            current_start = time
+        elif prev_active >= 2 and active < 2 and current_start is not None and time > current_start:
+            overlap_ranges.append((current_start, time))
+            current_start = None
+    overlap_segments = _xray_serialise_windows(overlap_ranges, duration)
+
+    summary = {
+        'track_count': len(tracks),
+        'face_track_count': sum(1 for track in tracks if track['face_windows']),
+        'voice_track_count': sum(1 for track in tracks if track['voice_windows']),
+        'overlap_count': len(overlap_ranges),
+        'filtered_face_hits': filtered_face_hits,
+        'filter_mode': filter_mode,
+        'crowd_threshold': crowd_face_threshold,
+        'crowd_min_area_px': crowd_min_area_px,
+        'min_appearances': min_appearances,
+        'min_face_seconds': min_face_seconds,
+    }
+
+    return {
+        'tracks': tracks,
+        'summary': summary,
+        'overlap_segments': overlap_segments,
+        'duration': duration,
+        'duration_label': _fmt_seconds_display(duration),
+    }
+
+
+@login_required
+def video_xray_page(request, video_id):
+    """
+    Owner-facing people timeline view that combines face detections and
+    diarized speaker segments into one layered timeline.
+    """
+    video = get_object_or_404(Video, id=video_id)
+    if not _is_video_owner(request.user, video):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied
+
+    filter_mode = request.GET.get('crowd', 'smart')
+    if filter_mode not in {'smart', 'all', 'named'}:
+        filter_mode = 'smart'
+
+    xray_context = _build_video_xray_context(video, filter_mode)
+    return render(request, 'videos/video_xray.html', {
+        'video': video,
+        'xray': xray_context,
+        'filter_mode': filter_mode,
+        'filter_options': [
+            {'value': 'smart', 'label': 'Smart crowd filter'},
+            {'value': 'named', 'label': 'Named people only'},
+            {'value': 'all', 'label': 'Show every detected person'},
+        ],
+        'unread_count': _unread_count(request),
+    })
+
+
 @login_required
 def transcript_editor_page(request, video_id):
     """

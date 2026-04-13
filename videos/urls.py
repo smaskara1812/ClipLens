@@ -28,6 +28,7 @@ urlpatterns = [
 
     # ── Content pages ──
     path('watch/<uuid:video_id>/',            views.watch_page,           name='watch'),
+    path('watch/<uuid:video_id>/xray/',       views.video_xray_page,      name='video_xray'),
     path('embed/<uuid:video_id>/',            views.embed_page,           name='embed'),
     path('channel/<slug:slug>/',              views.channel_page,         name='channel'),
     path('category/<slug:slug>/',             views.category_page,        name='category'),

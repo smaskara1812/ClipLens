@@ -318,6 +318,16 @@ FACE_MIN_DET_SCORE = float(os.getenv('FACE_MIN_DET_SCORE', '0.20'))  # InsightFa
 FACE_MIN_AREA_PX   = int(os.getenv('FACE_MIN_AREA_PX',   '200'))    # min bbox area in pixels (60×60)
 FACE_MAX_YAW_DEG   = float(os.getenv('FACE_MAX_YAW_DEG', '80'))      # max head yaw before skipping
 
+# Video X-Ray timeline heuristics — used only for the owner-facing timeline page.
+# Crowd-heavy frames can flood the UI with audience/background faces, so the
+# timeline can optionally suppress detections from dense frames unless the face
+# is large enough or the identity appears repeatedly.
+VIDEO_XRAY_CROWD_FACE_THRESHOLD = int(os.getenv('VIDEO_XRAY_CROWD_FACE_THRESHOLD', '8'))
+VIDEO_XRAY_CROWD_MIN_AREA_PX    = int(os.getenv('VIDEO_XRAY_CROWD_MIN_AREA_PX', '2500'))
+VIDEO_XRAY_MIN_APPEARANCES      = int(os.getenv('VIDEO_XRAY_MIN_APPEARANCES', '2'))
+VIDEO_XRAY_MIN_FACE_SECONDS     = float(os.getenv('VIDEO_XRAY_MIN_FACE_SECONDS', '3.0'))
+VIDEO_XRAY_MERGE_GAP_SECONDS    = float(os.getenv('VIDEO_XRAY_MERGE_GAP_SECONDS', '7.5'))
+
 # Cosine similarity threshold for cross-video speaker matching (0.0–1.0).
 # A new speaker embedding is matched to an existing SpeakerIdentity when
 # cosine_sim >= threshold.  0.75 is a good balance for wespeaker-resnet34.

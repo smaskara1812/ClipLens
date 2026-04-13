@@ -1,0 +1,582 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Video X-Ray — {{ video.title }} — ClipLens{% endblock %}
+
+{% block extra_head %}
+<script src="{% static 'videos/hls.min.js' %}" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js'"></script>
+<style>
+  .xr-layout {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: 24px;
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 24px 24px 56px;
+    align-items: start;
+  }
+  @media (max-width: 1080px) {
+    .xr-layout { grid-template-columns: 1fr; }
+  }
+
+  .xr-sidebar,
+  .xr-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+  .xr-sidebar {
+    position: sticky;
+    top: calc(var(--header-h) + 16px);
+    overflow: hidden;
+  }
+  .xr-video-wrap {
+    position: relative;
+    background: #000;
+    aspect-ratio: 16 / 9;
+  }
+  .xr-video-wrap video {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .xr-sidebar-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .xr-kicker {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 700;
+  }
+  .xr-title {
+    font-size: 22px;
+    line-height: 1.2;
+    font-weight: 800;
+  }
+  .xr-subtle {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .xr-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .xr-back:hover { text-decoration: underline; }
+
+  .xr-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .xr-stat {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+  }
+  .xr-stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: .05em;
+    margin-bottom: 4px;
+    font-weight: 700;
+  }
+  .xr-stat-value {
+    font-size: 20px;
+    font-weight: 800;
+  }
+  .xr-stat-sub {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 3px;
+  }
+
+  .xr-panel {
+    padding: 18px;
+  }
+  .xr-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .xr-toolbar-title {
+    font-size: 20px;
+    font-weight: 800;
+  }
+  .xr-toolbar-sub {
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .xr-filter-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .xr-select {
+    min-width: 220px;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2);
+    background: var(--surface-2);
+    color: var(--text);
+    outline: none;
+  }
+  .xr-filter-note {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .xr-overlap {
+    margin-bottom: 18px;
+    padding: 14px;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .xr-overlap-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .xr-overlap-title {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .xr-lane {
+    position: relative;
+    width: 100%;
+    height: 22px;
+    border-radius: 999px;
+    background:
+      linear-gradient(to right, transparent 24.75%, rgba(255,255,255,.05) 25%, transparent 25.25%),
+      linear-gradient(to right, transparent 49.75%, rgba(255,255,255,.05) 50%, transparent 50.25%),
+      linear-gradient(to right, transparent 74.75%, rgba(255,255,255,.05) 75%, transparent 75.25%),
+      var(--bg);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .xr-segment {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 12px;
+    min-width: 2px;
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  .xr-segment:hover {
+    transform: translateY(-50%) scaleY(1.15);
+    opacity: .92;
+  }
+  .xr-segment.face {
+    background: var(--segment-color, var(--accent));
+    box-shadow: 0 0 0 1px rgba(255,255,255,.12) inset;
+  }
+  .xr-segment.voice {
+    background:
+      repeating-linear-gradient(135deg, rgba(255,255,255,.28) 0 6px, rgba(255,255,255,.12) 6px 12px),
+      var(--segment-color, var(--green));
+    box-shadow: 0 0 0 1px rgba(255,255,255,.15) inset;
+  }
+  .xr-segment.overlap {
+    height: 10px;
+    background: linear-gradient(90deg, rgba(248,113,113,.95), rgba(245,158,11,.95));
+  }
+
+  .xr-scale {
+    position: relative;
+    height: 20px;
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  .xr-scale span {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+  }
+  .xr-scale span:first-child { left: 0; transform: none; }
+  .xr-scale span:last-child { right: 0; left: auto; transform: none; }
+
+  .xr-tracks {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .xr-track {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    gap: 14px;
+    align-items: start;
+    padding: 14px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    border-radius: var(--radius);
+  }
+  @media (max-width: 900px) {
+    .xr-track { grid-template-columns: 1fr; }
+  }
+  .xr-track-info {
+    display: flex;
+    gap: 12px;
+    min-width: 0;
+  }
+  .xr-avatar {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--surface-3);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+  .xr-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .xr-track-main {
+    min-width: 0;
+  }
+  .xr-track-name {
+    font-size: 15px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .xr-color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .xr-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .xr-track-subtitle {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .xr-meta-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .xr-meta-chip {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .xr-track-timelines {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .xr-lane-row {
+    display: grid;
+    grid-template-columns: 54px 1fr;
+    gap: 10px;
+    align-items: center;
+  }
+  .xr-lane-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .xr-empty-lane {
+    color: var(--text-subtle);
+    font-size: 12px;
+  }
+
+  .xr-empty {
+    text-align: center;
+    padding: 52px 24px;
+    color: var(--text-muted);
+    border: 1px dashed var(--border-2);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="xr-layout">
+  <aside class="xr-sidebar">
+    <div class="xr-video-wrap">
+      <video id="xrVideo" controls preload="metadata"></video>
+    </div>
+    <div class="xr-sidebar-body">
+      <div>
+        <div class="xr-kicker">Owner Analysis</div>
+        <div class="xr-title">{{ video.title }}</div>
+        <div class="xr-subtle">{{ xray.duration_label }} total runtime</div>
+      </div>
+
+      <a href="{% url 'watch' video.id %}" class="xr-back">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Back to watch page
+      </a>
+
+      <div class="xr-stat-grid">
+        <div class="xr-stat">
+          <div class="xr-stat-label">People Tracks</div>
+          <div class="xr-stat-value">{{ xray.summary.track_count }}</div>
+          <div class="xr-stat-sub">{{ xray.summary.face_track_count }} face · {{ xray.summary.voice_track_count }} voice</div>
+        </div>
+        <div class="xr-stat">
+          <div class="xr-stat-label">Overlap Moments</div>
+          <div class="xr-stat-value">{{ xray.summary.overlap_count }}</div>
+          <div class="xr-stat-sub">Multiple people active at once</div>
+        </div>
+        <div class="xr-stat">
+          <div class="xr-stat-label">Crowd Threshold</div>
+          <div class="xr-stat-value">{{ xray.summary.crowd_threshold }}</div>
+          <div class="xr-stat-sub">Faces in a frame before suppression</div>
+        </div>
+        <div class="xr-stat">
+          <div class="xr-stat-label">Filtered Hits</div>
+          <div class="xr-stat-value">{{ xray.summary.filtered_face_hits }}</div>
+          <div class="xr-stat-sub">Suppressed by current filter</div>
+        </div>
+      </div>
+
+      <div class="xr-subtle">
+        Smart mode suppresses dense crowd detections unless the face is large enough or the identity persists across the video.
+      </div>
+    </div>
+  </aside>
+
+  <section class="xr-panel">
+    <div class="xr-toolbar">
+      <div>
+        <div class="xr-toolbar-title">Video X-Ray</div>
+        <div class="xr-toolbar-sub">Layered face and voice presence across the whole video, with crowd-aware filtering for stage and audience shots.</div>
+      </div>
+
+      <form class="xr-filter-form" method="get">
+        <label class="xr-filter-note" for="crowdMode">Visibility mode</label>
+        <select id="crowdMode" name="crowd" class="xr-select" onchange="this.form.submit()">
+          {% for opt in filter_options %}
+          <option value="{{ opt.value }}" {% if opt.value == filter_mode %}selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+
+    <div class="xr-overlap">
+      <div class="xr-overlap-header">
+        <div class="xr-overlap-title">Cumulative overlap</div>
+        <div class="xr-filter-note">{{ xray.summary.overlap_count }} overlap region{{ xray.summary.overlap_count|pluralize }}</div>
+      </div>
+      <div class="xr-lane">
+        {% for seg in xray.overlap_segments %}
+        <button
+          type="button"
+          class="xr-segment overlap"
+          data-start="{{ seg.start|floatformat:6 }}"
+          data-end="{{ seg.end|floatformat:6 }}"
+          style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%;"
+          onclick="seekOnSegment(event)"
+          title="Overlap: {{ seg.start_label }} - {{ seg.end_label }}"></button>
+        {% endfor %}
+      </div>
+      <div class="xr-scale">
+        <span>0:00</span>
+        <span style="left:25%;">25%</span>
+        <span style="left:50%;">50%</span>
+        <span style="left:75%;">75%</span>
+        <span>{{ xray.duration_label }}</span>
+      </div>
+    </div>
+
+    {% if xray.tracks %}
+    <div class="xr-tracks">
+      {% for track in xray.tracks %}
+      <article class="xr-track">
+        <div class="xr-track-info">
+          <div class="xr-avatar">
+            {% if track.thumbnail_url %}
+            <img src="{{ track.thumbnail_url }}" alt="{{ track.name }}">
+            {% else %}
+            {{ track.name|slice:":1"|upper }}
+            {% endif %}
+          </div>
+          <div class="xr-track-main">
+            <div class="xr-track-name">
+              <span class="xr-color-dot" style="background: {{ track.color }};"></span>
+              <span>{{ track.name }}</span>
+              {% if track.is_named_face or track.is_named_speaker %}
+              <span class="xr-pill">Named</span>
+              {% else %}
+              <span class="xr-pill">Auto</span>
+              {% endif %}
+            </div>
+            <div class="xr-track-subtitle">{{ track.subtitle }}</div>
+            <div class="xr-meta-list">
+              <span class="xr-meta-chip">On screen {{ track.face_seconds_label }}</span>
+              <span class="xr-meta-chip">Speaking {{ track.voice_seconds_label }}</span>
+              <span class="xr-meta-chip">Combined {{ track.combined_seconds_label }}</span>
+              {% if track.face_hits %}
+              <span class="xr-meta-chip">{{ track.face_hits }} kept face sample{{ track.face_hits|pluralize }}</span>
+              {% endif %}
+              {% if track.voice_segments %}
+              <span class="xr-meta-chip">{{ track.voice_segments }} speech segment{{ track.voice_segments|pluralize }}</span>
+              {% endif %}
+              {% if track.filtered_hits %}
+              <span class="xr-meta-chip">{{ track.filtered_hits }} crowd hit{{ track.filtered_hits|pluralize }} suppressed</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="xr-track-timelines">
+          <div class="xr-lane-row">
+            <div class="xr-lane-label">Face</div>
+            {% if track.face_segments %}
+            <div class="xr-lane" data-seek-lane="1" onclick="seekOnLane(event)">
+              {% for seg in track.face_segments %}
+              <button
+                type="button"
+                class="xr-segment face"
+                data-start="{{ seg.start|floatformat:6 }}"
+                data-end="{{ seg.end|floatformat:6 }}"
+                style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%; --segment-color: {{ track.color }};"
+                onclick="seekOnSegment(event)"
+                title="{{ track.name }} visible: {{ seg.start_label }} - {{ seg.end_label }}"></button>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="xr-empty-lane">No kept face detections in this mode</div>
+            {% endif %}
+          </div>
+
+          <div class="xr-lane-row">
+            <div class="xr-lane-label">Voice</div>
+            {% if track.voice_segments_ui %}
+            <div class="xr-lane" data-seek-lane="1" onclick="seekOnLane(event)">
+              {% for seg in track.voice_segments_ui %}
+              <button
+                type="button"
+                class="xr-segment voice"
+                data-start="{{ seg.start|floatformat:6 }}"
+                data-end="{{ seg.end|floatformat:6 }}"
+                style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%; --segment-color: {{ track.color }};"
+                onclick="seekOnSegment(event)"
+                title="{{ track.name }} speaking: {{ seg.start_label }} - {{ seg.end_label }}"></button>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="xr-empty-lane">No diarized voice segments</div>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="xr-empty">
+      No people matched the current filter. Try switching to `Show every detected person`, or run diarization / face analysis for this video first.
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+  const xrVideo = document.getElementById('xrVideo');
+  const XR_DURATION = Number("{{ xray.duration|floatformat:6 }}") || 0;
+  const sourceUrl = "{{ video.hls_url|default:''|escapejs }}";
+
+  function seekTo(seconds) {
+    if (!xrVideo) return;
+    const t = Math.max(0, Number(seconds) || 0);
+    xrVideo.currentTime = t;
+    xrVideo.play().catch(() => {});
+  }
+
+  function seekOnLane(e) {
+    if (!XR_DURATION) return;
+    // Only handle direct lane clicks (not segment button clicks bubbling up).
+    if (e.target && e.target.closest && e.target.closest('.xr-segment')) return;
+    const lane = e.currentTarget;
+    if (!lane) return;
+    const rect = lane.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const pct = rect.width ? (x / rect.width) : 0;
+    seekTo(pct * XR_DURATION);
+  }
+
+  function seekOnSegment(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!btn) return;
+    const start = Number(btn.dataset.start || 0);
+    const end = Number(btn.dataset.end || start);
+    const rect = btn.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const pct = rect.width ? (x / rect.width) : 0;
+    const t = start + pct * Math.max(0, end - start);
+    seekTo(t);
+  }
+
+  if (sourceUrl) {
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(sourceUrl);
+      hls.attachMedia(xrVideo);
+    } else if (xrVideo.canPlayType('application/vnd.apple.mpegurl')) {
+      xrVideo.src = sourceUrl;
+    } else {
+      xrVideo.src = sourceUrl;
+    }
+  }
+</script>
+{% endblock %}
