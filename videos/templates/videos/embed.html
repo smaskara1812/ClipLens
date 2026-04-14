@@ -178,8 +178,8 @@
     }
 
     /* ── Watermark (logo inside title bar) ── */
-    .wm-inline { display:flex; align-items:center; flex-shrink:0; opacity:.85; }
-    .wm-inline svg { width:22px; height:22px; }
+    .wm-inline { display:flex; align-items:center; flex-shrink:0; opacity:.9; }
+    .wm-inline img { height:22px; width:auto; border-radius:3px; }
 
     /* ── Watch-on ClipLens link (inside controls bar) ── */
     .fs-link { background:none; border:1px solid rgba(255,255,255,.2); color:rgba(255,255,255,.7);
@@ -187,7 +187,7 @@
                text-decoration:none; display:flex; align-items:center; gap:5px;
                flex-shrink:0; transition:all .12s; white-space:nowrap; }
     .fs-link:hover { border-color:rgba(255,255,255,.5); color:#fff; background:rgba(255,255,255,.08); }
-    .fs-link svg { width:11px; height:11px; }
+    .fs-link img { height:14px; width:auto; border-radius:2px; }
 
     /* ── Seek lock badge ── */
     .sl-badge { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:20;
@@ -288,7 +288,7 @@
   <!-- Title bar (logo + video name) -->
   <div class="title-bar" id="titleBar">
     <div class="wm-inline" id="wm">
-      <svg viewBox="0 0 22 22" fill="none"><rect width="22" height="22" rx="5" fill="#6366f1"/><polygon points="8.5,6 17,11 8.5,16" fill="white"/></svg>
+      <img src="{% static 'videos/logos/logo-integrated-dark.png' %}" alt="ClipLens" />
     </div>
     <div class="title-bar-text" id="titleText">{{ video.title }}</div>
   </div>
@@ -347,11 +347,7 @@
 
     <!-- Watch on ClipLens -->
     <a class="fs-link" id="fsLinkEl" href="{{ SITE_URL }}{% url 'watch' video.id %}" target="_blank" title="Watch on ClipLens">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-        <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-      </svg>
-      Watch on ClipLens
+      <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens" />
     </a>
 
     <!-- Fullscreen -->
