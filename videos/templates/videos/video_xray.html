@@ -267,6 +267,39 @@
   .xr-track-main {
     min-width: 0;
   }
+  .xr-track-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .xr-action-btn {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-2);
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .xr-action-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .xr-action-btn.danger:hover {
+    border-color: var(--red);
+    color: var(--red);
+    background: var(--red-bg);
+  }
+  .xr-action-btn[disabled] {
+    opacity: .6;
+    cursor: not-allowed;
+  }
   .xr-track-name {
     font-size: 15px;
     font-weight: 800;
@@ -441,6 +474,7 @@
     <div class="xr-tracks">
       {% for track in xray.tracks %}
       <article class="xr-track">
+        <span id="track-{{ track.key|slugify }}" style="display:none;"></span>
         <div class="xr-track-info">
           <div class="xr-avatar">
             {% if track.thumbnail_url %}
@@ -474,6 +508,21 @@
               <span class="xr-meta-chip">{{ track.filtered_hits }} crowd hit{{ track.filtered_hits|pluralize }} suppressed</span>
               {% endif %}
             </div>
+
+            {% if track.face_identity_id %}
+            <div class="xr-track-actions">
+              <button class="xr-action-btn danger"
+                      type="button"
+                      onclick="removeFaceFromVideo({{ track.face_identity_id }}, this)">
+                Remove face from this video
+              </button>
+              <button class="xr-action-btn danger"
+                      type="button"
+                      onclick="deleteFaceIdentity({{ track.face_identity_id }}, this)">
+                Delete identity
+              </button>
+            </div>
+            {% endif %}
           </div>
         </div>
 
@@ -533,6 +582,17 @@
   const xrVideo = document.getElementById('xrVideo');
   const XR_DURATION = Number("{{ xray.duration|floatformat:6 }}") || 0;
   const sourceUrl = "{{ video.hls_url|default:''|escapejs }}";
+  const XR_VIDEO_ID = "{{ video.id }}";
+
+  function getCsrfToken() {
+    const name = 'csrftoken=';
+    const parts = document.cookie.split(';');
+    for (let p of parts) {
+      p = p.trim();
+      if (p.startsWith(name)) return decodeURIComponent(p.slice(name.length));
+    }
+    return '';
+  }
 
   function seekTo(seconds) {
     if (!xrVideo) return;
@@ -565,6 +625,43 @@
     const pct = rect.width ? (x / rect.width) : 0;
     const t = start + pct * Math.max(0, end - start);
     seekTo(t);
+  }
+
+  async function removeFaceFromVideo(identityId, btn) {
+    if (!identityId) return;
+    if (!confirm('Remove this person from this video?\n\nThis only affects this video (it does not delete them from other videos/photos).')) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/videos/${XR_VIDEO_ID}/faces/${identityId}/remove/`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      if (!res.ok) throw new Error('Failed');
+      // simplest: reload so overlap + stats recalc correctly
+      window.location.reload();
+    } catch (e) {
+      btn.disabled = false;
+      alert('Failed to remove face from video.');
+    }
+  }
+
+  async function deleteFaceIdentity(identityId, btn) {
+    if (!identityId) return;
+    if (!confirm('Delete this identity?\n\nThis can remove it across your content (and may be blocked if it is shared across other channels).')) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/faces/${identityId}/delete/`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      if (!(res.ok || res.status === 204)) throw new Error('Failed');
+      window.location.reload();
+    } catch (e) {
+      btn.disabled = false;
+      alert('Failed to delete identity.');
+    }
   }
 
   if (sourceUrl) {

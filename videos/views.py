@@ -2868,6 +2868,8 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
                 'name': name,
                 'subtitle': subtitle,
                 'thumbnail_url': thumbnail_url,
+                'face_identity_id': None,
+                'speaker_id': None,
                 'face_windows': [],
                 'voice_windows': [],
                 'face_seconds': 0.0,
@@ -2911,6 +2913,7 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
             subtitle='Face track',
             thumbnail_url=identity.thumbnail_url,
         )
+        track['face_identity_id'] = identity.id
         track['face_windows'] = windows
         track['face_seconds'] = face_seconds
         track['face_hits'] = len(payload['timestamps'])
@@ -2929,6 +2932,9 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
             subtitle=subtitle,
             thumbnail_url=linked_face.thumbnail_url if linked_face else None,
         )
+        if linked_face:
+            track['face_identity_id'] = linked_face.id
+        track['speaker_id'] = speaker.id
         track['voice_windows'] = _xray_windows_from_segments(payload['segments'], duration, merge_gap=0.35)
         track['voice_seconds'] = _xray_total_seconds(track['voice_windows'])
         track['voice_segments'] = len(payload['segments'])
