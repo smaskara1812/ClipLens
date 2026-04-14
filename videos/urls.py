@@ -12,6 +12,7 @@ urlpatterns = [
     path('saved/',         views.saved_page,          name='saved'),
     path('history/',       views.history_page,        name='history'),
     path('playlists/',     views.playlists_page,      name='playlists'),
+    path('moments/',       views.moments_page,        name='moments'),
     path('notifications/', views.notifications_page,  name='notifications'),
     path('admin-panel/',             views.user_management_page,  name='user_management'),
     path('admin-panel/categories/',  views.categories_manage_page, name='categories_manage'),
@@ -71,6 +72,7 @@ urlpatterns = [
     path('api/videos/<uuid:video_id>/progress/',           views.update_watch_progress),
     path('api/videos/<uuid:video_id>/comments/',           views.comment_list_create),
     path('api/videos/<uuid:video_id>/chapters/',           views.chapter_list_create),
+    path('api/videos/<uuid:video_id>/moments/',           views.moment_list_create),
     path('api/videos/<uuid:video_id>/end-screens/',        views.end_screen_list_create),
     path('api/videos/<uuid:video_id>/end-screens/<int:end_screen_id>/', views.end_screen_detail),
 
@@ -126,6 +128,7 @@ urlpatterns = [
 
     # ── API: Chapters ──
     path('api/chapters/<int:chapter_id>/', views.chapter_detail),
+    path('api/moments/<int:moment_id>/',  views.moment_detail),
 
     # ── API: Playlists ──
     path('api/playlists/',                                            views.playlist_list_create),

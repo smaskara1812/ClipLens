@@ -145,6 +145,9 @@ class Video(models.Model):
     comments_enabled = models.BooleanField(default=True)
     views_count      = models.PositiveBigIntegerField(default=0)
 
+    # Seek / scrub thumbnail sprite (generated post-processing)
+    seek_sprite = models.CharField(max_length=500, blank=True)
+
     uploaded_by = models.CharField(max_length=100, blank=True)
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
@@ -368,6 +371,73 @@ class VideoChapter(models.Model):
 
     def __str__(self):
         return f'{self.video.title} — {self.title} @ {self.timestamp}s'
+
+
+# ── Video Moments ─────────────────────────────────────────────────────────────
+
+class VideoMoment(models.Model):
+    """
+    User-tagged moment in a video.
+
+    Visibility rules:
+      private — only the creator can see it (viewers and editors alike)
+      team    — visible to all editors and superadmins; viewers cannot see it
+    """
+    VISIBILITY_PRIVATE = 'private'
+    VISIBILITY_TEAM    = 'team'
+    VISIBILITY_CHOICES = [
+        ('private', 'Private'),
+        ('team',    'Team'),
+    ]
+
+    CATEGORY_NONE        = ''
+    CATEGORY_IMPORTANT   = 'important'    # red
+    CATEGORY_CELEBRATION = 'celebration'  # orange
+    CATEGORY_WATCH_AGAIN = 'watch_again'  # yellow
+    CATEGORY_HIGHLIGHT   = 'highlight'    # green
+    CATEGORY_NOTE        = 'note'         # blue
+    CATEGORY_QUESTION    = 'question'     # purple
+    CATEGORY_CHOICES = [
+        ('',           'None'),
+        ('important',   'Important'),
+        ('celebration', 'Celebration'),
+        ('watch_again', 'Watch Again'),
+        ('highlight',   'Highlight'),
+        ('note',        'Note'),
+        ('question',    'Question'),
+    ]
+    # Maps category → hex colour used on seek bar + UI
+    CATEGORY_COLOURS = {
+        '':            '#6b7280',  # grey  (no category)
+        'important':   '#ef4444',  # red
+        'celebration': '#f97316',  # orange
+        'watch_again': '#eab308',  # yellow
+        'highlight':   '#22c55e',  # green
+        'note':        '#3b82f6',  # blue
+        'question':    '#a855f7',  # purple
+    }
+
+    video         = models.ForeignKey(Video, on_delete=models.CASCADE, related_name='moments')
+    created_by    = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, related_name='video_moments'
+    )
+    timestamp     = models.FloatField(help_text='Start time in seconds')
+    end_timestamp = models.FloatField(null=True, blank=True, help_text='End time in seconds (optional)')
+    title         = models.CharField(max_length=200)
+    description   = models.TextField(blank=True)
+    visibility    = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default=VISIBILITY_PRIVATE)
+    category      = models.CharField(max_length=20, choices=CATEGORY_CHOICES, blank=True, default='')
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timestamp']
+        indexes = [
+            models.Index(fields=['video', 'visibility']),
+            models.Index(fields=['video', 'created_by']),
+        ]
+
+    def __str__(self):
+        return f'{self.video.title} — {self.title} @ {self.timestamp}s [{self.visibility}]'
 
 
 # ── End Screens ───────────────────────────────────────────────────────────────

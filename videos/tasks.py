@@ -7,6 +7,7 @@ Queues:
     default     — everything else
 """
 import logging
+import math
 import os
 import subprocess
 import json
@@ -51,9 +52,101 @@ def process_video_task(self, video_id: str):
                 queue='processing',
                 countdown=10,
             )
+        # Trigger seek thumbnail sprite generation if enabled
+        if getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True):
+            generate_seek_thumbnails_task.apply_async(
+                args=[video_id],
+                queue='processing',
+                countdown=15,
+            )
     except Exception as exc:
         logger.error(f'process_video_task failed for {video_id}: {exc}')
         raise self.retry(exc=exc)
+
+
+# ── Seek / scrub thumbnail sprite ────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.generate_seek_thumbnails_task',
+    queue='processing',
+    max_retries=2,
+    default_retry_delay=30,
+)
+def generate_seek_thumbnails_task(self, video_id: str):
+    """
+    Generate a sprite sheet (single JPEG) from the original video for
+    seek-bar hover / scrub preview.  One tile per SEEK_THUMBNAIL_INTERVAL
+    seconds, laid out in a grid of SEEK_THUMBNAIL_COLS columns.
+
+    Stores the relative media path in Video.seek_sprite.
+    Safe to re-run — overwrites the previous sprite.
+    """
+    if not getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True):
+        return
+
+    from .models import Video
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        logger.warning(f'[seek_thumbnails] video {video_id} not found')
+        return
+
+    if not video.original_file or not video.original_file.name:
+        logger.warning(f'[seek_thumbnails] video {video_id} has no original file — skipping')
+        return
+
+    interval = getattr(settings, 'SEEK_THUMBNAIL_INTERVAL', 5)
+    width    = getattr(settings, 'SEEK_THUMBNAIL_WIDTH',    160)
+    height   = getattr(settings, 'SEEK_THUMBNAIL_HEIGHT',   90)
+    cols     = getattr(settings, 'SEEK_THUMBNAIL_COLS',     25)
+    quality  = getattr(settings, 'SEEK_THUMBNAIL_QUALITY',  4)
+
+    input_path  = video.original_file.path
+    sprite_dir  = os.path.join(settings.MEDIA_ROOT, 'seek_sprites')
+    os.makedirs(sprite_dir, exist_ok=True)
+    sprite_file = os.path.join(sprite_dir, f'{video_id}.jpg')
+
+    # Build the FFmpeg filter:
+    #   fps=1/<interval>       — sample one frame every N seconds
+    #   scale=W:H              — resize each frame
+    #   tile=COLSxROWS         — stitch into a sprite grid
+    # Compute the row count from video duration; fall back to 200 if unknown.
+    # FFmpeg only fills as many tiles as it generates — the large ceiling is safe.
+    duration = video.duration or 0
+    if duration and interval:
+        total_frames = math.ceil(duration / interval)
+        rows = max(1, math.ceil(total_frames / cols))
+    else:
+        rows = 200  # safe upper bound (~27 hrs at 5-sec interval, 25 cols)
+    vf = f'fps=1/{interval},scale={width}:{height},tile={cols}x{rows}'
+
+    cmd = [
+        'ffmpeg',
+        '-i',        input_path,
+        '-vf',       vf,
+        '-frames:v', '1',       # output exactly one image (the completed tile)
+        '-q:v',      str(quality),
+        '-y',                    # overwrite
+        sprite_file,
+    ]
+
+    logger.info(f'[seek_thumbnails] generating sprite for {video_id}: {" ".join(cmd)}')
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        logger.error(f'[seek_thumbnails] FFmpeg timed out for {video_id}')
+        raise self.retry(exc=Exception('FFmpeg timeout'))
+
+    if result.returncode != 0:
+        err = result.stderr.decode('utf-8', errors='replace')[-500:]
+        logger.error(f'[seek_thumbnails] FFmpeg failed for {video_id}: {err}')
+        raise self.retry(exc=Exception(f'FFmpeg exit {result.returncode}'))
+
+    relative_path = f'seek_sprites/{video_id}.jpg'
+    Video.objects.filter(id=video_id).update(seek_sprite=relative_path)
+    logger.info(f'[seek_thumbnails] sprite saved → {relative_path}')
 
 
 # ── Auto-caption generation (faster-whisper) ──────────────────────────────────

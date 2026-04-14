@@ -194,6 +194,33 @@ python manage.py patch_master_playlists --video-id <uuid>
 
 ---
 
+## `generate_seek_sprites`
+
+Backfills seek-bar thumbnail sprite sheets for existing videos. New videos get sprites automatically during processing — use this command for older uploads or after changing sprite settings.
+
+See [SEEK_SPRITES.md](SEEK_SPRITES.md) for full documentation on how sprites work, storage, and configuration.
+
+| Option | Description |
+|---|---|
+| `--video-id UUID` | Generate sprite for a single video |
+| `--channel SLUG` | Generate sprites for all ready videos in a channel |
+| `--force` | Regenerate even if a sprite already exists on disk |
+| `--dry-run` | Preview which videos would be processed without running FFmpeg |
+| `--sync` | Run FFmpeg in this process synchronously (no Celery worker needed) |
+
+Without any scope flag, targets all ready videos that are missing a sprite.
+
+```bash
+python manage.py generate_seek_sprites                          # backfill all missing
+python manage.py generate_seek_sprites --channel my-channel    # one channel
+python manage.py generate_seek_sprites --video-id <uuid>       # one video
+python manage.py generate_seek_sprites --force                 # regenerate all
+python manage.py generate_seek_sprites --dry-run               # preview only
+python manage.py generate_seek_sprites --sync                  # no Celery needed
+```
+
+---
+
 ## Fix missing BLIP/CLIP descriptions
 
 ```bash

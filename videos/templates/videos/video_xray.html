@@ -206,6 +206,10 @@
     height: 10px;
     background: linear-gradient(90deg, rgba(248,113,113,.95), rgba(245,158,11,.95));
   }
+  .xr-segment.crowd {
+    height: 10px;
+    background: rgba(245, 158, 11, .92);
+  }
 
   .xr-scale {
     position: relative;
@@ -236,7 +240,10 @@
     border: 1px solid var(--border);
     background: var(--surface-2);
     border-radius: var(--radius);
+    position: relative;
   }
+  .xr-track.dimmed { opacity: .22; filter: saturate(.6); }
+  .xr-track.focused { outline: 1px solid rgba(99,102,241,.45); box-shadow: 0 0 0 3px rgba(99,102,241,.10); }
   @media (max-width: 900px) {
     .xr-track { grid-template-columns: 1fr; }
   }
@@ -308,6 +315,33 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+  .xr-track-actions {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  @media (max-width: 900px) {
+    .xr-track-actions {
+      position: static;
+      margin-top: 10px;
+      justify-content: flex-start;
+    }
+  }
+  .xr-action-btn.danger {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+  }
+  .xr-action-btn.danger:hover {
+    background: #ff5f5f;
+    border-color: #ff5f5f;
+    color: #fff;
+  }
   .xr-color-dot {
     width: 10px;
     height: 10px;
@@ -368,6 +402,53 @@
     color: var(--text-subtle);
     font-size: 12px;
   }
+
+  /* ── Confirmation modal ── */
+  .xr-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 20px;
+  }
+  .xr-modal-overlay.open { display: flex; }
+  .xr-modal {
+    width: min(520px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .xr-modal-head {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .xr-modal-title { font-size: 14px; font-weight: 800; }
+  .xr-modal-body { padding: 14px 16px; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+  .xr-modal-actions {
+    padding: 14px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .xr-modal-close {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .xr-modal-close:hover { color: var(--text); }
 
   .xr-empty {
     text-align: center;
@@ -447,19 +528,38 @@
     <div class="xr-overlap">
       <div class="xr-overlap-header">
         <div class="xr-overlap-title">Cumulative overlap</div>
-        <div class="xr-filter-note">{{ xray.summary.overlap_count }} overlap region{{ xray.summary.overlap_count|pluralize }}</div>
+        <div class="xr-filter-note">{{ xray.summary.overlap_count }} overlap region{{ xray.summary.overlap_count|pluralize }} · {{ xray.summary.crowd_range_count }} crowd region{{ xray.summary.crowd_range_count|pluralize }}</div>
       </div>
-      <div class="xr-lane">
-        {% for seg in xray.overlap_segments %}
-        <button
-          type="button"
-          class="xr-segment overlap"
-          data-start="{{ seg.start|floatformat:6 }}"
-          data-end="{{ seg.end|floatformat:6 }}"
-          style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%;"
-          onclick="seekOnSegment(event)"
-          title="Overlap: {{ seg.start_label }} - {{ seg.end_label }}"></button>
-        {% endfor %}
+      <div class="xr-lane-row">
+        <div class="xr-lane-label">Crowd</div>
+        <div class="xr-lane" data-seek-lane="1" onclick="seekOnLane(event)">
+          {% for seg in xray.crowd_segments %}
+          <button
+            type="button"
+            class="xr-segment crowd"
+            data-start="{{ seg.start|floatformat:6 }}"
+            data-end="{{ seg.end|floatformat:6 }}"
+            style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%;"
+            onclick="seekOnSegment(event)"
+            title="Crowd/audience pan: {{ seg.start_label }} - {{ seg.end_label }}"></button>
+          {% endfor %}
+        </div>
+      </div>
+      <div style="height:10px;"></div>
+      <div class="xr-lane-row">
+        <div class="xr-lane-label">Overlap</div>
+        <div class="xr-lane" data-seek-lane="1" onclick="seekOnLane(event)">
+          {% for seg in xray.overlap_segments %}
+          <button
+            type="button"
+            class="xr-segment overlap"
+            data-start="{{ seg.start|floatformat:6 }}"
+            data-end="{{ seg.end|floatformat:6 }}"
+            style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%;"
+            onclick="seekOnSegment(event)"
+            title="People overlap: {{ seg.start_label }} - {{ seg.end_label }}"></button>
+          {% endfor %}
+        </div>
       </div>
       <div class="xr-scale">
         <span>0:00</span>
@@ -513,12 +613,12 @@
             <div class="xr-track-actions">
               <button class="xr-action-btn danger"
                       type="button"
-                      onclick="removeFaceFromVideo({{ track.face_identity_id }}, this)">
+                      onclick="openConfirm('remove', {{ track.face_identity_id }}, '{{ track.name|escapejs }}', this)">
                 Remove face from this video
               </button>
               <button class="xr-action-btn danger"
                       type="button"
-                      onclick="deleteFaceIdentity({{ track.face_identity_id }}, this)">
+                      onclick="openConfirm('delete', {{ track.face_identity_id }}, '{{ track.name|escapejs }}', this)">
                 Delete identity
               </button>
             </div>
@@ -578,6 +678,21 @@
   </section>
 </div>
 
+<!-- Confirmation Modal -->
+<div class="xr-modal-overlay" id="xrConfirm" onclick="closeConfirmBackdrop(event)">
+  <div class="xr-modal">
+    <div class="xr-modal-head">
+      <div class="xr-modal-title" id="xrConfirmTitle">Confirm</div>
+      <button class="xr-modal-close" type="button" onclick="closeConfirm()">×</button>
+    </div>
+    <div class="xr-modal-body" id="xrConfirmBody"></div>
+    <div class="xr-modal-actions">
+      <button class="xr-action-btn" type="button" onclick="closeConfirm()">Cancel</button>
+      <button class="xr-action-btn danger" type="button" id="xrConfirmDo">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const xrVideo = document.getElementById('xrVideo');
   const XR_DURATION = Number("{{ xray.duration|floatformat:6 }}") || 0;
@@ -627,9 +742,54 @@
     seekTo(t);
   }
 
+  let _pendingAction = null;
+
+  function openConfirm(kind, identityId, displayName, sourceBtn) {
+    const overlay = document.getElementById('xrConfirm');
+    const title = document.getElementById('xrConfirmTitle');
+    const body = document.getElementById('xrConfirmBody');
+    const doBtn = document.getElementById('xrConfirmDo');
+    const name = displayName ? `"${displayName}"` : 'this identity';
+    if (kind === 'remove') {
+      title.textContent = 'Remove from this video';
+      body.textContent = `Remove ${name} from this video only? This won’t affect other videos/photos.`;
+    } else {
+      title.textContent = 'Delete identity';
+      body.textContent = `Delete ${name}? This may remove it across your content, and may be limited if shared across channels.`;
+    }
+    _pendingAction = { kind, identityId, sourceBtn };
+    doBtn.onclick = async () => {
+      if (!_pendingAction) return;
+      doBtn.disabled = true;
+      try {
+        if (_pendingAction.kind === 'remove') {
+          await removeFaceFromVideo(_pendingAction.identityId, _pendingAction.sourceBtn, true);
+        } else {
+          await deleteFaceIdentity(_pendingAction.identityId, _pendingAction.sourceBtn, true);
+        }
+      } finally {
+        doBtn.disabled = false;
+      }
+    };
+    overlay.classList.add('open');
+  }
+
+  function closeConfirm() {
+    document.getElementById('xrConfirm').classList.remove('open');
+    _pendingAction = null;
+  }
+
+  function closeConfirmBackdrop(e) {
+    if (e.target === document.getElementById('xrConfirm')) closeConfirm();
+  }
+
   async function removeFaceFromVideo(identityId, btn) {
+    return removeFaceFromVideo(identityId, btn, false);
+  }
+
+  async function removeFaceFromVideo(identityId, btn, alreadyConfirmed) {
     if (!identityId) return;
-    if (!confirm('Remove this person from this video?\n\nThis only affects this video (it does not delete them from other videos/photos).')) return;
+    if (!alreadyConfirmed) return openConfirm('remove', identityId, '', btn);
     btn.disabled = true;
     try {
       const res = await fetch(`/api/videos/${XR_VIDEO_ID}/faces/${identityId}/remove/`, {
@@ -647,8 +807,12 @@
   }
 
   async function deleteFaceIdentity(identityId, btn) {
+    return deleteFaceIdentity(identityId, btn, false);
+  }
+
+  async function deleteFaceIdentity(identityId, btn, alreadyConfirmed) {
     if (!identityId) return;
-    if (!confirm('Delete this identity?\n\nThis can remove it across your content (and may be blocked if it is shared across other channels).')) return;
+    if (!alreadyConfirmed) return openConfirm('delete', identityId, '', btn);
     btn.disabled = true;
     try {
       const res = await fetch(`/api/faces/${identityId}/delete/`, {
@@ -675,5 +839,7 @@
       xrVideo.src = sourceUrl;
     }
   }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeConfirm(); });
 </script>
 {% endblock %}

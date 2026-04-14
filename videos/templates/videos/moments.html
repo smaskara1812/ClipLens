@@ -1,0 +1,644 @@
+{% extends 'videos/base.html' %}
+{% load static video_filters %}
+
+{% block title %}My Moments — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .page-content { max-width: 1040px; margin: 0 auto; padding: 28px 24px 60px; }
+
+  /* Hero */
+  .page-hero { margin-bottom: 24px; }
+  .page-hero h1 {
+    font-size: 24px; font-weight: 800;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .page-hero h1 svg { width: 22px; height: 22px; color: var(--accent); }
+  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  /* Search bar */
+  .mom-search-wrap {
+    position: relative; margin-bottom: 16px;
+  }
+  .mom-search-input {
+    width: 100%; padding: 10px 14px 10px 38px; box-sizing: border-box;
+    background: var(--surface-2); border: 1.5px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 14px;
+    font-family: inherit; transition: border-color .15s;
+    outline: none;
+  }
+  .mom-search-input:focus { border-color: var(--accent); }
+  .mom-search-input::placeholder { color: var(--text-subtle); }
+  .mom-search-icon {
+    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+    color: var(--text-subtle); pointer-events: none;
+  }
+  .mom-search-clear {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    padding: 3px; border-radius: 4px; display: flex; align-items: center;
+    transition: color .12s;
+  }
+  .mom-search-clear:hover { color: var(--text); }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-bottom: 20px;
+  }
+  .filter-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border-radius: 20px;
+    border: 1.5px solid var(--border); background: none;
+    font-size: 12px; font-weight: 500; color: var(--text-muted);
+    cursor: pointer; text-decoration: none; transition: all .12s;
+    font-family: inherit;
+  }
+  .filter-pill:hover { border-color: var(--accent); color: var(--text); }
+  .filter-pill.active {
+    border-color: var(--accent); background: rgba(99,102,241,.12);
+    color: var(--accent); font-weight: 600;
+  }
+  .filter-pill .cat-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .filter-sep {
+    width: 1px; height: 20px; background: var(--border); margin: 0 4px;
+  }
+
+  /* Moments list */
+  .moments-list { display: flex; flex-direction: column; gap: 10px; }
+  .moment-row {
+    display: flex; align-items: flex-start; gap: 14px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+  .moment-row:hover { border-color: var(--border-2); box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+
+  /* Thumbnail */
+  .mom-thumb {
+    width: 90px; min-width: 90px; aspect-ratio: 16/9;
+    border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--surface-2); flex-shrink: 0; position: relative;
+  }
+  .mom-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .mom-thumb-ph {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-subtle);
+  }
+  .mom-thumb-ts {
+    position: absolute; bottom: 3px; right: 4px;
+    background: rgba(0,0,0,.82); color: #fff;
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+
+  /* Cat dot */
+  .mom-cat-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 600; padding: 2px 7px;
+    border-radius: 12px; white-space: nowrap;
+  }
+  .mom-cat-pill .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Body */
+  .mom-body { flex: 1; min-width: 0; }
+  .mom-title-link {
+    font-size: 15px; font-weight: 600; color: var(--text);
+    text-decoration: none; display: block;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mom-title-link:hover { color: var(--accent); }
+  .mom-video-name {
+    font-size: 12px; color: var(--text-muted); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mom-video-name a { color: inherit; text-decoration: none; }
+  .mom-video-name a:hover { color: var(--accent); }
+  .mom-meta {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 6px; margin-top: 7px;
+  }
+  .mom-ts-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(99,102,241,.12); color: var(--accent);
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 12px;
+  }
+  .mom-vis-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 6px;
+    border-radius: 10px; text-transform: uppercase; letter-spacing: .3px;
+  }
+  .mom-vis-badge.private { background: rgba(99,102,241,.1); color: #818cf8; }
+  .mom-vis-badge.team    { background: rgba(245,158,11,.12); color: #f59e0b; }
+  .mom-note {
+    font-size: 12px; color: var(--text-muted); margin-top: 6px;
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .mom-by { font-size: 11px; color: var(--text-subtle); margin-top: 4px; }
+
+  /* Actions */
+  .mom-actions {
+    display: flex; flex-direction: column; gap: 4px;
+    flex-shrink: 0; align-self: flex-start;
+  }
+  .mom-act-btn {
+    background: none; border: none; cursor: pointer; padding: 6px;
+    border-radius: 6px; color: var(--text-muted); display: flex;
+    align-items: center; transition: color .12s, background .12s;
+  }
+  .mom-act-btn:hover { background: var(--surface-2); }
+  .mom-act-btn.edit:hover { color: var(--accent); }
+  .mom-act-btn.del:hover  { color: #ef4444; }
+  .mom-act-btn svg { width: 15px; height: 15px; }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--text-subtle);
+  }
+  .empty-state svg { width: 48px; height: 48px; margin-bottom: 16px; opacity: .35; }
+  .empty-state h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text-muted); }
+  .empty-state p { font-size: 14px; line-height: 1.6; max-width: 360px; margin: 0 auto; }
+
+  /* ── Edit modal ── */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,.6); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); width: 100%; max-width: 420px;
+    overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.4);
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+  }
+  .modal-title {
+    font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+  }
+  .modal-close {
+    background: none; border: none; cursor: pointer; padding: 4px;
+    color: var(--text-muted); border-radius: 4px; display: flex;
+    align-items: center; transition: color .12s, background .12s;
+  }
+  .modal-close:hover { background: var(--surface-2); color: var(--text); }
+  .modal-close svg { width: 16px; height: 16px; }
+  .modal-body-pad { padding: 20px; }
+
+  /* Category picker in edit modal */
+  .edit-cat-picker { display: flex; flex-wrap: wrap; gap: 7px; }
+  .edit-cat-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 10px; border-radius: 20px;
+    border: 1.5px solid var(--border); background: none;
+    color: var(--text-muted); font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all .12s; font-family: inherit;
+  }
+  .edit-cat-btn:hover { border-color: var(--cat-color, #6b7280); color: var(--text); }
+  .edit-cat-btn.active {
+    border-color: var(--cat-color, #6b7280);
+    background: color-mix(in srgb, var(--cat-color, #6b7280) 12%, transparent);
+    color: var(--text);
+  }
+  .edit-cat-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--cat-color, #6b7280); flex-shrink: 0;
+  }
+  .edit-input {
+    width: 100%; padding: 8px 10px; box-sizing: border-box;
+    background: var(--bg-input, var(--surface-2)); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 14px; font-family: inherit;
+  }
+  .edit-input:focus { outline: none; border-color: var(--accent); }
+  .edit-label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: var(--text-subtle); margin-bottom: 6px;
+  }
+  .mom-vis-opt {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-weight: 500;
+    justify-content: center; transition: border-color .15s, background .15s;
+  }
+  input[name=editMomVis]:checked + .mom-vis-opt {
+    border-color: var(--accent); background: rgba(99,102,241,.12); color: var(--accent);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-content">
+
+  <!-- Hero -->
+  <div class="page-hero">
+    <h1>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+        <line x1="7" y1="7" x2="7.01" y2="7"/>
+      </svg>
+      My Moments
+      {% if moments %}<span style="font-size:14px;font-weight:500;color:var(--text-muted);margin-left:4px;">{{ moments|length }}</span>{% endif %}
+    </h1>
+    {% if video_obj %}
+    <p>
+      Showing moments in
+      <a href="{% url 'watch' video_obj.id %}" style="color:var(--accent);text-decoration:none;font-weight:500;">{{ video_obj.title }}</a>
+      — <a href="{% url 'moments' %}" style="color:var(--text-muted);text-decoration:none;">view all</a>
+    </p>
+    {% else %}
+    <p>All the moments you've tagged across your videos.</p>
+    {% endif %}
+  </div>
+
+  <!-- Search bar -->
+  <form method="get" action="{% url 'moments' %}" class="mom-search-wrap" id="momSearchForm">
+    {% if request.GET.video %}<input type="hidden" name="video" value="{{ request.GET.video }}">{% endif %}
+    {% if vis_filter %}<input type="hidden" name="vis" value="{{ vis_filter }}">{% endif %}
+    {% if cat_filter %}<input type="hidden" name="cat" value="{{ cat_filter }}">{% endif %}
+    <svg class="mom-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" name="q" id="momSearchInput" class="mom-search-input"
+           placeholder="Search moments by title, note, or video…"
+           value="{{ q }}" autocomplete="off" />
+    {% if q %}
+    <button type="button" class="mom-search-clear" onclick="clearSearch()" title="Clear search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    {% endif %}
+  </form>
+
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <!-- Visibility filters -->
+    <a href="?{% if request.GET.cat %}cat={{ request.GET.cat }}&{% endif %}{% if request.GET.video %}video={{ request.GET.video }}&{% endif %}{% if q %}q={{ q }}&{% endif %}"
+       class="filter-pill {% if not vis_filter %}active{% endif %}">All</a>
+    <a href="?vis=private{% if request.GET.cat %}&cat={{ request.GET.cat }}{% endif %}{% if request.GET.video %}&video={{ request.GET.video }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+       class="filter-pill {% if vis_filter == 'private' %}active{% endif %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Private
+    </a>
+    {% if can_tag_team %}
+    <a href="?vis=team{% if request.GET.cat %}&cat={{ request.GET.cat }}{% endif %}{% if request.GET.video %}&video={{ request.GET.video }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+       class="filter-pill {% if vis_filter == 'team' %}active{% endif %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Team
+    </a>
+    {% endif %}
+
+    <div class="filter-sep"></div>
+
+    <!-- Category filters -->
+    <a href="?{% if vis_filter %}vis={{ vis_filter }}&{% endif %}{% if request.GET.video %}video={{ request.GET.video }}&{% endif %}{% if q %}q={{ q }}&{% endif %}"
+       class="filter-pill {% if cat_filter == '' %}active{% endif %}">Any category</a>
+    {% for cat_val, cat_label in category_choices %}{% if cat_val %}
+    <a href="?cat={{ cat_val }}{% if vis_filter %}&vis={{ vis_filter }}{% endif %}{% if request.GET.video %}&video={{ request.GET.video }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+       class="filter-pill {% if cat_filter == cat_val %}active{% endif %}"
+       style="--cat-color:{{ category_colours|get_item:cat_val }};">
+      <span class="cat-dot" style="background:{{ category_colours|get_item:cat_val }};"></span>
+      {{ cat_label }}
+    </a>
+    {% endif %}{% endfor %}
+  </div>
+
+  <!-- Moments list -->
+  {% if moments %}
+  <div class="moments-list" id="momentsList">
+    {% for m in moments %}
+    <div class="moment-row" id="momrow-{{ m.pk }}">
+
+      <!-- Thumbnail with timestamp overlay -->
+      <a href="{% url 'watch' m.video.id %}?t={{ m.timestamp|floatformat:0 }}"
+         class="mom-thumb" title="Watch at {{ m.timestamp|duration_fmt }}">
+        {% if m.video.thumbnail_url %}
+        <img src="{{ m.video.thumbnail_url }}" alt="" loading="lazy" />
+        {% else %}
+        <div class="mom-thumb-ph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20" height="20">
+            <rect x="2" y="3" width="20" height="14" rx="2"/>
+            <path d="M8 21h8M12 17v4"/>
+          </svg>
+        </div>
+        {% endif %}
+        <div class="mom-thumb-ts">{{ m.timestamp|duration_fmt }}</div>
+      </a>
+
+      <!-- Body -->
+      <div class="mom-body">
+        <a href="{% url 'watch' m.video.id %}?t={{ m.timestamp|floatformat:0 }}"
+           class="mom-title-link" title="{{ m.title }}">{{ m.title }}</a>
+        <div class="mom-video-name">
+          <a href="{% url 'watch' m.video.id %}">{{ m.video.title }}</a>
+          {% if m.video.channel %}&nbsp;·&nbsp;{{ m.video.channel.name }}{% endif %}
+        </div>
+        <div class="mom-meta">
+          <span class="mom-ts-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            {{ m.timestamp|duration_fmt }}
+          </span>
+          {% if m.category %}
+          <span class="mom-cat-pill" style="background:color-mix(in srgb, {{ m.colour }} 12%, transparent);color:{{ m.colour }};">
+            <span class="dot" style="background:{{ m.colour }};"></span>
+            {{ m.get_category_display }}
+          </span>
+          {% endif %}
+          <span class="mom-vis-badge {{ m.visibility }}">{{ m.visibility }}</span>
+          {% if m.visibility == 'team' and m.created_by != request.user %}
+          <span class="mom-by">by {{ m.created_by.get_full_name|default:m.created_by.username }}</span>
+          {% endif %}
+        </div>
+        {% if m.description %}
+        <div class="mom-note">{{ m.description }}</div>
+        {% endif %}
+      </div>
+
+      <!-- Actions (only own moments) -->
+      {% if m.created_by == request.user %}
+      <div class="mom-actions">
+        <button class="mom-act-btn edit" title="Edit"
+                onclick="openEditModal({{ m.pk }}, {{ m.title|tojson }}, {{ m.description|tojson }}, '{{ m.category }}', '{{ m.visibility }}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <button class="mom-act-btn del" title="Delete" onclick="deleteMoment({{ m.pk }})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14H6L5 6"/>
+            <path d="M10 11v6"/><path d="M14 11v6"/>
+            <path d="M9 6V4h6v2"/>
+          </svg>
+        </button>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+      <line x1="7" y1="7" x2="7.01" y2="7"/>
+    </svg>
+    <h3>No moments {% if q %}found for "{{ q }}"{% elif cat_filter or vis_filter %}match these filters{% else %}yet{% endif %}</h3>
+    <p>
+      {% if q %}
+        Try a different search term, or <a href="{% url 'moments' %}" style="color:var(--accent);">clear the search</a>.
+      {% elif cat_filter or vis_filter %}
+        Try adjusting the filters above.
+      {% else %}
+        While watching a video, press <kbd style="background:var(--surface-2);border:1px solid var(--border);padding:1px 6px;border-radius:4px;font-size:12px;">T</kbd>
+        to tag a moment at any timestamp.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- ── Edit Moment Modal ────────────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="editMomModal" onclick="if(event.target===this)closeEditModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        Edit Moment
+      </div>
+      <button class="modal-close" onclick="closeEditModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body-pad">
+
+      <!-- Category -->
+      <div style="margin-bottom:16px;">
+        <label class="edit-label">Category</label>
+        <div class="edit-cat-picker" id="editCatPicker">
+          <button type="button" class="edit-cat-btn" data-cat="" style="--cat-color:#6b7280;">
+            <span class="edit-cat-dot"></span>None
+          </button>
+          <button type="button" class="edit-cat-btn" data-cat="important" style="--cat-color:#ef4444;">
+            <span class="edit-cat-dot"></span>Important
+          </button>
+          <button type="button" class="edit-cat-btn" data-cat="celebration" style="--cat-color:#f97316;">
+            <span class="edit-cat-dot"></span>Celebration
+          </button>
+          <button type="button" class="edit-cat-btn" data-cat="watch_again" style="--cat-color:#eab308;">
+            <span class="edit-cat-dot"></span>Watch Again
+          </button>
+          <button type="button" class="edit-cat-btn" data-cat="highlight" style="--cat-color:#22c55e;">
+            <span class="edit-cat-dot"></span>Highlight
+          </button>
+          <button type="button" class="edit-cat-btn" data-cat="note" style="--cat-color:#3b82f6;">
+            <span class="edit-cat-dot"></span>Note
+          </button>
+          <button type="button" class="edit-cat-btn" data-cat="question" style="--cat-color:#a855f7;">
+            <span class="edit-cat-dot"></span>Question
+          </button>
+        </div>
+      </div>
+
+      <!-- Title -->
+      <div style="margin-bottom:12px;">
+        <label class="edit-label" for="editMomTitle">Title *</label>
+        <input id="editMomTitle" type="text" class="edit-input" maxlength="200" placeholder="Moment title" />
+      </div>
+
+      <!-- Note -->
+      <div style="margin-bottom:16px;">
+        <label class="edit-label" for="editMomNote">Note <span style="font-weight:400;opacity:.6;">(optional)</span></label>
+        <textarea id="editMomNote" rows="2" class="edit-input" style="resize:vertical;" placeholder="Extra context..."></textarea>
+      </div>
+
+      {% if can_tag_team %}
+      <!-- Visibility -->
+      <div style="margin-bottom:18px;">
+        <label class="edit-label">Visibility</label>
+        <div style="display:flex;gap:8px;">
+          <label style="flex:1;cursor:pointer;">
+            <input type="radio" name="editMomVis" value="private" id="editVisPrivate" style="display:none;">
+            <div class="mom-vis-opt">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Private
+            </div>
+          </label>
+          <label style="flex:1;cursor:pointer;">
+            <input type="radio" name="editMomVis" value="team" id="editVisTeam" style="display:none;">
+            <div class="mom-vis-opt">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Team
+            </div>
+          </label>
+        </div>
+      </div>
+      {% endif %}
+
+      <button onclick="saveEdit()"
+              style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+        Save Changes
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const CSRF = '{{ csrf_token }}';
+  let _editId = null;
+  let _editCat = '';
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+  function clearSearch() {
+    const input = document.getElementById('momSearchInput');
+    if (input) input.value = '';
+    document.getElementById('momSearchForm').submit();
+  }
+  // Submit search on Enter (already in a form, so Enter works natively).
+  // Also debounce-submit as user types (300 ms delay).
+  const _searchInput = document.getElementById('momSearchInput');
+  if (_searchInput) {
+    let _searchTimer = null;
+    _searchInput.addEventListener('input', () => {
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(() => {
+        document.getElementById('momSearchForm').submit();
+      }, 400);
+    });
+  }
+
+  const editModal    = document.getElementById('editMomModal');
+  const editTitle    = document.getElementById('editMomTitle');
+  const editNote     = document.getElementById('editMomNote');
+  const editCatPicker = document.getElementById('editCatPicker');
+
+  // Category picker
+  if (editCatPicker) {
+    editCatPicker.addEventListener('click', e => {
+      const btn = e.target.closest('.edit-cat-btn');
+      if (!btn) return;
+      editCatPicker.querySelectorAll('.edit-cat-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _editCat = btn.dataset.cat;
+    });
+  }
+
+  function openEditModal(id, title, description, category, visibility) {
+    _editId  = id;
+    _editCat = category || '';
+    if (editTitle) editTitle.value = title || '';
+    if (editNote)  editNote.value  = description || '';
+    // Set category active
+    if (editCatPicker) {
+      editCatPicker.querySelectorAll('.edit-cat-btn').forEach(b => b.classList.remove('active'));
+      const btn = editCatPicker.querySelector(`[data-cat="${_editCat}"]`);
+      if (btn) btn.classList.add('active');
+    }
+    // Set visibility radio
+    const visRadio = document.querySelector(`input[name="editMomVis"][value="${visibility}"]`);
+    if (visRadio) visRadio.checked = true;
+    else {
+      const priv = document.getElementById('editVisPrivate');
+      if (priv) priv.checked = true;
+    }
+    if (editModal) editModal.classList.add('open');
+    if (editTitle) setTimeout(() => editTitle.focus(), 80);
+  }
+
+  function closeEditModal() {
+    if (editModal) editModal.classList.remove('open');
+    _editId = null;
+  }
+
+  async function saveEdit() {
+    if (!_editId) return;
+    const title = (editTitle ? editTitle.value : '').trim();
+    if (!title) { if (editTitle) editTitle.focus(); return; }
+    const description = editNote ? editNote.value.trim() : '';
+    const visRadio = document.querySelector('input[name="editMomVis"]:checked');
+    const visibility = visRadio ? visRadio.value : null;
+
+    const payload = { title, description, category: _editCat };
+    if (visibility) payload.visibility = visibility;
+
+    try {
+      const r = await fetch(`/api/moments/${_editId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) { alert('Could not save changes.'); return; }
+      const m = await r.json();
+      // Update the row in the DOM
+      const row = document.getElementById(`momrow-${_editId}`);
+      if (row) {
+        const titleEl = row.querySelector('.mom-title-link');
+        if (titleEl) titleEl.textContent = m.title;
+        const noteEl = row.querySelector('.mom-note');
+        if (noteEl) {
+          noteEl.textContent = m.description || '';
+          noteEl.style.display = m.description ? '' : 'none';
+        }
+        // Update category pill
+        const catPillEl = row.querySelector('.mom-cat-pill');
+        if (m.category) {
+          const catLabel = {'important':'Important','celebration':'Celebration','watch_again':'Watch Again','highlight':'Highlight','note':'Note','question':'Question'}[m.category] || '';
+          const catHtml = `<span class="mom-cat-pill" style="background:color-mix(in srgb, ${m.colour} 12%, transparent);color:${m.colour};"><span class="dot" style="background:${m.colour};"></span>${catLabel}</span>`;
+          if (catPillEl) catPillEl.outerHTML = catHtml;
+          else {
+            const meta = row.querySelector('.mom-meta');
+            if (meta) meta.insertAdjacentHTML('beforeend', catHtml);
+          }
+        } else if (catPillEl) {
+          catPillEl.remove();
+        }
+        // Update visibility badge
+        const visBadge = row.querySelector('.mom-vis-badge');
+        if (visBadge && m.visibility) {
+          visBadge.className = `mom-vis-badge ${m.visibility}`;
+          visBadge.textContent = m.visibility;
+        }
+      }
+      closeEditModal();
+    } catch(e) { alert('Network error.'); }
+  }
+
+  async function deleteMoment(id) {
+    if (!confirm('Delete this moment?')) return;
+    try {
+      const r = await fetch(`/api/moments/${id}/`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': CSRF },
+      });
+      if (!r.ok && r.status !== 204) { alert('Could not delete.'); return; }
+      const row = document.getElementById(`momrow-${id}`);
+      if (row) row.remove();
+      // Show empty state if no rows remain
+      const list = document.getElementById('momentsList');
+      if (list && !list.querySelector('.moment-row')) {
+        list.innerHTML = '<div class="empty-state" style="padding:40px 0;"><p style="color:var(--text-subtle);">No moments left.</p></div>';
+      }
+    } catch(e) { alert('Network error.'); }
+  }
+
+  // Keyboard: Escape closes modal
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && editModal && editModal.classList.contains('open')) closeEditModal();
+  });
+  if (editTitle) {
+    editTitle.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+    });
+  }
+</script>
+{% endblock %}

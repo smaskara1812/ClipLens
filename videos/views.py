@@ -36,7 +36,7 @@ from .models import (
     Playlist, PlaylistItem, WatchHistory, SavedVideo,
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
     FaceIdentity, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
-    SpeakerIdentity, SpeakerFaceSuggestion,
+    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment,
 )
 from .serializers import (
     VideoListSerializer, VideoDetailSerializer, VideoUploadSerializer,
@@ -1069,6 +1069,37 @@ def player_page(request):
 
         photo_matches = list(_photo_qs[:60]) if not isinstance(_photo_qs, list) else _photo_qs[:60]
 
+    # ── Moments search ───────────────────────────────────────────────────────
+    # Only shown to authenticated users; access rules enforced via helper.
+    moment_matches = []
+    if q and request.user.is_authenticated:
+        _mom_qs = _moments_qs_for_user(request.user)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _MomSQ
+            _fts_mom = _mom_qs.filter(
+                Q(title__search=_MomSQ(q, config='english', search_type='plain')) |
+                Q(description__search=_MomSQ(q, config='english', search_type='plain'))
+            )
+            _fuzzy_mom = _mom_qs.filter(
+                Q(title__icontains=q) | Q(description__icontains=q)
+            )
+            _mom_qs = _mom_qs.filter(
+                Q(pk__in=_fts_mom.values('pk')) | Q(pk__in=_fuzzy_mom.values('pk'))
+            )
+        else:
+            _mom_qs = _mom_qs.filter(
+                Q(title__icontains=q) | Q(description__icontains=q)
+            )
+        for m in _mom_qs.select_related('video', 'created_by').order_by('video_id', 'timestamp')[:100]:
+            creator = m.created_by
+            moment_matches.append({
+                'moment':    m,
+                'video':     m.video,
+                'time_fmt':  _fmt_seconds_display(m.timestamp),
+                'added_by':  (creator.get_full_name() or creator.username) if creator else 'Unknown',
+                'visibility': m.visibility,
+            })
+
     return render(request, 'videos/player.html', {
         'videos':              videos_page,
         'feed_total_count':    feed_total_count,
@@ -1088,6 +1119,7 @@ def player_page(request):
         'channel_matches':     channel_matches,
         'playlist_matches':    playlist_matches,
         'photo_matches':       photo_matches,
+        'moment_matches':      moment_matches,
         'frame_matches':       scene_matches,   # keep for any legacy template refs
         'use_semantic':        use_semantic,
         'feed_filter_params': {
@@ -1206,6 +1238,13 @@ def watch_page(request, video_id):
         'seek_to':         seek_to,
         'all_categories':  Category.objects.all().order_by('name'),
         'frame_interval':  getattr(settings, 'FRAME_INTERVAL_SECONDS', 5),
+        'can_tag_team':    _is_editor(request.user),
+        # Seek thumbnail sprite (only if feature enabled and sprite exists)
+        'seek_sprite_url':    (settings.MEDIA_URL + video.seek_sprite) if (getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True) and video.seek_sprite) else None,
+        'seek_thumb_interval': getattr(settings, 'SEEK_THUMBNAIL_INTERVAL', 5),
+        'seek_thumb_w':        getattr(settings, 'SEEK_THUMBNAIL_WIDTH',    160),
+        'seek_thumb_h':        getattr(settings, 'SEEK_THUMBNAIL_HEIGHT',   90),
+        'seek_thumb_cols':     getattr(settings, 'SEEK_THUMBNAIL_COLS',     25),
         # Playlist queue context
         'playlist_obj':    playlist_obj,
         'playlist_id':     playlist_id_param,
@@ -1471,6 +1510,58 @@ def playlists_page(request):
     return render(request, 'videos/playlists.html', {'playlists': playlists})
 
 
+@login_required
+def moments_page(request):
+    """
+    /moments/ — browse, filter, edit, and delete all moments visible to the user.
+    Supports ?video=<uuid>, ?cat=<category>, ?vis=private|team query filters.
+    """
+    qs = _moments_qs_for_user(request.user).select_related(
+        'video', 'video__channel', 'created_by'
+    ).order_by('-created_at')
+
+    video_id = request.GET.get('video', '').strip()
+    if video_id:
+        qs = qs.filter(video__id=video_id)
+
+    cat_filter = request.GET.get('cat', '')
+    if cat_filter != '' and cat_filter in dict(VideoMoment.CATEGORY_CHOICES):
+        qs = qs.filter(category=cat_filter)
+
+    vis_filter = request.GET.get('vis', '')
+    if vis_filter in ('private', 'team'):
+        qs = qs.filter(visibility=vis_filter)
+
+    q = request.GET.get('q', '').strip()
+    if q:
+        qs = qs.filter(
+            Q(title__icontains=q) |
+            Q(description__icontains=q) |
+            Q(video__title__icontains=q)
+        )
+
+    moments = list(qs[:500])
+    # Attach colour to each moment for template use
+    for m in moments:
+        m.colour = VideoMoment.CATEGORY_COLOURS.get(m.category or '', '#6b7280')
+
+    # Video filter label (for breadcrumb)
+    video_obj = None
+    if video_id and moments:
+        video_obj = moments[0].video
+
+    return render(request, 'videos/moments.html', {
+        'moments':          moments,
+        'cat_filter':       cat_filter,
+        'vis_filter':       vis_filter,
+        'q':                q,
+        'video_obj':        video_obj,
+        'category_choices': VideoMoment.CATEGORY_CHOICES,
+        'category_colours': VideoMoment.CATEGORY_COLOURS,
+        'can_tag_team':     _is_editor(request.user),
+    })
+
+
 def playlist_detail_page(request, playlist_id):
     playlist = get_object_or_404(Playlist, id=playlist_id)
 
@@ -1550,8 +1641,8 @@ def admin_commands_run(request):
         'assign_role', 'reanalyse_videos', 'rename_auto_identities',
         'ingest_videos', 'regenerate_captions', 'propagate_identities',
         'auto_confirm_similar', 'patch_master_playlists', 'fill_blip_descriptions',
-        'run_diarization',
-        'rebuild_speaker_face_suggestions',
+        'run_diarization', 'rebuild_speaker_face_suggestions',
+        'generate_seek_sprites',
     }
     if cmd not in ALLOWED:
         return Response({'error': f'Command not allowed: {cmd}'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2469,6 +2560,151 @@ def chapter_detail(request, chapter_id):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# ─── Video Moments API ───────────────────────────────────────────────────────
+
+def _moments_qs_for_user(user, video=None):
+    """
+    Return a VideoMoment queryset filtered to what `user` is allowed to see.
+
+    Viewers  : only their own private moments
+    Editors+ : all team moments  +  their own private moments
+    """
+    qs = VideoMoment.objects.select_related('created_by', 'video')
+    if video:
+        qs = qs.filter(video=video)
+    if not user or not user.is_authenticated:
+        return qs.none()
+    if _is_editor(user):
+        qs = qs.filter(
+            Q(visibility=VideoMoment.VISIBILITY_TEAM) |
+            Q(visibility=VideoMoment.VISIBILITY_PRIVATE, created_by=user)
+        )
+    else:
+        qs = qs.filter(visibility=VideoMoment.VISIBILITY_PRIVATE, created_by=user)
+    return qs
+
+
+def _moment_to_dict(m):
+    from .models import VideoMoment as _VM
+    creator = m.created_by
+    return {
+        'id':            m.pk,
+        'timestamp':     m.timestamp,
+        'end_timestamp': m.end_timestamp,
+        'title':         m.title,
+        'description':   m.description,
+        'visibility':    m.visibility,
+        'category':      m.category,
+        'colour':        _VM.CATEGORY_COLOURS.get(m.category or '', '#6b7280'),
+        'created_at':    m.created_at.isoformat(),
+        'added_by':      (creator.get_full_name() or creator.username) if creator else 'Unknown',
+        'is_mine':       creator.pk == m.created_by_id if creator else False,
+    }
+
+
+@api_view(['GET', 'POST'])
+@api_login_required
+def moment_list_create(request, video_id):
+    """
+    GET  /api/videos/<id>/moments/  — list moments visible to this user
+    POST /api/videos/<id>/moments/  — create a new moment
+    """
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'GET':
+        moments = _moments_qs_for_user(request.user, video=video).order_by('timestamp')
+        return Response([_moment_to_dict(m) for m in moments])
+
+    # POST — create
+    title = (request.data.get('title') or '').strip()
+    if not title:
+        return Response({'error': 'title is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        timestamp = float(request.data.get('timestamp', 0))
+    except (TypeError, ValueError):
+        return Response({'error': 'invalid timestamp'}, status=status.HTTP_400_BAD_REQUEST)
+
+    end_ts_raw = request.data.get('end_timestamp')
+    end_timestamp = None
+    if end_ts_raw is not None:
+        try:
+            end_timestamp = float(end_ts_raw)
+        except (TypeError, ValueError):
+            pass
+
+    # Viewers can only create private moments
+    visibility = request.data.get('visibility', VideoMoment.VISIBILITY_PRIVATE)
+    if not _is_editor(request.user):
+        visibility = VideoMoment.VISIBILITY_PRIVATE
+    elif visibility not in (VideoMoment.VISIBILITY_PRIVATE, VideoMoment.VISIBILITY_TEAM):
+        visibility = VideoMoment.VISIBILITY_PRIVATE
+
+    category = (request.data.get('category') or '')
+    if category not in dict(VideoMoment.CATEGORY_CHOICES):
+        category = ''
+
+    moment = VideoMoment.objects.create(
+        video=video,
+        created_by=request.user,
+        timestamp=timestamp,
+        end_timestamp=end_timestamp,
+        title=title,
+        description=(request.data.get('description') or '').strip(),
+        visibility=visibility,
+        category=category,
+    )
+    return Response(_moment_to_dict(moment), status=status.HTTP_201_CREATED)
+
+
+@api_view(['DELETE', 'PATCH'])
+@api_login_required
+def moment_detail(request, moment_id):
+    """
+    PATCH  /api/moments/<id>/  — edit title/description (creator only)
+    DELETE /api/moments/<id>/  — delete (creator only)
+    """
+    try:
+        moment = VideoMoment.objects.select_related('created_by').get(pk=moment_id)
+    except VideoMoment.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if moment.created_by_id != request.user.pk:
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'DELETE':
+        moment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # PATCH
+    update_fields = []
+    if 'title' in request.data:
+        title = request.data['title'].strip()
+        if title:
+            moment.title = title
+            update_fields.append('title')
+    if 'description' in request.data:
+        moment.description = request.data['description'].strip()
+        update_fields.append('description')
+    if 'category' in request.data:
+        cat = (request.data['category'] or '')
+        if cat not in dict(VideoMoment.CATEGORY_CHOICES):
+            cat = ''
+        moment.category = cat
+        update_fields.append('category')
+    if 'visibility' in request.data and _is_editor(request.user):
+        vis = request.data['visibility']
+        if vis in (VideoMoment.VISIBILITY_PRIVATE, VideoMoment.VISIBILITY_TEAM):
+            moment.visibility = vis
+            update_fields.append('visibility')
+    if update_fields:
+        moment.save(update_fields=update_fields)
+    return Response(_moment_to_dict(moment))
+
+
 # ─── Playlists API ───────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
@@ -2764,6 +3000,28 @@ def _xray_total_seconds(windows: list[tuple[float, float]]) -> float:
     return sum(max(0.0, end - start) for start, end in windows)
 
 
+def _xray_intersect_ranges(a: list[tuple[float, float]], b: list[tuple[float, float]], merge_gap: float = 0.15) -> list[tuple[float, float]]:
+    """Intersection of two merged range lists."""
+    if not a or not b:
+        return []
+    a = _xray_merge_ranges(a, 0.0)
+    b = _xray_merge_ranges(b, 0.0)
+    i = j = 0
+    out: list[tuple[float, float]] = []
+    while i < len(a) and j < len(b):
+        s1, e1 = a[i]
+        s2, e2 = b[j]
+        s = max(s1, s2)
+        e = min(e1, e2)
+        if e > s:
+            out.append((s, e))
+        if e1 < e2:
+            i += 1
+        else:
+            j += 1
+    return _xray_merge_ranges(out, merge_gap)
+
+
 def _xray_serialise_windows(windows: list[tuple[float, float]], duration: float) -> list[dict]:
     rows = []
     for start, end in windows:
@@ -2797,9 +3055,25 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
         .order_by('timestamp', 'id')
     )
     frame_counts: dict[object, int] = {}
+    frame_times: dict[object, float] = {}
     for face in raw_faces:
         frame_key = face.frame_id or round(face.timestamp, 3)
         frame_counts[frame_key] = frame_counts.get(frame_key, 0) + 1
+        if frame_key not in frame_times:
+            frame_times[frame_key] = float(face.timestamp)
+
+    # Crowd/pan overlay: ranges where face density exceeds threshold.
+    crowd_frame_times = [
+        frame_times[k] for k, cnt in frame_counts.items()
+        if cnt >= crowd_face_threshold and k in frame_times
+    ]
+    crowd_frame_times.sort()
+    crowd_ranges = _xray_windows_from_timestamps(
+        crowd_frame_times,
+        frame_interval=frame_interval,
+        duration=duration,
+        merge_gap=max(frame_interval * 0.75, 1.25),
+    )
 
     face_tracks: dict[int, dict] = {}
     filtered_face_hits = 0
@@ -2872,8 +3146,10 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
                 'speaker_id': None,
                 'face_windows': [],
                 'voice_windows': [],
+                'camera_windows': [],
                 'face_seconds': 0.0,
                 'voice_seconds': 0.0,
+                'camera_seconds': 0.0,
                 'face_hits': 0,
                 'voice_segments': 0,
                 'filtered_hits': 0,
@@ -2960,10 +3236,18 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
     )):
         color = palette[idx % len(palette)]
         track['color'] = color
+
+        # Speaking on camera = face ∩ voice
+        camera_windows = _xray_intersect_ranges(track['face_windows'], track['voice_windows'], merge_gap=0.25)
+        track['camera_windows'] = camera_windows
+        track['camera_seconds'] = _xray_total_seconds(camera_windows)
+
         track['face_segments'] = _xray_serialise_windows(track['face_windows'], duration)
         track['voice_segments_ui'] = _xray_serialise_windows(track['voice_windows'], duration)
+        track['camera_segments_ui'] = _xray_serialise_windows(track['camera_windows'], duration)
         track['face_seconds_label'] = _fmt_seconds_display(track['face_seconds'])
         track['voice_seconds_label'] = _fmt_seconds_display(track['voice_seconds'])
+        track['camera_seconds_label'] = _fmt_seconds_display(track['camera_seconds'])
         track['combined_seconds'] = track['face_seconds'] + track['voice_seconds']
         track['combined_seconds_label'] = _fmt_seconds_display(track['combined_seconds'])
         tracks.append(track)
@@ -2987,12 +3271,15 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
             overlap_ranges.append((current_start, time))
             current_start = None
     overlap_segments = _xray_serialise_windows(overlap_ranges, duration)
+    crowd_segments = _xray_serialise_windows(crowd_ranges, duration)
 
     summary = {
         'track_count': len(tracks),
         'face_track_count': sum(1 for track in tracks if track['face_windows']),
         'voice_track_count': sum(1 for track in tracks if track['voice_windows']),
+        'camera_track_count': sum(1 for track in tracks if track['camera_windows']),
         'overlap_count': len(overlap_ranges),
+        'crowd_range_count': len(crowd_ranges),
         'filtered_face_hits': filtered_face_hits,
         'filter_mode': filter_mode,
         'crowd_threshold': crowd_face_threshold,
@@ -3005,6 +3292,7 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
         'tracks': tracks,
         'summary': summary,
         'overlap_segments': overlap_segments,
+        'crowd_segments': crowd_segments,
         'duration': duration,
         'duration_label': _fmt_seconds_display(duration),
     }

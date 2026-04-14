@@ -376,6 +376,19 @@ HLS_QUALITIES = [
     if h.strip().isdigit()
 ]
 
+# ── Seek / Scrub Thumbnail Previews ──────────────────────────────────────────
+# Set SEEK_THUMBNAILS_ENABLED=false to disable entirely (no processing, no UI)
+SEEK_THUMBNAILS_ENABLED  = os.getenv('SEEK_THUMBNAILS_ENABLED', 'true').lower() == 'true'
+# Seconds between captured frames (lower = smoother preview, larger sprite)
+SEEK_THUMBNAIL_INTERVAL  = int(os.getenv('SEEK_THUMBNAIL_INTERVAL', '5'))
+# Dimensions of each thumbnail tile in the sprite sheet
+SEEK_THUMBNAIL_WIDTH     = int(os.getenv('SEEK_THUMBNAIL_WIDTH',  '160'))
+SEEK_THUMBNAIL_HEIGHT    = int(os.getenv('SEEK_THUMBNAIL_HEIGHT', '90'))
+# Number of tile columns in the sprite sheet
+SEEK_THUMBNAIL_COLS      = int(os.getenv('SEEK_THUMBNAIL_COLS',   '25'))
+# JPEG quality (2–5 recommended; lower = better quality, larger file)
+SEEK_THUMBNAIL_QUALITY   = int(os.getenv('SEEK_THUMBNAIL_QUALITY', '4'))
+
 # ── Django Debug Toolbar (dev only) ──────────────────────────────────────────
 if DEBUG:
     INTERNAL_IPS = ['127.0.0.1', '::1']

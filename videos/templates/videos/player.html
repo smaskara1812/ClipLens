@@ -690,6 +690,11 @@
         Chapters <span class="tab-count">{{ chapter_matches|length }}</span>
       </button>
       {% endif %}
+      {% if moment_matches %}
+      <button class="search-tab" onclick="switchTab('moments', this)">
+        Moments <span class="tab-count">{{ moment_matches|length }}</span>
+      </button>
+      {% endif %}
       {% if channel_matches %}
       <button class="search-tab" onclick="switchTab('channels', this)">
         Channels <span class="tab-count">{{ channel_matches|length }}</span>
@@ -935,6 +940,43 @@
               <span class="speech-moment-text">{{ moment.highlighted_text|safe }}{% if not moment.is_exact %}<span class="fuzzy-badge">~</span>{% endif %}</span>
             </a>
             {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Moments tab -->
+    {% if moment_matches %}
+    <div class="search-section active" id="tab-moments">
+      <div class="speech-matches">
+        {% for entry in moment_matches %}
+        <div class="speech-video-block">
+          <a href="{% url 'watch' entry.video.id %}" class="speech-video-header">
+            <div class="speech-video-thumb">
+              {% if entry.video.thumbnail_url %}<img src="{{ entry.video.thumbnail_url }}" alt="" />{% endif %}
+            </div>
+            <div>
+              <div class="speech-video-title">{{ entry.video.title }}</div>
+              <div class="speech-video-channel">
+                {% if entry.video.channel %}{{ entry.video.channel.name }} · {% endif %}
+                added by {{ entry.added_by }}
+                {% if entry.visibility == 'team' %}
+                  · <span style="color:var(--accent-warm,#f59e0b);font-weight:600;">Team</span>
+                {% endif %}
+              </div>
+            </div>
+          </a>
+          <div class="speech-moments">
+            <a href="{% url 'watch' entry.video.id %}?t={{ entry.moment.timestamp|floatformat:0 }}"
+               class="speech-moment">
+              <span class="speech-moment-time">{{ entry.time_fmt }}</span>
+              <span class="speech-moment-text">{{ entry.moment.title }}</span>
+            </a>
+            {% if entry.moment.description %}
+            <div style="padding:0 12px 8px;font-size:12px;color:var(--text-muted);">{{ entry.moment.description }}</div>
+            {% endif %}
           </div>
         </div>
         {% endfor %}

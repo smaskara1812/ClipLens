@@ -105,6 +105,95 @@
   }
   .wc-seek:hover .wc-ch-mark { background: rgba(255,255,255,.75); }
 
+  /* Seek / scrub thumbnail preview */
+  .wc-seek-preview {
+    position: absolute; bottom: calc(100% + 14px);
+    display: none; flex-direction: column; align-items: center;
+    transform: translateX(-50%); pointer-events: none; z-index: 30;
+  }
+  .wc-seek-preview.visible { display: flex; }
+  .wc-seek-preview-img {
+    background-repeat: no-repeat;
+    border-radius: 4px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.7);
+    border: 1.5px solid rgba(255,255,255,.18);
+    flex-shrink: 0;
+  }
+  .wc-seek-preview-ts {
+    font-size: 11px; font-weight: 700; color: #fff;
+    margin-top: 5px; text-shadow: 0 1px 4px rgba(0,0,0,.9);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Small caret below the image */
+  .wc-seek-preview::after {
+    content: ''; width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid rgba(255,255,255,.18);
+    margin-top: 2px;
+  }
+
+  /* Moment markers */
+  .wc-mom-mark {
+    position: absolute; top: -3px; bottom: -3px; width: 3px;
+    border-radius: 2px; transform: translateX(-50%);
+    cursor: pointer; pointer-events: all;
+    transition: transform .1s;
+  }
+  .wc-mom-mark:hover { transform: translateX(-50%) scaleY(1.5); }
+  .wc-mom-mark.private { background: #4f9cf9; }
+  .wc-mom-mark.team    { background: #f59e0b; }
+
+  /* Moment tooltip */
+  .wc-mom-tooltip {
+    position: absolute; bottom: calc(100% + 10px);
+    background: rgba(10,10,10,.92); color: #fff;
+    font-size: 11px; padding: 5px 9px; border-radius: 5px;
+    white-space: nowrap; pointer-events: none;
+    transform: translateX(-50%); display: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,.5); max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; z-index: 20;
+  }
+  .wc-mom-tooltip .mom-tt-vis {
+    font-size: 10px; opacity: .6; margin-left: 4px;
+  }
+
+  /* Category picker buttons */
+  .mom-cat-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 20px;
+    border: 1.5px solid var(--border); background: none;
+    color: var(--text-muted); font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: border-color .12s, background .12s, color .12s;
+    font-family: inherit;
+  }
+  .mom-cat-btn:hover {
+    border-color: var(--cat-color, #6b7280);
+    color: var(--text);
+  }
+  .mom-cat-btn.active {
+    border-color: var(--cat-color, #6b7280);
+    background: color-mix(in srgb, var(--cat-color, #6b7280) 12%, transparent);
+    color: var(--text);
+  }
+  .mom-cat-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--cat-color, #6b7280); flex-shrink: 0;
+    display: inline-block;
+  }
+
+  /* Visibility selector in modal */
+  .mom-vis-opt {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-weight: 500;
+    justify-content: center; transition: border-color .15s, background .15s;
+  }
+  input[name=momentVisibility]:checked + .mom-vis-opt {
+    border-color: var(--accent); background: rgba(99,102,241,.12);
+    color: var(--accent);
+  }
+
   /* Chapter hover tooltip */
   .wc-ch-tooltip {
     position: absolute; bottom: calc(100% + 8px);
@@ -493,8 +582,15 @@
             <div class="wc-seek-w" id="wcSeekW"></div>
             <div class="wc-seek-f" id="wcSeekF"></div>
             <div id="wcChapterMarkers"></div>
+            <div id="wcMomentMarkers"></div>
             <div class="wc-seek-t" id="wcSeekT"></div>
             <div class="wc-ch-tooltip" id="wcChTooltip"></div>
+            {% if seek_sprite_url %}
+            <div class="wc-seek-preview" id="wcSeekPreview">
+              <div class="wc-seek-preview-img" id="wcSeekPreviewImg"></div>
+              <div class="wc-seek-preview-ts" id="wcSeekPreviewTs">0:00</div>
+            </div>
+            {% endif %}
           </div>
 
           <!-- Time -->
@@ -635,6 +731,16 @@
             </svg>
           </button>
 
+          <!-- Tag Moment -->
+          {% if user.is_authenticated %}
+          <button class="wc-btn" id="wcMomentBtn" onclick="openMomentModal()" title="Tag moment  (T)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+              <line x1="7" y1="7" x2="7.01" y2="7"/>
+            </svg>
+          </button>
+          {% endif %}
+
           <!-- Fullscreen -->
           <button class="wc-fs" onclick="watchToggleFs()" title="Fullscreen  (F)">
             <svg id="watchFsIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -707,6 +813,15 @@
           </svg>
           Add to Playlist
         </button>
+
+        <!-- Moments count pill -->
+        <a href="{% url 'moments' %}?video={{ video.id }}" class="btn btn-sm btn-ghost" id="watchMomentsBtn" style="display:none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+            <line x1="7" y1="7" x2="7.01" y2="7"/>
+          </svg>
+          Moments <span id="watchMomentsCount" style="background:var(--surface-3);padding:1px 6px;border-radius:10px;font-size:11px;font-weight:700;margin-left:2px;"></span>
+        </a>
         {% endif %}
 
         <button class="btn btn-primary btn-sm" onclick="copyText('{{ request.scheme }}://{{ request.get_host }}{% url 'watch' video.id %}', 'Watch link copied!')">
@@ -1042,11 +1157,109 @@
       <div style="color:var(--text-subtle);font-size:13px;padding:12px 0;">No other videos yet.</div>
       {% endfor %}
     </div>
+
   </aside>
 </div>
 
 <!-- ── Add to Playlist Modal ── -->
 {% if request.user.is_authenticated %}
+<!-- ── Tag Moment Modal ─────────────────────────────────────────────────── -->
+{% if user.is_authenticated %}
+<div class="modal-backdrop" id="momentModal" onclick="if(event.target===this)closeMomentModal()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+          <line x1="7" y1="7" x2="7.01" y2="7"/>
+        </svg>
+        Tag Moment
+      </div>
+      <button class="modal-close" onclick="closeMomentModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="display:block;padding:20px 24px;">
+
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">
+        Tagging at <strong id="momentTimestampDisplay">0:00</strong>
+      </div>
+
+      <!-- Category picker -->
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-subtle);">Category</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;" id="momCatPicker">
+          <button type="button" class="mom-cat-btn active" data-cat="" style="--cat-color:#6b7280;">
+            <span class="mom-cat-dot"></span>None
+          </button>
+          <button type="button" class="mom-cat-btn" data-cat="important" style="--cat-color:#ef4444;">
+            <span class="mom-cat-dot"></span>Important
+          </button>
+          <button type="button" class="mom-cat-btn" data-cat="celebration" style="--cat-color:#f97316;">
+            <span class="mom-cat-dot"></span>Celebration
+          </button>
+          <button type="button" class="mom-cat-btn" data-cat="watch_again" style="--cat-color:#eab308;">
+            <span class="mom-cat-dot"></span>Watch Again
+          </button>
+          <button type="button" class="mom-cat-btn" data-cat="highlight" style="--cat-color:#22c55e;">
+            <span class="mom-cat-dot"></span>Highlight
+          </button>
+          <button type="button" class="mom-cat-btn" data-cat="note" style="--cat-color:#3b82f6;">
+            <span class="mom-cat-dot"></span>Note
+          </button>
+          <button type="button" class="mom-cat-btn" data-cat="question" style="--cat-color:#a855f7;">
+            <span class="mom-cat-dot"></span>Question
+          </button>
+        </div>
+      </div>
+
+      <!-- Title -->
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text-subtle);">Title *</label>
+        <input id="momentTitleInput" type="text" placeholder="What's happening here?"
+               style="width:100%;padding:8px 10px;background:var(--bg-input,var(--bg-secondary));border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;box-sizing:border-box;"
+               maxlength="200" />
+      </div>
+
+      <!-- Note -->
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text-subtle);">Note <span style="font-weight:400;opacity:.6;">(optional)</span></label>
+        <textarea id="momentDescInput" rows="2" placeholder="Extra context..."
+                  style="width:100%;padding:8px 10px;background:var(--bg-input,var(--bg-secondary));border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical;box-sizing:border-box;"></textarea>
+      </div>
+
+      {% if can_tag_team %}
+      <!-- Visibility — editors/admins only -->
+      <div style="margin-bottom:18px;">
+        <label style="display:block;font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-subtle);">Visibility</label>
+        <div style="display:flex;gap:8px;">
+          <label style="flex:1;cursor:pointer;">
+            <input type="radio" name="momentVisibility" value="private" checked style="display:none;" id="momVisPrivate">
+            <div class="mom-vis-opt" id="momVisPrivateBox">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Private
+            </div>
+          </label>
+          <label style="flex:1;cursor:pointer;">
+            <input type="radio" name="momentVisibility" value="team" style="display:none;" id="momVisTeam">
+            <div class="mom-vis-opt" id="momVisTeamBox">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Team
+            </div>
+          </label>
+        </div>
+      </div>
+      {% endif %}
+
+      <button onclick="saveMoment()"
+              style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+        Save Moment
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="modal-backdrop" id="playlistModal" onclick="if(event.target===this)closePlaylistModal()">
   <div class="modal" style="max-width:420px;">
     <div class="modal-header">
@@ -1602,55 +1815,120 @@
   const loader  = document.getElementById('loader');
   let watchHls  = null;
 
-  if (typeof Hls === 'undefined') {
-    loader.style.display = 'none';
-  } else if (Hls.isSupported()) {
-    watchHls = new Hls({
-      enableWorker: false,
-      startLevel: -1,
-      maxBufferLength: 30,
-      maxMaxBufferLength: 60,
-      {% if seek_to %}startPosition: {{ seek_to }},{% endif %}
-    });
-    watchHls.loadSource(hlsSrc);
-    watchHls.attachMedia(videoEl);
-    window._hls = watchHls;
+  // One-time initial values from server (seek_to / resume position).
+  // We track _playerInited so bfcache re-inits don't re-seek or re-toast.
+  const _hlsSeekTo    = {% if seek_to %}{{ seek_to }}{% else %}null{% endif %};
+  let   _playerInited = false;
 
-    watchHls.on(Hls.Events.MANIFEST_PARSED, () => {
-      loader.style.display = 'none';
-      document.getElementById('bigPlay').classList.remove('hidden');
-      {% if seek_to %}
-      videoEl.currentTime = {{ seek_to }};
-      showToast('info', 'Jumped to {{ seek_to|floatformat:0 }}s', 'from search result');
-      {% endif %}
-      videoEl.play().catch(() => {});
-      buildQualityMenu(watchHls);
-    });
-
-    watchHls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
-      if (watchHls.autoLevelEnabled) {
-        const lvl = watchHls.levels[data.level];
-        const label = lvl ? (lvl.name || lvl.height + 'p') : '?';
-        document.getElementById('qualityLabel').textContent = `Auto (${label})`;
-        console.log(`[ABR] → ${label}`, lvl ? `(${(lvl.bitrate/1000000).toFixed(1)} Mbps)` : '');
-      }
-      refreshQualityMenu();
-    });
-
-    watchHls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) loader.style.display = 'none'; });
-  } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-    // Native HLS (Safari / iOS) — no hls.js
-    videoEl.src = hlsSrc;
-    videoEl.addEventListener('loadedmetadata', () => {
-      loader.style.display = 'none';
-      document.getElementById('bigPlay').classList.remove('hidden');
-      {% if seek_to %}
-      videoEl.currentTime = {{ seek_to }};
-      showToast('info', 'Jumped to {{ seek_to|floatformat:0 }}s', 'from search result');
-      {% endif %}
-      videoEl.play().catch(() => {});
-    }, { once: true });
+  function _destroyHls() {
+    if (watchHls) {
+      try { watchHls.destroy(); } catch(e) {}
+      watchHls = null;
+      window._hls = null;
+    }
   }
+
+  function _initHlsPlayer() {
+    _destroyHls();
+
+    if (typeof Hls === 'undefined') {
+      loader.style.display = 'none';
+      return;
+    }
+
+    if (Hls.isSupported()) {
+      const hlsConfig = {
+        enableWorker: false,
+        startLevel: -1,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+      };
+      // Only seek to startPosition on very first load, not on bfcache re-init
+      if (!_playerInited && _hlsSeekTo != null) hlsConfig.startPosition = _hlsSeekTo;
+
+      watchHls = new Hls(hlsConfig);
+      watchHls.loadSource(hlsSrc);
+      watchHls.attachMedia(videoEl);
+      window._hls = watchHls;
+
+      watchHls.on(Hls.Events.MANIFEST_PARSED, () => {
+        loader.style.display = 'none';
+        document.getElementById('bigPlay').classList.remove('hidden');
+        if (!_playerInited && _hlsSeekTo != null) {
+          videoEl.currentTime = _hlsSeekTo;
+          showToast('info', 'Jumped to {{ seek_to|default:"0"|floatformat:0 }}s', 'from search result');
+        }
+        videoEl.play().catch(() => {
+          // Autoplay blocked — show controls so user can start manually
+          watchSyncPlayIcon(true);
+        });
+        buildQualityMenu(watchHls);
+        _playerInited = true;
+      });
+
+      watchHls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+        if (watchHls.autoLevelEnabled) {
+          const lvl = watchHls.levels[data.level];
+          const label = lvl ? (lvl.name || lvl.height + 'p') : '?';
+          document.getElementById('qualityLabel').textContent = `Auto (${label})`;
+          console.log(`[ABR] → ${label}`, lvl ? `(${(lvl.bitrate/1000000).toFixed(1)} Mbps)` : '');
+        }
+        refreshQualityMenu();
+      });
+
+      // Fatal error recovery: network errors → retry after 1 s; media errors → recoverMediaError
+      let _hlsErrCount = 0;
+      watchHls.on(Hls.Events.ERROR, (_, d) => {
+        loader.style.display = 'none';
+        if (!d.fatal) return;
+        _hlsErrCount++;
+        if (d.type === Hls.ErrorTypes.NETWORK_ERROR && _hlsErrCount <= 3) {
+          console.warn('[HLS] Fatal network error — retrying in 1 s…', d);
+          setTimeout(() => { if (watchHls) watchHls.startLoad(); }, 1000);
+        } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR && _hlsErrCount <= 3) {
+          console.warn('[HLS] Fatal media error — attempting recovery…', d);
+          watchHls.recoverMediaError();
+        } else {
+          // Unrecoverable after retries — show paused state so user can see something is wrong
+          console.error('[HLS] Unrecoverable fatal error', d);
+          watchSyncPlayIcon(true);
+        }
+      });
+
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS (Safari / iOS)
+      videoEl.src = hlsSrc;
+      videoEl.load();
+      videoEl.addEventListener('loadedmetadata', () => {
+        loader.style.display = 'none';
+        document.getElementById('bigPlay').classList.remove('hidden');
+        if (!_playerInited && _hlsSeekTo != null) {
+          videoEl.currentTime = _hlsSeekTo;
+          showToast('info', '{{ seek_to|default:"0"|floatformat:0 }}s', 'from search result');
+        }
+        videoEl.play().catch(() => { watchSyncPlayIcon(true); });
+        _playerInited = true;
+      }, { once: true });
+    }
+  }
+
+  // First init
+  _initHlsPlayer();
+
+  // ── bfcache (browser back/forward navigation) ─────────────────────────────
+  // Destroy HLS before the page is frozen so it doesn't enter bfcache in a
+  // broken state (stale XHR connections, dead workers).
+  window.addEventListener('pagehide', () => {
+    _destroyHls();
+  });
+  // If the browser restores this page from bfcache, reinitialize from scratch.
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) {
+      console.log('[ClipLens] Page restored from bfcache — reinitializing player');
+      loader.style.display = '';
+      _initHlsPlayer();
+    }
+  });
 
   // ── Custom controls: Play / Pause ─────────────────────────────────────────
   const videoWrap = document.getElementById('videoWrap');
@@ -1728,11 +2006,16 @@
     wcDragging = true; wcSeek.classList.add('drag');
     wcApplySeek(wcGetPos(e), false); e.preventDefault();
   });
-  document.addEventListener('mousemove', e => { if (wcDragging) wcApplySeek(wcGetPos(e), false); });
+  document.addEventListener('mousemove', e => {
+    if (!wcDragging) return;
+    wcApplySeek(wcGetPos(e), false);
+    wcShowSeekPreview(wcGetPos(e), e.clientX);
+  });
   document.addEventListener('mouseup',   e => {
     if (!wcDragging) return;
     wcDragging = false; wcSeek.classList.remove('drag');
     wcApplySeek(wcGetPos(e), true);
+    wcHideSeekPreview();
   });
   wcSeek.addEventListener('touchstart', e => {
     wcDragging = true; wcSeek.classList.add('drag'); wcApplySeek(wcGetPos(e), false);
@@ -1799,10 +2082,298 @@
         const half = wcChTooltip.offsetWidth / 2;
         const clamped = Math.max(half, Math.min(r.width - half, raw));
         wcChTooltip.style.left = clamped + 'px';
+      } else {
+        wcChTooltip.style.display = 'none';
       }
+      wcShowSeekPreview(pos, e.clientX);
     });
-    wcSeek.addEventListener('mouseleave', () => { wcChTooltip.style.display = 'none'; });
+    wcSeek.addEventListener('mouseleave', () => {
+      wcChTooltip.style.display = 'none';
+      wcHideSeekPreview();
+    });
   }
+
+  // ── Seek thumbnail preview ───────────────────────────────────────────────
+  {% if seek_sprite_url %}
+  const WC_SPRITE_URL   = '{{ seek_sprite_url }}';
+  const WC_SP_INTERVAL  = {{ seek_thumb_interval }};
+  const WC_SP_W         = {{ seek_thumb_w }};
+  const WC_SP_H         = {{ seek_thumb_h }};
+  const WC_SP_COLS      = {{ seek_thumb_cols }};
+  const wcSeekPreview   = document.getElementById('wcSeekPreview');
+  const wcSeekPreviewImg = document.getElementById('wcSeekPreviewImg');
+  const wcSeekPreviewTs  = document.getElementById('wcSeekPreviewTs');
+
+  // Pre-set fixed dimensions and sprite URL — only once
+  if (wcSeekPreviewImg) {
+    wcSeekPreviewImg.style.width           = WC_SP_W + 'px';
+    wcSeekPreviewImg.style.height          = WC_SP_H + 'px';
+    wcSeekPreviewImg.style.backgroundImage = `url(${WC_SPRITE_URL})`;
+    wcSeekPreviewImg.style.backgroundSize  = `${WC_SP_COLS * WC_SP_W}px auto`;
+  }
+
+  function wcShowSeekPreview(pct, clientX) {
+    const dur = videoEl.duration;
+    if (!dur || !wcSeekPreview) return;
+    const t        = Math.max(0, Math.min(pct * dur, dur));
+    const frameIdx = Math.floor(t / WC_SP_INTERVAL);
+    const col      = frameIdx % WC_SP_COLS;
+    const row      = Math.floor(frameIdx / WC_SP_COLS);
+    wcSeekPreviewImg.style.backgroundPosition =
+      `${-(col * WC_SP_W)}px ${-(row * WC_SP_H)}px`;
+    wcSeekPreviewTs.textContent = wcFmtTime(t);
+    // Clamp horizontally so the card never overflows the seek bar
+    const r       = wcSeek.getBoundingClientRect();
+    const rawX    = clientX - r.left;
+    const half    = WC_SP_W / 2;
+    const clampX  = Math.max(half, Math.min(r.width - half, rawX));
+    wcSeekPreview.style.left = clampX + 'px';
+    wcSeekPreview.classList.add('visible');
+  }
+
+  function wcHideSeekPreview() {
+    if (wcSeekPreview) wcSeekPreview.classList.remove('visible');
+  }
+  {% else %}
+  function wcShowSeekPreview() {}
+  function wcHideSeekPreview() {}
+  {% endif %}
+
+  // ── Moments ───────────────────────────────────────────────────────────────
+  {% if user.is_authenticated %}
+  const VIDEO_ID_MOM   = '{{ video.id }}';
+  const CSRF_TOKEN_MOM = '{{ csrf_token }}';
+  const IS_EDITOR_MOM  = {{ user|yesno:'true,false' }};  {# refined below via role check #}
+
+  let _moments = [];
+  const momMarkersEl  = document.getElementById('wcMomentMarkers');
+  const momTooltipEl  = (() => {
+    const el = document.createElement('div');
+    el.className = 'wc-mom-tooltip';
+    el.id = 'wcMomTooltip';
+    document.getElementById('wcSeek').appendChild(el);
+    return el;
+  })();
+
+  function fmtTs(s) {
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ':' + String(sec).padStart(2, '0');
+  }
+
+  async function loadMoments() {
+    try {
+      const r = await fetch(`/api/videos/${VIDEO_ID_MOM}/moments/`);
+      if (!r.ok) return;
+      _moments = await r.json();
+      renderMomentMarkers();
+      renderMomentSidebar();
+    } catch(e) {}
+  }
+
+  function renderMomentMarkers() {
+    if (!momMarkersEl) return;
+    momMarkersEl.innerHTML = '';
+    const dur = videoEl.duration;
+    if (!dur) return;
+    _moments.forEach(m => {
+      const pct = (m.timestamp / dur * 100).toFixed(3) + '%';
+      const mark = document.createElement('div');
+      mark.className = 'wc-mom-mark';
+      mark.style.left = pct;
+      mark.style.background = m.colour || (m.visibility === 'team' ? '#f59e0b' : '#4f9cf9');
+      mark.dataset.id = m.id;
+      mark.addEventListener('mouseenter', e => {
+        const visLabel = m.visibility === 'team' ? ' · Team' : ' · Private';
+        momTooltipEl.innerHTML = `<strong>${m.title}</strong><span class="mom-tt-vis">${fmtTs(m.timestamp)}${visLabel}</span>`;
+        momTooltipEl.style.display = 'block';
+        const r = momMarkersEl.parentElement.getBoundingClientRect();
+        const raw = parseFloat(pct) / 100 * r.width;
+        const half = 60;
+        momTooltipEl.style.left = Math.max(half, Math.min(r.width - half, raw)) + 'px';
+      });
+      mark.addEventListener('mouseleave', () => { momTooltipEl.style.display = 'none'; });
+      mark.addEventListener('click', e => {
+        e.stopPropagation();
+        videoEl.currentTime = m.timestamp;
+      });
+      momMarkersEl.appendChild(mark);
+    });
+  }
+
+  // Re-render when duration becomes known
+  videoEl.addEventListener('loadedmetadata', renderMomentMarkers);
+
+  // Load on page ready
+  loadMoments();
+
+  // ── Modal open/close ───────────────────────────────────────────────────────
+  const momentModal  = document.getElementById('momentModal');
+  const momTitleIn   = document.getElementById('momentTitleInput');
+  const momDescIn    = document.getElementById('momentDescInput');
+  const momTsDisplay = document.getElementById('momentTimestampDisplay');
+  let   _momentTs    = 0;
+
+  // Category picker state
+  let _selectedCat = '';
+  const momCatPicker = document.getElementById('momCatPicker');
+  if (momCatPicker) {
+    momCatPicker.addEventListener('click', e => {
+      const btn = e.target.closest('.mom-cat-btn');
+      if (!btn) return;
+      momCatPicker.querySelectorAll('.mom-cat-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _selectedCat = btn.dataset.cat;
+    });
+  }
+
+  let _editingMomentId = null;
+  const _momModalTitleHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> Tag Moment`;
+  const _momEditTitleHTML  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit Moment`;
+
+  function _resetMomCat(cat) {
+    _selectedCat = cat || '';
+    if (momCatPicker) {
+      momCatPicker.querySelectorAll('.mom-cat-btn').forEach(b => b.classList.remove('active'));
+      const btn = momCatPicker.querySelector(`[data-cat="${_selectedCat}"]`);
+      if (btn) btn.classList.add('active');
+    }
+  }
+
+  function _setMomModalMode(editMode) {
+    const titleEl = momentModal ? momentModal.querySelector('.modal-title') : null;
+    const saveBtn = momentModal ? momentModal.querySelector('button[onclick="saveMoment()"]') : null;
+    if (titleEl) titleEl.innerHTML = editMode ? _momEditTitleHTML : _momModalTitleHTML;
+    if (saveBtn) saveBtn.textContent = editMode ? 'Update Moment' : 'Save Moment';
+  }
+
+  function openMomentModal() {
+    _editingMomentId = null;
+    videoEl.pause();
+    _momentTs = videoEl.currentTime || 0;
+    if (momTsDisplay) momTsDisplay.textContent = fmtTs(_momentTs);
+    if (momTitleIn)   momTitleIn.value = '';
+    if (momDescIn)    momDescIn.value  = '';
+    _resetMomCat('');
+    const privRadio = document.getElementById('momVisPrivate');
+    if (privRadio) privRadio.checked = true;
+    _setMomModalMode(false);
+    if (momentModal) momentModal.classList.add('open');
+    if (momTitleIn) setTimeout(() => momTitleIn.focus(), 80);
+  }
+
+  function openEditMoment(id) {
+    const m = _moments.find(x => x.id === id);
+    if (!m) return;
+    _editingMomentId = id;
+    videoEl.pause();
+    _momentTs = m.timestamp;
+    if (momTsDisplay) momTsDisplay.textContent = fmtTs(m.timestamp);
+    if (momTitleIn)   momTitleIn.value = m.title;
+    if (momDescIn)    momDescIn.value  = m.description || '';
+    _resetMomCat(m.category || '');
+    const visRadio = document.querySelector(`input[name="momentVisibility"][value="${m.visibility}"]`);
+    if (visRadio) visRadio.checked = true;
+    _setMomModalMode(true);
+    if (momentModal) momentModal.classList.add('open');
+    if (momTitleIn) setTimeout(() => momTitleIn.focus(), 80);
+  }
+
+  function closeMomentModal() {
+    if (momentModal) momentModal.classList.remove('open');
+    _editingMomentId = null;
+    _setMomModalMode(false);
+  }
+
+  async function saveMoment() {
+    const title = (momTitleIn ? momTitleIn.value : '').trim();
+    if (!title) { if (momTitleIn) momTitleIn.focus(); return; }
+
+    const visRadio = document.querySelector('input[name="momentVisibility"]:checked');
+    const visibility = visRadio ? visRadio.value : 'private';
+    const description = momDescIn ? momDescIn.value.trim() : '';
+
+    try {
+      let m;
+      if (_editingMomentId) {
+        // ── PATCH: update existing moment ──────────────────────────────────
+        const r = await fetch(`/api/moments/${_editingMomentId}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN_MOM },
+          body: JSON.stringify({ title, description, category: _selectedCat }),
+        });
+        if (!r.ok) { alert('Could not update moment.'); return; }
+        m = await r.json();
+        const idx = _moments.findIndex(x => x.id === _editingMomentId);
+        if (idx !== -1) _moments[idx] = m;
+      } else {
+        // ── POST: create new moment ─────────────────────────────────────────
+        const r = await fetch(`/api/videos/${VIDEO_ID_MOM}/moments/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN_MOM },
+          body: JSON.stringify({ title, description, timestamp: _momentTs, visibility, category: _selectedCat }),
+        });
+        if (!r.ok) { alert('Could not save moment.'); return; }
+        m = await r.json();
+        _moments.push(m);
+        _moments.sort((a, b) => a.timestamp - b.timestamp);
+      }
+      renderMomentMarkers();
+      renderMomentSidebar();
+      closeMomentModal();
+    } catch(e) { alert('Network error.'); }
+  }
+
+  // ── Delete moment ──────────────────────────────────────────────────────────
+  async function deleteMoment(id) {
+    if (!confirm('Delete this moment?')) return;
+    try {
+      const r = await fetch(`/api/moments/${id}/`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': CSRF_TOKEN_MOM },
+      });
+      if (!r.ok && r.status !== 204) { alert('Could not delete.'); return; }
+      _moments = _moments.filter(m => m.id !== id);
+      renderMomentMarkers();
+      renderMomentSidebar();
+    } catch(e) { alert('Network error.'); }
+  }
+
+  // ── Moments sidebar render ─────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Update the "Moments N" pill button in the action row
+  function renderMomentSidebar() {
+    const btn   = document.getElementById('watchMomentsBtn');
+    const count = document.getElementById('watchMomentsCount');
+    if (!btn) return;
+    if (_moments.length) {
+      btn.style.display = '';
+      if (count) count.textContent = _moments.length;
+    } else {
+      btn.style.display = 'none';
+    }
+  }
+
+  // Keyboard shortcut T → open moment modal (only when not typing)
+  document.addEventListener('keydown', e => {
+    if (e.key === 't' || e.key === 'T') {
+      const tag = document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (document.querySelector('.modal-backdrop.open')) return;
+      e.preventDefault();
+      openMomentModal();
+    }
+  });
+
+  // Enter to submit modal
+  if (momTitleIn) {
+    momTitleIn.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); saveMoment(); }
+    });
+  }
+  {% endif %}
 
   // timeupdate → keep seek bar in sync + 70 % view counting
   let wcMaxWatched = 0, wcViewRecorded = false;

@@ -567,6 +567,70 @@
       <pre class="cmd-output" id="out-fill_blip_descriptions"></pre>
     </div>
 
+    <!-- ── generate_seek_sprites ────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-generate_seek_sprites">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(14,165,233,.12);">🎞️</div>
+        <div>
+          <div class="cmd-title">Generate Seek Sprites</div>
+          <div class="cmd-desc">Backfill seek-bar thumbnail sprite sheets for existing videos. New videos get sprites automatically; use this for older uploads.</div>
+        </div>
+        <span class="cmd-badge custom">Custom</span>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="generate_seek_sprites-scope" onchange="(function(){
+            const v = document.getElementById('generate_seek_sprites-scope').value;
+            document.getElementById('gss-video-row').style.display   = v==='video'   ? '' : 'none';
+            document.getElementById('gss-channel-row').style.display = v==='channel' ? '' : 'none';
+          })()">
+            <option value="all">All videos (missing sprites only)</option>
+            <option value="channel">All videos in a channel</option>
+            <option value="video">Single video</option>
+          </select>
+        </div>
+        <div class="field-row" id="gss-video-row" style="display:none;">
+          <label class="field-label">Video</label>
+          <select class="form-select" id="generate_seek_sprites-video_id">
+            <option value="">— select video —</option>
+            {% for v in videos %}
+            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="gss-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="generate_seek_sprites-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}
+            <option value="{{ ch.slug }}">{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="generate_seek_sprites-force" /> Force regenerate (overwrite existing sprites)</label>
+        <label class="toggle-row"><input type="checkbox" id="generate_seek_sprites-dry_run" /> Dry Run (preview only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope   = document.getElementById('generate_seek_sprites-scope').value;
+          const videoId = document.getElementById('generate_seek_sprites-video_id').value;
+          const channel = document.getElementById('generate_seek_sprites-channel').value;
+          const force   = document.getElementById('generate_seek_sprites-force').checked;
+          const dryRun  = document.getElementById('generate_seek_sprites-dry_run').checked;
+          const args = { force, dry_run: dryRun };
+          if (scope === 'video'   && videoId) args.video_id = videoId;
+          if (scope === 'channel' && channel) args.channel  = channel;
+          runCommand('generate_seek_sprites', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+        <span class="cmd-dryrun-hint">Queues FFmpeg jobs to Celery — worker must be running.</span>
+      </div>
+      <pre class="cmd-output" id="out-generate_seek_sprites"></pre>
+    </div>
+
   </div><!-- /.cmd-grid -->
 </div>
 

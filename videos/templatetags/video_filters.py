@@ -1,3 +1,4 @@
+import json as _json
 from django import template
 
 register = template.Library()
@@ -34,3 +35,15 @@ def split(value, delimiter=','):
     if value is None:
         return []
     return str(value).split(delimiter)
+
+
+@register.filter
+def tojson(value):
+    """Serialize a Python value to a safe JSON string (for use inside JS)."""
+    return _json.dumps(value)
+
+
+@register.filter
+def get_item(dictionary, key):
+    """Dict lookup: {{ my_dict|get_item:key }}"""
+    return dictionary.get(key, '')
