@@ -6,6 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>{% block title %}ClipLens{% endblock %}</title>
   {% block meta %}{% endblock %}
+  <!-- Favicons — always use dark variant (matches app's default dark theme) -->
+  <link rel="icon" type="image/x-icon"       href="{% static 'videos/logos/favicon-dark.ico' %}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'videos/logos/favicon-32x32-dark.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'videos/logos/favicon-16x16-dark.png' %}">
+  <link rel="apple-touch-icon"               href="{% static 'videos/logos/apple-touch-icon.png' %}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -91,12 +96,28 @@
       backdrop-filter: blur(12px);
       transition: background var(--transition), border-color var(--transition);
     }
-    .fs-logo {
-      font-size: 20px; font-weight: 800;
-      color: var(--accent); letter-spacing: -0.5px;
-      flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+    /* Dark mode: match header bg to dark logo background so it bleeds in seamlessly */
+    [data-theme="dark"] .fs-header {
+      background: #15151a;
+      border-bottom-color: #15151a;
     }
-    .fs-logo svg { width: 28px; height: 28px; }
+    .fs-logo {
+      flex-shrink: 0; display: flex; align-items: center;
+      text-decoration: none;
+    }
+    .fs-logo img {
+      height: 38px; width: auto;
+      border-radius: 6px;
+    }
+    /* Dark mode: show dark variant, hide light variant */
+    [data-theme="dark"]  .fs-logo .logo-light { display: none; }
+    [data-theme="dark"]  .fs-logo .logo-dark  { display: block; }
+    /* Light mode: show light variant, hide dark variant */
+    [data-theme="light"] .fs-logo .logo-dark  { display: none; }
+    [data-theme="light"] .fs-logo .logo-light { display: block; }
+    /* Fallback: always show light until theme is determined */
+    .fs-logo .logo-dark  { display: none; }
+    .fs-logo .logo-light { display: block; }
     .fs-logo span { color: var(--text); font-weight: 700; }
 
     /* Search */
@@ -407,11 +428,8 @@
     </svg>
   </button>
   <a href="{% url 'player' %}" class="fs-logo">
-    <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="28" height="28" rx="7" fill="#6366f1"/>
-      <polygon points="11,8 21,14 11,20" fill="white"/>
-    </svg>
-    Clip<span>Lens</span>
+    <img class="logo-light" src="{% static 'videos/logos/logo-long.png' %}"      alt="ClipLens" />
+    <img class="logo-dark"  src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens" />
   </a>
 
   <form class="fs-search" id="fsSearchForm" action="{% url 'player' %}" method="get">

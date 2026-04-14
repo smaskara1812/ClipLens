@@ -1,0 +1,338 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Storage Dashboard — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .sd-wrap { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+
+  /* Admin nav */
+  .admin-nav {
+    display: flex; gap: 4px; margin-bottom: 28px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); padding-bottom: 2px;
+  }
+  .admin-nav a {
+    padding: 7px 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    font-size: 13px; font-weight: 600; text-decoration: none;
+    color: var(--text-muted); border: 1px solid transparent;
+    transition: all var(--transition);
+  }
+  .admin-nav a:hover { color: var(--text); background: var(--surface-2); }
+  .admin-nav a.active {
+    color: var(--accent); border-color: var(--border) var(--border) var(--surface);
+    background: var(--surface); margin-bottom: -1px;
+  }
+
+  /* Page header */
+  .sd-header { margin-bottom: 28px; }
+  .sd-header h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .sd-header p  { font-size: 13px; color: var(--text-muted); }
+
+  /* Summary cards */
+  .sd-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 28px;
+  }
+  .sd-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+  }
+  .sd-card-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .sd-card-value { font-size: 20px; font-weight: 800; }
+  .sd-card-sub   { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  /* Stacked bar */
+  .sd-bar-wrap { margin-bottom: 28px; }
+  .sd-bar-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  .sd-bar {
+    height: 20px; border-radius: 999px; overflow: hidden;
+    display: flex; background: var(--surface-2); border: 1px solid var(--border);
+  }
+  .sd-bar-seg { height: 100%; transition: opacity .15s; cursor: default; }
+  .sd-bar-seg:hover { opacity: .8; }
+  .sd-bar-legend {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;
+  }
+  .sd-bar-dot {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .sd-bar-dot span {
+    width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0;
+  }
+
+  /* Channel accordion */
+  .sd-channels { display: flex; flex-direction: column; gap: 10px; }
+
+  .sd-ch {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .sd-ch-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; cursor: pointer;
+    user-select: none;
+  }
+  .sd-ch-head:hover { background: var(--surface-2); }
+  .sd-ch-name  { font-size: 14px; font-weight: 700; flex: 1; }
+  .sd-ch-meta  { font-size: 12px; color: var(--text-muted); }
+  .sd-ch-total { font-size: 14px; font-weight: 800; color: var(--accent); min-width: 80px; text-align: right; }
+  .sd-ch-arrow {
+    font-size: 11px; color: var(--text-subtle);
+    transition: transform .2s; flex-shrink: 0;
+  }
+  .sd-ch.open .sd-ch-arrow { transform: rotate(90deg); }
+
+  /* Mini stacked bar per channel */
+  .sd-ch-bar {
+    height: 4px; background: var(--surface-2);
+    display: flex; overflow: hidden;
+  }
+
+  /* Video table */
+  .sd-table-wrap { display: none; overflow-x: auto; }
+  .sd-ch.open .sd-table-wrap { display: block; }
+
+  .sd-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  .sd-table th {
+    padding: 8px 12px; text-align: right;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  .sd-table th:first-child { text-align: left; }
+  .sd-table td {
+    padding: 8px 12px; text-align: right;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .sd-table td:first-child { text-align: left; max-width: 260px; }
+  .sd-table tr:last-child td { border-bottom: none; }
+  .sd-table tr:hover td { background: var(--surface-2); }
+
+  .sd-video-title {
+    font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: block; max-width: 240px;
+  }
+  .sd-video-status {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .4px; padding: 1px 6px; border-radius: 999px;
+    display: inline-block; margin-top: 2px;
+  }
+  .sd-video-status.ready      { background: rgba(34,197,94,.12); color: #22c55e; }
+  .sd-video-status.processing { background: rgba(245,158,11,.12); color: #f59e0b; }
+  .sd-video-status.failed     { background: rgba(239,68,68,.12);  color: #ef4444; }
+  .sd-video-status.pending    { background: var(--surface-2);     color: var(--text-muted); }
+
+  .sd-zero { color: var(--text-subtle); }
+  .sd-total-row td { font-weight: 700; background: var(--surface-2); }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .sd-cards { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sd-wrap">
+
+  <nav class="admin-nav">
+    <a href="{% url 'user_management' %}">Users</a>
+    <a href="{% url 'categories_manage' %}">Categories</a>
+    <a href="{% url 'admin_commands' %}">Commands</a>
+    <a href="{% url 'storage_dashboard' %}" class="active">Storage</a>
+  </nav>
+
+  <div class="sd-header">
+    <h1>💾 Storage Dashboard</h1>
+    <p>Real-time on-disk usage across all media assets. Sizes are read directly from the filesystem.</p>
+  </div>
+
+  {% with total=grand.total %}
+
+  <!-- ── Summary cards ──────────────────────────────────────────────────── -->
+  <div class="sd-cards">
+    <div class="sd-card">
+      <div class="sd-card-label">Total used</div>
+      <div class="sd-card-value">{{ grand.total|filesizeformat }}</div>
+      <div class="sd-card-sub">{{ grand.count }} video{{ grand.count|pluralize }}</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Originals</div>
+      <div class="sd-card-value">{{ grand.original|filesizeformat }}</div>
+      <div class="sd-card-sub">Source uploads</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">HLS</div>
+      <div class="sd-card-value">{{ grand.hls|filesizeformat }}</div>
+      <div class="sd-card-sub">Encoded streams</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Faces</div>
+      <div class="sd-card-value">{{ grand.faces|filesizeformat }}</div>
+      <div class="sd-card-sub">Crop images</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Audio</div>
+      <div class="sd-card-value">{{ grand.audio|filesizeformat }}</div>
+      <div class="sd-card-sub">Diarization WAVs</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Other</div>
+      <div class="sd-card-value">{{ grand.other|filesizeformat }}</div>
+      <div class="sd-card-sub">Thumbs · sprites · subs</div>
+    </div>
+  </div>
+
+  <!-- ── Stacked bar ────────────────────────────────────────────────────── -->
+  {% if total > 0 %}
+  <div class="sd-bar-wrap">
+    <div class="sd-bar-title">Breakdown by asset type</div>
+    <div class="sd-bar" title="Total: {{ grand.total|filesizeformat }}">
+      {% if grand.hls %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.hls total 100 %}%;background:#6366f1;" title="HLS: {{ grand.hls|filesizeformat }}"></div>
+      {% endif %}
+      {% if grand.original %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.original total 100 %}%;background:#f59e0b;" title="Originals: {{ grand.original|filesizeformat }}"></div>
+      {% endif %}
+      {% if grand.faces %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.faces total 100 %}%;background:#ec4899;" title="Faces: {{ grand.faces|filesizeformat }}"></div>
+      {% endif %}
+      {% if grand.audio %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.audio total 100 %}%;background:#14b8a6;" title="Audio: {{ grand.audio|filesizeformat }}"></div>
+      {% endif %}
+      {% if grand.thumbnail %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.thumbnail total 100 %}%;background:#84cc16;" title="Thumbnails: {{ grand.thumbnail|filesizeformat }}"></div>
+      {% endif %}
+      {% if grand.sprite %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.sprite total 100 %}%;background:#0ea5e9;" title="Sprites: {{ grand.sprite|filesizeformat }}"></div>
+      {% endif %}
+      {% if grand.subtitles %}
+      <div class="sd-bar-seg" style="width:{% widthratio grand.subtitles total 100 %}%;background:#a78bfa;" title="Subtitles: {{ grand.subtitles|filesizeformat }}"></div>
+      {% endif %}
+    </div>
+    <div class="sd-bar-legend">
+      <span class="sd-bar-dot"><span style="background:#6366f1"></span>HLS ({{ grand.hls|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#f59e0b"></span>Originals ({{ grand.original|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#ec4899"></span>Faces ({{ grand.faces|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#14b8a6"></span>Audio ({{ grand.audio|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#84cc16"></span>Thumbnails ({{ grand.thumbnail|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#0ea5e9"></span>Sprites ({{ grand.sprite|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#a78bfa"></span>Subtitles ({{ grand.subtitles|filesizeformat }})</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {% endwith %}
+
+  <!-- ── Channel accordion ─────────────────────────────────────────────── -->
+  <div class="sd-channels">
+    {% for ch_name, ch in channels %}
+    {% with ch_total=ch.total %}
+    <div class="sd-ch" id="ch-{{ forloop.counter }}">
+
+      <!-- Mini bar -->
+      {% if ch_total > 0 %}
+      <div class="sd-ch-bar">
+        {% if ch.hls      %}<div style="flex:{{ ch.hls }};background:#6366f1;"></div>{% endif %}
+        {% if ch.original %}<div style="flex:{{ ch.original }};background:#f59e0b;"></div>{% endif %}
+        {% if ch.faces    %}<div style="flex:{{ ch.faces }};background:#ec4899;"></div>{% endif %}
+        {% if ch.audio    %}<div style="flex:{{ ch.audio }};background:#14b8a6;"></div>{% endif %}
+        {% if ch.thumbnail%}<div style="flex:{{ ch.thumbnail }};background:#84cc16;"></div>{% endif %}
+        {% if ch.sprite   %}<div style="flex:{{ ch.sprite }};background:#0ea5e9;"></div>{% endif %}
+        {% if ch.subtitles%}<div style="flex:{{ ch.subtitles }};background:#a78bfa;"></div>{% endif %}
+      </div>
+      {% endif %}
+
+      <!-- Header row -->
+      <div class="sd-ch-head" onclick="toggleChannel('ch-{{ forloop.counter }}')">
+        <div class="sd-ch-name">{{ ch_name }}</div>
+        <div class="sd-ch-meta">{{ ch.count }} video{{ ch.count|pluralize }}</div>
+        <div class="sd-ch-total">{{ ch_total|filesizeformat }}</div>
+        <div class="sd-ch-arrow">▶</div>
+      </div>
+
+      <!-- Video table -->
+      <div class="sd-table-wrap">
+        <table class="sd-table">
+          <thead>
+            <tr>
+              <th>Video</th>
+              <th>HLS</th>
+              <th>Original</th>
+              <th>Faces</th>
+              <th>Audio</th>
+              <th>Thumb</th>
+              <th>Sprite</th>
+              <th>Subs</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}{% if row.channel_name == ch_name %}
+            <tr>
+              <td>
+                <a class="sd-video-title" href="{% url 'watch' row.video.id %}" title="{{ row.video.title }}">
+                  {{ row.video.title|default:"Untitled"|truncatechars:45 }}
+                </a>
+                <span class="sd-video-status {{ row.video.status }}">{{ row.video.status }}</span>
+              </td>
+              <td {% if not row.sizes.hls %}class="sd-zero"{% endif %}>{{ row.sizes.hls|filesizeformat }}</td>
+              <td {% if not row.sizes.original %}class="sd-zero"{% endif %}>{{ row.sizes.original|filesizeformat }}</td>
+              <td {% if not row.sizes.faces %}class="sd-zero"{% endif %}>{{ row.sizes.faces|filesizeformat }}</td>
+              <td {% if not row.sizes.audio %}class="sd-zero"{% endif %}>{{ row.sizes.audio|filesizeformat }}</td>
+              <td {% if not row.sizes.thumbnail %}class="sd-zero"{% endif %}>{{ row.sizes.thumbnail|filesizeformat }}</td>
+              <td {% if not row.sizes.sprite %}class="sd-zero"{% endif %}>{{ row.sizes.sprite|filesizeformat }}</td>
+              <td {% if not row.sizes.subtitles %}class="sd-zero"{% endif %}>{{ row.sizes.subtitles|filesizeformat }}</td>
+              <td><strong>{{ row.sizes.total|filesizeformat }}</strong></td>
+            </tr>
+            {% endif %}{% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="sd-total-row">
+              <td>Channel total</td>
+              <td>{{ ch.hls|filesizeformat }}</td>
+              <td>{{ ch.original|filesizeformat }}</td>
+              <td>{{ ch.faces|filesizeformat }}</td>
+              <td>{{ ch.audio|filesizeformat }}</td>
+              <td>{{ ch.thumbnail|filesizeformat }}</td>
+              <td>{{ ch.sprite|filesizeformat }}</td>
+              <td>{{ ch.subtitles|filesizeformat }}</td>
+              <td>{{ ch_total|filesizeformat }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+    </div>
+    {% endwith %}
+    {% empty %}
+    <div style="text-align:center;padding:40px;color:var(--text-muted);">No videos found.</div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<script>
+function toggleChannel(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('open');
+}
+// Auto-open first channel
+document.addEventListener('DOMContentLoaded', () => {
+  const first = document.querySelector('.sd-ch');
+  if (first) first.classList.add('open');
+});
+</script>
+{% endblock %}

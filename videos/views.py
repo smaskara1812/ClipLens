@@ -1672,6 +1672,120 @@ def categories_manage_page(request):
     return render(request, 'videos/categories_manage.html', {'categories': cats})
 
 
+# ─── Storage Dashboard ────────────────────────────────────────────────────────
+
+def _path_size(p) -> int:
+    """Return size in bytes of a file or directory, 0 if missing/unreadable."""
+    try:
+        p = Path(p)
+        if not p.exists():
+            return 0
+        if p.is_file():
+            return p.stat().st_size
+        return sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
+    except (OSError, PermissionError):
+        return 0
+
+
+def _fmt_bytes(n: int) -> str:
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if n < 1024:
+            return f'{n:.1f} {unit}' if unit != 'B' else f'{n} B'
+        n /= 1024
+    return f'{n:.1f} PB'
+
+
+@superuser_required
+def storage_dashboard_page(request):
+    """Per-video and per-channel disk usage breakdown. Superadmin only."""
+    media = Path(settings.MEDIA_ROOT)
+
+    videos = (
+        Video.objects
+        .select_related('channel')
+        .prefetch_related('subtitles')
+        .order_by('channel__name', '-created_at')
+    )
+
+    ASSET_KEYS = ('original', 'hls', 'thumbnail', 'sprite', 'faces', 'subtitles', 'audio')
+
+    rows        = []          # one dict per video
+    ch_map      = {}          # channel_name → aggregated sizes dict
+    grand       = {k: 0 for k in ASSET_KEYS}
+    grand['total'] = 0
+
+    for v in videos:
+        s = {}
+
+        # Original upload
+        s['original'] = _path_size(v.original_file.path) if (v.original_file and v.original_file.name) else 0
+
+        # HLS segments directory
+        s['hls'] = _path_size(media / 'hls' / str(v.id))
+
+        # Thumbnail image
+        s['thumbnail'] = _path_size(v.thumbnail.path) if (v.thumbnail and v.thumbnail.name) else 0
+
+        # Seek sprite
+        s['sprite'] = _path_size(media / v.seek_sprite) if v.seek_sprite else 0
+
+        # Face crop images
+        s['faces'] = _path_size(media / 'faces' / str(v.id))
+
+        # Subtitle / caption VTT files
+        sub_total = 0
+        for sub in v.subtitles.all():
+            if sub.file and sub.file.name:
+                try:
+                    sub_total += _path_size(sub.file.path)
+                except Exception:
+                    pass
+        s['subtitles'] = sub_total
+
+        # Diarization audio WAV
+        s['audio'] = _path_size(media / 'audio' / f'{v.id}.wav')
+
+        s['total'] = sum(s[k] for k in ASSET_KEYS)
+
+        ch_name = v.channel.name if v.channel else '— Unassigned —'
+        ch_slug = v.channel.slug if v.channel else None
+
+        rows.append({'video': v, 'sizes': s, 'channel_name': ch_name})
+
+        # Roll up to channel
+        if ch_name not in ch_map:
+            ch_map[ch_name] = {k: 0 for k in ASSET_KEYS}
+            ch_map[ch_name].update({'total': 0, 'slug': ch_slug, 'count': 0})
+        for k in ASSET_KEYS:
+            ch_map[ch_name][k] += s[k]
+        ch_map[ch_name]['total'] += s['total']
+        ch_map[ch_name]['count'] += 1
+
+        # Roll up to grand total
+        for k in ASSET_KEYS:
+            grand[k] += s[k]
+        grand['total'] += s['total']
+
+    grand['count'] = len(rows)
+    grand['other'] = grand['thumbnail'] + grand['sprite'] + grand['subtitles']
+
+    # Sort channels by total size descending
+    channels = sorted(ch_map.items(), key=lambda x: x[1]['total'], reverse=True)
+
+    # Pre-format sizes for template
+    def fmt_row(d):
+        return {k: _fmt_bytes(v) if isinstance(v, int) and k not in ('count',) else v
+                for k, v in d.items()}
+
+    return render(request, 'videos/storage_dashboard.html', {
+        'rows':        rows,
+        'channels':    channels,
+        'grand':       grand,
+        'asset_keys':  ASSET_KEYS,
+        'fmt_bytes':   _fmt_bytes,   # pass helper to template via context
+    })
+
+
 @editor_required
 def channels_manage_page(request):
     channels = _user_channels(request.user).select_related('owner').prefetch_related('videos', 'links', 'editors')

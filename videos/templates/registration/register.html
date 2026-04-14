@@ -4,13 +4,24 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Create Account — ClipLens</title>
+  <script>
+    (function(){
+      var b = '/static/videos/logos/';
+      document.write(
+        '<link rel="icon" type="image/x-icon" href="' + b + 'favicon-dark.ico">',
+        '<link rel="icon" type="image/png" sizes="32x32" href="' + b + 'favicon-32x32-dark.png">',
+        '<link rel="icon" type="image/png" sizes="16x16" href="' + b + 'favicon-16x16-dark.png">',
+        '<link rel="apple-touch-icon" href="' + b + 'apple-touch-icon.png">'
+      );
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
   <style>
     :root {
       --bg:       #09090e;
-      --surface:  #111118;
-      --surface-2:#16161f;
+      --surface:  #15151a;
+      --surface-2:#1c1c24;
       --border:   rgba(255,255,255,.08);
       --border-2: rgba(255,255,255,.13);
       --accent:   #6366f1;
@@ -53,12 +64,16 @@
       position: relative;
     }
     .logo {
-      display: flex; align-items: center; gap: 10px;
-      font-size: 20px; font-weight: 800; letter-spacing: -.4px;
-      color: var(--text); text-decoration: none; margin-bottom: 32px;
+      display: flex; justify-content: center;
+      text-decoration: none; margin-bottom: 28px;
     }
-    .logo svg { width: 32px; height: 32px; flex-shrink: 0; }
-    .logo span { color: var(--accent); }
+    .logo img { width: 200px; height: auto; }
+    [data-theme="dark"]  .logo .logo-light { display: none; }
+    [data-theme="dark"]  .logo .logo-dark  { display: block; }
+    [data-theme="light"] .logo .logo-dark  { display: none; }
+    [data-theme="light"] .logo .logo-light { display: block; }
+    .logo .logo-dark  { display: none; }
+    .logo .logo-light { display: block; }
     .heading { font-size: 22px; font-weight: 800; letter-spacing: -.3px; }
     .subhead  { font-size: 14px; color: var(--text-muted); margin-top: 5px; }
     .form { margin-top: 28px; display: flex; flex-direction: column; gap: 16px; }
@@ -116,11 +131,8 @@
   <div class="card">
 
     <a href="/player/" class="logo">
-      <svg viewBox="0 0 28 28" fill="none">
-        <rect width="28" height="28" rx="7" fill="#6366f1"/>
-        <polygon points="11,8 21,14 11,20" fill="white"/>
-      </svg>
-      Clip<span>Stream</span>
+      <img class="logo-light" src="/static/videos/logos/logo-stacked.png"      alt="ClipLens" />
+      <img class="logo-dark"  src="/static/videos/logos/logo-stacked-dark.png" alt="ClipLens" />
     </a>
 
     <div class="heading">Create your account</div>
