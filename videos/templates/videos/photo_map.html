@@ -239,11 +239,11 @@
       Photo Map
     </h1>
 
-    {% if channels %}
+    {% if owned_channels %}
     <div class="map-filter-row">
       <select id="channelFilter" onchange="applyFilter()">
         <option value="">All channels</option>
-        {% for ch in channels %}
+        {% for ch in owned_channels %}
         <option value="{{ ch.slug }}">{{ ch.name }}</option>
         {% endfor %}
       </select>

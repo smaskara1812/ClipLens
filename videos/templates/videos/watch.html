@@ -1372,6 +1372,31 @@
           </label>
         </div>
 
+        {% if is_owner %}
+        <!-- ── Thumbnail section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
+          <label class="w-label">Thumbnail</label>
+          <div style="display:flex;align-items:flex-start;gap:12px;margin-top:8px;">
+            <div style="flex-shrink:0;width:120px;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:var(--surface-3);border:1px solid var(--border);">
+              <img id="watchThumbPreview"
+                   src="{{ video.thumbnail_url|default:'' }}"
+                   alt=""
+                   style="width:100%;height:100%;object-fit:cover;{% if not video.thumbnail_url %}display:none;{% endif %}" />
+              {% if not video.thumbnail_url %}
+              <div id="watchThumbPlaceholder" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-subtle)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 8 16 11 10 14 10 8"/></svg>
+              </div>
+              {% endif %}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding-top:2px;">
+              <input type="file" id="watchThumbFile" accept="image/*" style="display:none;" onchange="previewWatchThumb(this)" />
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('watchThumbFile').click()" type="button">Choose image</button>
+              <div style="font-size:11px;color:var(--text-muted);line-height:1.5;">Recommended: 16:9,<br>at least 1280×720px</div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
         <div id="editStatus" style="font-size:12px;min-height:18px;"></div>
 
         {% if is_owner %}
@@ -2588,6 +2613,18 @@
     if (e.target === document.getElementById('editModal')) closeEditModal();
   }
 
+  function previewWatchThumb(input) {
+    if (!input.files[0]) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = document.getElementById('watchThumbPreview');
+      const ph  = document.getElementById('watchThumbPlaceholder');
+      if (img) { img.src = e.target.result; img.style.display = 'block'; }
+      if (ph)  { ph.style.display = 'none'; }
+    };
+    reader.readAsDataURL(input.files[0]);
+  }
+
   async function saveVideoEdit() {
     const btn    = document.getElementById('editSaveBtn');
     const status = document.getElementById('editStatus');
@@ -2614,6 +2651,24 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(Object.values(data).flat().join(' ') || 'Save failed.');
+
+      // Upload thumbnail if a file was selected
+      const thumbFile = document.getElementById('watchThumbFile').files[0];
+      if (thumbFile) {
+        const fd = new FormData();
+        fd.append('thumbnail', thumbFile);
+        const tr = await fetch(`/api/videos/{{ video.id }}/thumbnail/`, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': getCsrfToken() },
+          body: fd,
+        });
+        if (!tr.ok) throw new Error('Thumbnail upload failed — other changes were saved.');
+        const td = await tr.json();
+        // Update the thumbnail preview to show the confirmed server URL
+        const img = document.getElementById('watchThumbPreview');
+        if (img && td.thumbnail_url) { img.src = td.thumbnail_url + '?v=' + Date.now(); img.style.display = 'block'; }
+        document.getElementById('watchThumbFile').value = '';
+      }
 
       // Update the page UI without a reload
       document.getElementById('watchVideoTitle').textContent = data.title;

@@ -206,14 +206,21 @@
     </div>
     <form method="get" style="display:flex;align-items:center;gap:8px;">
       <input type="hidden" name="filter" value="{{ active_filter }}" />
+      <input type="hidden" name="page" value="1" />
       <div style="position:relative;">
         <svg style="position:absolute;left:9px;top:50%;transform:translateY(-50%);width:13px;height:13px;color:var(--text-muted);pointer-events:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text" name="q" value="{{ search_query }}" placeholder="Search speakers…"
                class="form-input" style="padding:5px 10px 5px 30px;font-size:12px;width:180px;border-radius:var(--radius-sm);" autocomplete="off" />
         {% if search_query %}
-        <a href="?filter={{ active_filter }}" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--text-muted);text-decoration:none;line-height:1;">×</a>
+        <a href="?filter={{ active_filter }}&page_size={{ page_size }}" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--text-muted);text-decoration:none;line-height:1;">×</a>
         {% endif %}
       </div>
+      <label style="font-size:12px;color:var(--text-muted);font-weight:500;">Per page</label>
+      <select name="page_size" class="form-select" style="padding:5px 28px 5px 10px;font-size:12px;border-radius:var(--radius-sm);" onchange="this.form.submit()">
+        <option value="25"  {% if page_size == 25  %}selected{% endif %}>25</option>
+        <option value="50"  {% if page_size == 50  %}selected{% endif %}>50</option>
+        <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>
+      </select>
     </form>
   </div>
 
@@ -225,19 +232,19 @@
 
   <!-- Tabs -->
   <div class="speakers-tabs">
-    <a href="?filter=all{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'all' %}active{% endif %}">
+    <a href="?filter=all&page=1&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'all' %}active{% endif %}">
       All <span class="sc">{{ total_all }}</span>
     </a>
-    <a href="?filter=named{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'named' %}active{% endif %}">
+    <a href="?filter=named&page=1&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'named' %}active{% endif %}">
       Named <span class="sc">{{ total_named }}</span>
     </a>
-    <a href="?filter=auto{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'auto' %}active{% endif %}">
+    <a href="?filter=auto&page=1&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'auto' %}active{% endif %}">
       Auto <span class="sc">{{ total_auto }}</span>
     </a>
-    <a href="?filter=narrator{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'narrator' %}active{% endif %}">
+    <a href="?filter=narrator&page=1&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'narrator' %}active{% endif %}">
       Narrators <span class="sc">{{ total_narrator }}</span>
     </a>
-    <a href="?filter=background{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'background' %}active{% endif %}">
+    <a href="?filter=background&page=1&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="stab {% if active_filter == 'background' %}active{% endif %}">
       Background <span class="sc">{{ total_background }}</span>
     </a>
   </div>
@@ -313,11 +320,11 @@
 {% if page_obj.paginator.num_pages > 1 %}
 <div class="speakers-pagination">
   {% if page_obj.has_previous %}
-  <a href="?filter={{ active_filter }}&page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="sp-btn">← Previous</a>
+  <a href="?filter={{ active_filter }}&page={{ page_obj.previous_page_number }}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="sp-btn">← Previous</a>
   {% endif %}
   <span class="sp-info">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
   {% if page_obj.has_next %}
-  <a href="?filter={{ active_filter }}&page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="sp-btn">Next →</a>
+  <a href="?filter={{ active_filter }}&page={{ page_obj.next_page_number }}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="sp-btn">Next →</a>
   {% endif %}
 </div>
 {% endif %}

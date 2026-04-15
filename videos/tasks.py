@@ -935,12 +935,20 @@ def analyze_video_frames_task(self, video_id: str):
                 except Exception as exc:
                     logger.debug(f'analyze_video_frames_task: crop error face {face_idx}: {exc}')
 
-            # Auto-confirm if embedding is very close to cluster centroid
+            # Auto-confirm using the identity's ref_embedding (running average across
+            # all analyses) rather than the ephemeral per-video cluster centroid.
+            # This keeps confirmation consistent across re-analyses and matches
+            # the same logic used in analyze_photo_task and auto_confirm_similar.
             face_emb = np.array(rf['embedding'], dtype=np.float32)
-            sim_to_centroid = _cosine_sim(face_emb, cluster_means[cluster_id])
+            identity = identities[cluster_id]
+            try:
+                ref_arr = np.array(json.loads(identity.ref_embedding), dtype=np.float32) if identity.ref_embedding else None
+            except Exception:
+                ref_arr = None
+            sim = _cosine_sim(face_emb, ref_arr if ref_arr is not None else cluster_means[cluster_id])
             initial_status = (
                 DetectedFace.STATUS_CONFIRMED
-                if sim_to_centroid >= AUTO_CONFIRM_SIM
+                if sim >= AUTO_CONFIRM_SIM
                 else DetectedFace.STATUS_UNREVIEWED
             )
 

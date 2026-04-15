@@ -363,7 +363,7 @@
     </div>
     {% endif %}
   {% elif video_groups %}
-  <div class="spk-section-title">Speaks in {{ video_groups|length }} video{{ video_groups|length|pluralize }}</div>
+  <div class="spk-section-title">Speaks in {{ all_video_count }} video{{ all_video_count|pluralize }}{% if page_obj and page_obj.paginator.num_pages > 1 %} &nbsp;<span style="font-size:11px;font-weight:400;color:var(--text-muted);">(page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }})</span>{% endif %}</div>
   {% else %}
   <div style="text-align:center;padding:40px 20px;color:var(--text-muted);font-size:13px;">
     No segments linked to this speaker yet. Run speaker diarization on a video to populate this.
@@ -423,6 +423,18 @@
     </div>
   </div>
   {% endfor %}
+  {% endif %}
+
+  {% if page_obj and page_obj.paginator.num_pages > 1 %}
+  <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:28px 0 8px;">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}" style="padding:7px 16px;border-radius:var(--radius-sm);border:1px solid var(--border-2);background:var(--surface);color:var(--text);font-size:13px;font-weight:500;text-decoration:none;">← Previous</a>
+    {% endif %}
+    <span style="font-size:13px;color:var(--text-muted);">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}" style="padding:7px 16px;border-radius:var(--radius-sm);border:1px solid var(--border-2);background:var(--surface);color:var(--text);font-size:13px;font-weight:500;text-decoration:none;">Next →</a>
+    {% endif %}
+  </div>
   {% endif %}
 
 </div><!-- /.spk-layout -->

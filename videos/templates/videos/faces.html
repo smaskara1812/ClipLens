@@ -223,6 +223,59 @@
   .fp-btn { padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border-2); background: var(--surface); color: var(--text); font-size: 13px; font-weight: 500; text-decoration: none; transition: background var(--transition), border-color var(--transition); }
   .fp-btn:hover { background: var(--surface-3); border-color: var(--accent); }
   .fp-info { font-size: 13px; color: var(--text-muted); }
+
+  /* ── Bulk selection ───────────────────────────────────────────────────────── */
+  .bulk-select-btn {
+    padding: 6px 13px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text-muted); font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .bulk-select-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .bulk-select-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  /* Checkbox overlay on thumb — hidden until select mode */
+  .card-checkbox-wrap {
+    position: absolute; top: 6px; left: 6px; z-index: 10; display: none;
+  }
+  .card-checkbox-wrap input[type=checkbox] {
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent);
+    border-radius: 3px;
+  }
+  .select-mode .card-checkbox-wrap { display: block; }
+  .identity-card.bulk-selected {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .select-mode .identity-card { cursor: pointer; }
+  .select-mode .identity-card-link { pointer-events: none; }
+
+  /* Floating bulk action bar */
+  .bulk-bar {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(16px);
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: 99px; padding: 10px 18px;
+    display: flex; gap: 10px; align-items: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,.45);
+    z-index: 400; font-size: 13px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s, transform .2s;
+  }
+  .bulk-bar.visible { opacity: 1; pointer-events: all; transform: translateX(-50%) translateY(0); }
+  .bulk-bar-count { font-weight: 700; color: var(--accent); white-space: nowrap; margin-right: 2px; }
+  .bulk-bar-divider { width: 1px; height: 18px; background: var(--border-2); }
+  .bulk-bar-btn {
+    padding: 6px 14px; border-radius: 99px; border: none;
+    font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity .15s;
+    white-space: nowrap;
+  }
+  .bulk-bar-btn:hover { opacity: .8; }
+  .bulk-bar-btn:disabled { opacity: .4; cursor: default; }
+  .bulk-bar-btn.primary { background: var(--accent); color: #fff; }
+  .bulk-bar-btn.danger  { background: var(--red); color: #fff; }
+  .bulk-bar-btn.ghost   { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
 </style>
 {% endblock %}
 
@@ -235,6 +288,10 @@
       <div class="faces-subtitle">{{ total_count }} identit{{ total_count|pluralize:"y,ies" }}{% if search_query %} matching "{{ search_query }}"{% else %} detected across your videos and photos{% endif %}</div>
     </div>
     <div class="faces-header-actions">
+      <button class="bulk-select-btn" id="bulkSelectBtn" onclick="toggleSelectMode()" title="Select people to bulk merge or delete">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="5" width="4" height="4" rx="1"/><line x1="10" y1="7" x2="21" y2="7"/><rect x="3" y="12" width="4" height="4" rx="1"/><line x1="10" y1="14" x2="21" y2="14"/><rect x="3" y="19" width="4" height="4" rx="1"/><line x1="10" y1="21" x2="21" y2="21"/></svg>
+        Select
+      </button>
       <form method="get" id="facesSearchForm" style="display:flex;align-items:center;gap:8px;">
         <input type="hidden" name="page" value="1" />
         <input type="hidden" name="page_size" value="{{ page_size }}" />
@@ -395,6 +452,49 @@
       <button class="modal-btn danger" onclick="submitDelete()">Delete</button>
     </div>
   </div>
+</div>
+
+<!-- ── Bulk delete confirm modal ─────────────────────────────────────────── -->
+<div class="modal-backdrop" id="bulkDeleteModal">
+  <div class="modal-box">
+    <div class="modal-title">Delete <span id="bulkDeleteCount"></span> people?</div>
+    <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:4px;">
+      All selected identities and their face crops will be permanently deleted. This cannot be undone.
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('bulkDeleteModal')">Cancel</button>
+      <button class="modal-btn danger" id="bulkDeleteSubmitBtn" onclick="submitBulkDelete()">Delete all</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bulk merge modal ───────────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="bulkMergeModal">
+  <div class="modal-box" style="max-width:420px;">
+    <div class="modal-title">Merge people</div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+      Choose which person to keep — all face crops from the others will be moved to them.
+    </p>
+    <div id="bulkMergeList" style="max-height:260px;overflow-y:auto;margin-bottom:4px;"></div>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+      The surviving person keeps their name. All others are deleted.
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" onclick="closeModal('bulkMergeModal')">Cancel</button>
+      <button class="modal-btn primary" id="bulkMergeSubmitBtn" onclick="submitBulkMerge()" disabled>Merge</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bulk action floating bar ──────────────────────────────────────────── -->
+<div class="bulk-bar" id="bulkBar">
+  <span class="bulk-bar-count" id="bulkBarCount">0 selected</span>
+  <div class="bulk-bar-divider"></div>
+  <button class="bulk-bar-btn primary" id="bulkMergeBtn" onclick="openBulkMergeModal()" disabled>Merge</button>
+  <button class="bulk-bar-btn danger" onclick="openBulkDeleteModal()">Delete</button>
+  <div class="bulk-bar-divider"></div>
+  <button class="bulk-bar-btn ghost" onclick="selectAllOnPage()">Select all</button>
+  <button class="bulk-bar-btn ghost" onclick="clearBulkSelection()">Clear</button>
 </div>
 {% endblock %}
 
@@ -723,10 +823,199 @@ async function cleanupOrphans() {
 }
 
 // Close modals on backdrop click
-['renameModal','mergeModal','deleteModal'].forEach(id => {
+['renameModal','mergeModal','deleteModal','bulkDeleteModal','bulkMergeModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', function(e) {
     if (e.target === this) closeModal(id);
   });
 });
+
+// ── Bulk selection ────────────────────────────────────────────────────────────
+let _selectMode = false;
+const _selectedIds = new Map();  // id (int) → name (string)
+
+function enterSelectMode() {
+  _selectMode = true;
+  document.getElementById('bulkSelectBtn').classList.add('active');
+  document.getElementById('bulkSelectBtn').textContent = 'Done';
+  const grid = document.querySelector('.identity-grid');
+  if (grid) grid.classList.add('select-mode');
+  // Inject checkboxes into every card on the page
+  document.querySelectorAll('.identity-card').forEach(card => {
+    if (card.querySelector('.card-checkbox-wrap')) return;
+    const id = parseInt(card.id.replace('icard-', ''));
+    const wrap = document.createElement('div');
+    wrap.className = 'card-checkbox-wrap';
+    wrap.innerHTML = `<input type="checkbox" id="cb-${id}">`;
+    wrap.querySelector('input').addEventListener('change', (e) => toggleCardSelect(id, e.target.checked));
+    const thumb = card.querySelector('.identity-card-thumb');
+    if (thumb) thumb.appendChild(wrap);
+    card.addEventListener('click', _onCardClick);
+  });
+  updateBulkBar();
+}
+
+function exitSelectMode() {
+  _selectMode = false;
+  document.getElementById('bulkSelectBtn').classList.remove('active');
+  document.getElementById('bulkSelectBtn').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="5" width="4" height="4" rx="1"/><line x1="10" y1="7" x2="21" y2="7"/><rect x="3" y="12" width="4" height="4" rx="1"/><line x1="10" y1="14" x2="21" y2="14"/><rect x="3" y="19" width="4" height="4" rx="1"/><line x1="10" y1="21" x2="21" y2="21"/></svg> Select`;
+  const grid = document.querySelector('.identity-grid');
+  if (grid) grid.classList.remove('select-mode');
+  _selectedIds.clear();
+  document.querySelectorAll('.identity-card').forEach(card => {
+    card.classList.remove('bulk-selected');
+    const cb = card.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = false;
+  });
+  updateBulkBar();
+}
+
+function toggleSelectMode() {
+  if (_selectMode) exitSelectMode();
+  else enterSelectMode();
+}
+
+function _onCardClick(e) {
+  if (!_selectMode) return;
+  if (e.target.type === 'checkbox') return;
+  if (e.target.closest('.card-menu-btn')) return;
+  const card = e.currentTarget;
+  const id = parseInt(card.id.replace('icard-', ''));
+  const cb = document.getElementById('cb-' + id);
+  if (cb) {
+    cb.checked = !cb.checked;
+    toggleCardSelect(id, cb.checked);
+  }
+}
+
+function toggleCardSelect(id, checked) {
+  const card = document.getElementById('icard-' + id);
+  if (!card) return;
+  const name = card.querySelector('.identity-card-name').textContent.trim();
+  if (checked) {
+    _selectedIds.set(id, name);
+    card.classList.add('bulk-selected');
+  } else {
+    _selectedIds.delete(id);
+    card.classList.remove('bulk-selected');
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar  = document.getElementById('bulkBar');
+  const count = _selectedIds.size;
+  if (count === 0) { bar.classList.remove('visible'); return; }
+  bar.classList.add('visible');
+  document.getElementById('bulkBarCount').textContent = `${count} selected`;
+  document.getElementById('bulkMergeBtn').disabled = count < 2;
+}
+
+function selectAllOnPage() {
+  document.querySelectorAll('.identity-card').forEach(card => {
+    const id = parseInt(card.id.replace('icard-', ''));
+    const cb = document.getElementById('cb-' + id);
+    if (cb) cb.checked = true;
+    const name = card.querySelector('.identity-card-name').textContent.trim();
+    _selectedIds.set(id, name);
+    card.classList.add('bulk-selected');
+  });
+  updateBulkBar();
+}
+
+function clearBulkSelection() {
+  _selectedIds.forEach((name, id) => {
+    const card = document.getElementById('icard-' + id);
+    if (card) {
+      card.classList.remove('bulk-selected');
+      const cb = document.getElementById('cb-' + id);
+      if (cb) cb.checked = false;
+    }
+  });
+  _selectedIds.clear();
+  updateBulkBar();
+}
+
+// ── Bulk Delete ───────────────────────────────────────────────────────────────
+function openBulkDeleteModal() {
+  document.getElementById('bulkDeleteCount').textContent = _selectedIds.size;
+  openModal('bulkDeleteModal');
+}
+
+async function submitBulkDelete() {
+  const btn = document.getElementById('bulkDeleteSubmitBtn');
+  btn.textContent = 'Deleting…'; btn.disabled = true;
+  const ids = Array.from(_selectedIds.keys());
+  let deleted = 0, errors = 0;
+  for (const id of ids) {
+    try {
+      const res = await fetch(`/api/faces/${id}/delete/`, {
+        method: 'DELETE', headers: {'X-CSRFToken': CSRF},
+      });
+      if (res.ok || res.status === 204) {
+        const card = document.getElementById('icard-' + id);
+        if (card) card.remove();
+        deleted++;
+      } else { errors++; }
+    } catch(e) { errors++; }
+  }
+  _allIdentitiesCache = null;
+  _selectedIds.clear();
+  closeModal('bulkDeleteModal');
+  btn.textContent = 'Delete all'; btn.disabled = false;
+  updateBulkBar();
+  if (errors) alert(`${deleted} deleted, ${errors} failed.`);
+  else exitSelectMode();
+}
+
+// ── Bulk Merge ────────────────────────────────────────────────────────────────
+let _bulkMergeSurvivorId = null;
+
+function openBulkMergeModal() {
+  _bulkMergeSurvivorId = null;
+  document.getElementById('bulkMergeSubmitBtn').disabled = true;
+  const list = document.getElementById('bulkMergeList');
+  list.innerHTML = '';
+  _selectedIds.forEach((name, id) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 4px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);';
+    row.innerHTML = `
+      <input type="radio" name="bulkMergeSurvivor" value="${id}" style="accent-color:var(--accent);flex-shrink:0;">
+      <span style="flex:1;font-weight:500;">${name}</span>
+      <span style="font-size:11px;color:var(--text-muted);">keep this one</span>`;
+    row.querySelector('input').addEventListener('change', () => {
+      _bulkMergeSurvivorId = id;
+      document.getElementById('bulkMergeSubmitBtn').disabled = false;
+    });
+    list.appendChild(row);
+  });
+  openModal('bulkMergeModal');
+}
+
+async function submitBulkMerge() {
+  if (!_bulkMergeSurvivorId) return;
+  const btn = document.getElementById('bulkMergeSubmitBtn');
+  btn.textContent = 'Merging…'; btn.disabled = true;
+  const ids = Array.from(_selectedIds.keys()).filter(id => id !== _bulkMergeSurvivorId);
+  let merged = 0, errors = 0;
+  for (const id of ids) {
+    try {
+      const res = await fetch(`/api/faces/${id}/merge/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+        body: JSON.stringify({into: _bulkMergeSurvivorId}),
+      });
+      if (res.ok) {
+        const card = document.getElementById('icard-' + id);
+        if (card) card.remove();
+        merged++;
+      } else { errors++; }
+    } catch(e) { errors++; }
+  }
+  _allIdentitiesCache = null;
+  closeModal('bulkMergeModal');
+  btn.textContent = 'Merge'; btn.disabled = false;
+  if (errors) alert(`${merged} merged, ${errors} failed.`);
+  else exitSelectMode();
+}
 </script>
 {% endblock %}

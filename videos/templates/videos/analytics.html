@@ -296,7 +296,7 @@
       </thead>
       <tbody>
         {% for video in videos %}
-        <tr>
+        <tr data-video-id="{{ video.id }}" id="vrow-{{ video.id }}">
           <td>
             <div class="video-thumb-cell">
               {% if video.thumbnail_url %}
@@ -578,6 +578,15 @@ async function saveEdit() {
         body: fd,
       });
       if (!tr.ok) throw new Error('Failed to upload thumbnail');
+      // Immediately update the thumbnail in the table row (don't wait for reload)
+      const td = await tr.json();
+      if (td.thumbnail_url) {
+        const rowImg = document.querySelector(`tr[data-video-id="${_editVideoId}"] .v-thumb, #vrow-${_editVideoId} .v-thumb`);
+        if (rowImg) { rowImg.src = td.thumbnail_url + '?v=' + Date.now(); }
+        // Also update the modal preview to the confirmed server URL
+        const modalImg = document.getElementById('thumbPreviewImg');
+        if (modalImg) modalImg.src = td.thumbnail_url + '?v=' + Date.now();
+      }
     }
 
     // 3. Sync chapters — delete all existing, re-create from form

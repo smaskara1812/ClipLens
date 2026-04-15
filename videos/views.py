@@ -3861,7 +3861,10 @@ def faces_page(request):
     user_channels = _user_channels(request.user)
     has_channel   = user_channels.exists()
 
-    from django.db.models import Max
+    from django.db.models import Max, DateTimeField, Value
+    from django.db.models.functions import Greatest, Coalesce
+    import datetime as _dt
+    _EPOCH = _dt.datetime(2000, 1, 1, tzinfo=_dt.timezone.utc)
 
     if has_channel:
         # Channel IDs as a list so we can reuse in multiple Q() filters efficiently
@@ -3883,14 +3886,23 @@ def faces_page(request):
             .filter(ch_q)
             .distinct()
             .annotate(
-                latest_video_upload=Max('faces__video__created_at'),
+                _latest_video_date=Max('faces__video__created_at'),
+                _latest_photo_date=Max('faces__photo__created_at'),
                 total=Count('faces', filter=ch_q & has_crop),
                 confirmed=Count('faces', filter=ch_q & has_crop & Q(faces__status=DetectedFace.STATUS_CONFIRMED)),
                 rejected=Count('faces', filter=ch_q & has_crop & Q(faces__status=DetectedFace.STATUS_REJECTED)),
                 video_count=Count('faces__video', filter=Q(faces__video__channel_id__in=user_channel_ids), distinct=True),
                 photo_count=Count('faces__photo', filter=Q(faces__photo__channel_id__in=user_channel_ids), distinct=True),
             )
-            .order_by('-latest_video_upload')
+            .annotate(
+                # Take the most recent appearance across BOTH videos and photos so
+                # photo-only faces sort correctly alongside video faces.
+                latest_asset_date=Greatest(
+                    Coalesce('_latest_video_date', Value(_EPOCH, output_field=DateTimeField())),
+                    Coalesce('_latest_photo_date', Value(_EPOCH, output_field=DateTimeField())),
+                )
+            )
+            .order_by('-latest_asset_date')
         )
         if q:
             identities = identities.filter(name__icontains=q)
@@ -4724,13 +4736,9 @@ def photo_library_page(request):
 @login_required
 def photo_map_page(request):
     """Interactive map view of all geotagged photos using Leaflet + MarkerCluster."""
-    # Pass user's channels for the filter dropdown
-    channels = list(Channel.objects.filter(
-        Q(owner=request.user) | Q(editors=request.user)
-    ).distinct().order_by('name'))
-    return render(request, 'videos/photo_map.html', {
-        'channels': channels,
-    })
+    # owned_channels is already injected by sidebar_context context processor —
+    # no need to re-query here. Template uses {{ owned_channels }} directly.
+    return render(request, 'videos/photo_map.html', {})
 
 
 @login_required
@@ -5483,9 +5491,15 @@ def speakers_page(request):
     total_narrator   = totals['total_narrator']
     total_background = totals['total_background']
 
-    # Re-evaluate after filter (for pagination — qs already filtered above)
     from django.core.paginator import Paginator
-    paginator = Paginator(list(qs), 30)
+    try:
+        page_size = int(request.GET.get('page_size', 50))
+    except (ValueError, TypeError):
+        page_size = 50
+    if page_size not in (25, 50, 100):
+        page_size = 50
+
+    paginator = Paginator(qs, page_size)   # queryset pagination — no list() overhead
     page_obj  = paginator.get_page(request.GET.get('page', 1))
 
     return render(request, 'videos/speakers.html', {
@@ -5499,6 +5513,7 @@ def speakers_page(request):
         'active_filter':  active_filter,
         'search_query':   q,
         'has_channel':    has_channel,
+        'page_size':      page_size,
     })
 
 
@@ -5546,6 +5561,7 @@ def speaker_identity_page(request, speaker_id):
 
     # Per-video segment list and timeline data
     video_groups = []
+    _speaker_page_obj = None
     if active_phrase:
         _cap_total    = 400
         _cap_per_vid  = 50
@@ -5577,7 +5593,13 @@ def speaker_identity_page(request, speaker_id):
             })
         video_groups = sorted(by_video.values(), key=lambda g: g['video'].created_at, reverse=True)
     else:
-        for vid in videos_qs:
+        # Paginate videos server-side — DB LIMIT/OFFSET, segments loaded only for this page
+        from django.core.paginator import Paginator as _Pag
+        _spk_page_size = 10
+        _spk_paginator = _Pag(videos_qs, _spk_page_size)
+        _spk_page_obj  = _spk_paginator.get_page(request.GET.get('page', 1))
+        _speaker_page_obj = _spk_page_obj
+        for vid in _spk_page_obj:
             segs = (
                 VideoSegment.objects
                 .filter(video=vid, speaker_identity=speaker)
@@ -5627,6 +5649,7 @@ def speaker_identity_page(request, speaker_id):
     return render(request, 'videos/speaker_identity.html', {
         'speaker':          speaker,
         'video_groups':     video_groups,
+        'page_obj':         _speaker_page_obj,
         'face_identities':  face_identities,
         'all_speakers':     all_speakers,
         'pending_suggestions': pending_suggestions,
