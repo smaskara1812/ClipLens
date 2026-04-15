@@ -1,0 +1,456 @@
+{% extends "videos/base.html" %}
+{% load static %}
+
+{% block title %}Photo Map — ClipLens{% endblock %}
+
+{% block extra_head %}
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<!-- Leaflet.MarkerCluster CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin=""/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin=""/>
+<style>
+  /* ── Layout ── */
+  .map-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--header-h, 60px));
+    overflow: hidden;
+  }
+
+  /* ── Toolbar ── */
+  .map-toolbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .map-toolbar h1 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .map-toolbar .spacer { flex: 1; }
+
+  .map-stat {
+    font-size: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .map-stat span {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .map-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .map-filter-row select {
+    background: var(--surface-alt, var(--surface-2, #1c1c24));
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    outline: none;
+  }
+  .map-filter-row select:focus { border-color: var(--accent); }
+
+  .map-library-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    text-decoration: none;
+    transition: border-color .15s, color .15s;
+  }
+  .map-library-btn:hover { border-color: var(--accent); color: var(--text); }
+  .map-library-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  /* ── Map container ── */
+  /* The wrapper div above #map has flex:1 so it gets the remaining height.
+     #map needs height:100% to fill that wrapper — NOT flex:1 (wrapper is not flex). */
+  .map-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+  #map {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* ── Empty state overlay ── */
+  #map-empty {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 500;
+    background: var(--bg);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    text-align: center;
+    padding: 40px;
+  }
+  #map-empty.visible { display: flex; }
+  #map-empty svg { width: 52px; height: 52px; color: var(--text-muted); opacity: .4; }
+  #map-empty h2 { font-size: 18px; font-weight: 700; margin: 0; }
+  #map-empty p  { font-size: 14px; color: var(--text-muted); margin: 0; max-width: 340px; line-height: 1.6; }
+
+  /* ── Loading indicator ── */
+  #map-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 600;
+    background: var(--surface);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 10px;
+    padding: 16px 24px;
+    font-size: 14px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    transition: opacity .2s;
+  }
+  #map-loading.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border-2, rgba(255,255,255,.13));
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Custom Leaflet cluster colours (match accent) ── */
+  .marker-cluster-small  div,
+  .marker-cluster-medium div,
+  .marker-cluster-large  div {
+    background-color: rgba(99, 102, 241, 0.8);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .marker-cluster-small,
+  .marker-cluster-medium,
+  .marker-cluster-large  {
+    background-color: rgba(99, 102, 241, 0.25);
+  }
+
+  /* ── Popup ── */
+  .map-popup {
+    font-family: 'Inter', system-ui, sans-serif;
+    min-width: 160px;
+    max-width: 200px;
+  }
+  .map-popup img {
+    width: 100%;
+    height: 110px;
+    object-fit: cover;
+    border-radius: 6px;
+    display: block;
+    margin-bottom: 8px;
+    background: var(--surface-2, #1c1c24);
+  }
+  .map-popup img.no-thumb {
+    background: var(--surface-2, #1c1c24);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+  }
+  .map-popup a {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent, #6366f1);
+    text-decoration: none;
+    display: block;
+    line-height: 1.4;
+  }
+  .map-popup a:hover { text-decoration: underline; }
+  .map-popup .popup-date {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+  }
+
+  /* Override Leaflet popup styles to match dark theme */
+  [data-theme="dark"] .leaflet-popup-content-wrapper,
+  [data-theme="dark"] .leaflet-popup-tip {
+    background: #1c1c24;
+    color: #f0f0f8;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  [data-theme="dark"] .leaflet-popup-content-wrapper {
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px;
+  }
+  [data-theme="dark"] .leaflet-bar a,
+  [data-theme="dark"] .leaflet-control-zoom a {
+    background: #1c1c24;
+    color: #f0f0f8;
+    border-color: rgba(255,255,255,.15);
+  }
+  [data-theme="dark"] .leaflet-bar a:hover { background: #26263a; }
+  [data-theme="dark"] .leaflet-control-attribution {
+    background: rgba(0,0,0,.5);
+    color: #888;
+  }
+  [data-theme="dark"] .leaflet-control-attribution a { color: #aaa; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="map-page">
+
+  <!-- Toolbar -->
+  <div class="map-toolbar">
+    <h1>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           style="width:18px;height:18px;vertical-align:-3px;margin-right:6px;">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+      Photo Map
+    </h1>
+
+    {% if channels %}
+    <div class="map-filter-row">
+      <select id="channelFilter" onchange="applyFilter()">
+        <option value="">All channels</option>
+        {% for ch in channels %}
+        <option value="{{ ch.slug }}">{{ ch.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <div class="spacer"></div>
+
+    <div class="map-stat" id="markerStat" style="display:none;">
+      <span id="markerCount">0</span> geotagged photos
+    </div>
+
+    <a href="{% url 'photo_library' %}" class="map-library-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      Grid View
+    </a>
+  </div>
+
+  <!-- Map + overlays wrapper -->
+  <div class="map-wrap">
+    <div id="map"></div>
+
+    <!-- Loading spinner -->
+    <div id="map-loading">
+      <div class="spinner"></div>
+      Loading photos…
+    </div>
+
+    <!-- Empty state -->
+    <div id="map-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+      <h2>No geotagged photos</h2>
+      <p>Photos need GPS data in their EXIF metadata to appear on the map.
+         Try photos taken on a phone with location enabled.</p>
+      <a href="{% url 'photo_library' %}" class="map-library-btn" style="margin-top:8px;">
+        Back to Photo Library
+      </a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Leaflet JS — no SRI so browser doesn't silently block on hash mismatch -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<!-- Leaflet.MarkerCluster JS -->
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
+
+<script>
+(function () {
+  'use strict';
+
+  // Guard: if Leaflet or MarkerCluster failed to load from CDN, surface a readable error.
+  if (typeof L === 'undefined' || typeof L.markerClusterGroup === 'undefined') {
+    document.getElementById('map-loading').classList.add('hidden');
+    const empty = document.getElementById('map-empty');
+    empty.querySelector('h2').textContent = 'Map library failed to load';
+    empty.querySelector('p').textContent  = 'Could not load Leaflet from CDN. Check your network connection and reload.';
+    empty.classList.add('visible');
+    return;
+  }
+
+  // ── Tile layer URLs (OpenStreetMap, dark-friendly Carto variant for dark mode) ──
+  const TILES = {
+    light: {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    dark: {
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+    },
+  };
+
+  const theme   = () => document.documentElement.getAttribute('data-theme') || 'dark';
+  const tileOpt = () => TILES[theme()] || TILES.dark;
+
+  // ── Init map (wrapped so a bad div size or Leaflet hiccup surfaces cleanly) ──
+  let map, tileLayer, cluster;
+  try {
+    map = L.map('map', { center: [20, 0], zoom: 2, zoomControl: true });
+    tileLayer = L.tileLayer(tileOpt().url, {
+      attribution: tileOpt().attr,
+      maxZoom: 19,
+    }).addTo(map);
+  } catch (e) {
+    console.error('Leaflet map init failed:', e);
+    document.getElementById('map-loading').classList.add('hidden');
+    const empty = document.getElementById('map-empty');
+    empty.querySelector('h2').textContent = 'Map failed to initialise';
+    empty.querySelector('p').textContent  = e.message || 'Unknown error — check the browser console.';
+    empty.classList.add('visible');
+    return;
+  }
+
+  // Swap tile layer when theme is toggled externally (the base.html toggleTheme fn)
+  const origToggle = window.toggleTheme;
+  window.toggleTheme = function () {
+    if (origToggle) origToggle();
+    setTimeout(() => {
+      const opt = tileOpt();
+      tileLayer.setUrl(opt.url);
+    }, 50);
+  };
+
+  // ── Cluster group ──
+  cluster = L.markerClusterGroup({
+    showCoverageOnHover: false,
+    maxClusterRadius: 60,
+    spiderfyOnMaxZoom: true,
+    chunkedLoading: true,
+  });
+  map.addLayer(cluster);
+
+  // ── Helpers ──
+  function formatDate(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+      });
+    } catch { return ''; }
+  }
+
+  function makePopup(m) {
+    const dateStr = m.taken_at ? `<div class="popup-date">${formatDate(m.taken_at)}</div>` : '';
+    const imgHtml = m.thumb
+      ? `<img src="${m.thumb}" alt="${m.title}" loading="lazy" />`
+      : `<div style="width:100%;height:80px;display:flex;align-items:center;justify-content:center;background:#1c1c24;border-radius:6px;margin-bottom:8px;font-size:24px;">🌍</div>`;
+    return `<div class="map-popup">
+      ${imgHtml}
+      <a href="/photos/${m.id}/">${m.title}</a>
+      ${dateStr}
+    </div>`;
+  }
+
+  // ── Load markers ──
+  let allMarkers = [];
+
+  function loadMarkers(channelSlug) {
+    const loading = document.getElementById('map-loading');
+    const empty   = document.getElementById('map-empty');
+    const stat    = document.getElementById('markerStat');
+    const count   = document.getElementById('markerCount');
+
+    loading.classList.remove('hidden');
+    empty.classList.remove('visible');
+    stat.style.display = 'none';
+
+    cluster.clearLayers();
+    allMarkers = [];
+
+    const url = '/api/photos/map-markers/' + (channelSlug ? `?channel=${channelSlug}` : '');
+
+    fetch(url)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        loading.classList.add('hidden');
+        const markers = data.markers || [];
+
+        if (markers.length === 0) {
+          empty.classList.add('visible');
+          return;
+        }
+
+        const leafletMarkers = markers.map(m => {
+          const lm = L.marker([m.lat, m.lng]);
+          lm.bindPopup(makePopup(m), { maxWidth: 220 });
+          allMarkers.push(lm);
+          return lm;
+        });
+
+        cluster.addLayers(leafletMarkers);
+
+        // Zoom to fit all markers
+        const group = L.featureGroup(leafletMarkers);
+        map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 14 });
+
+        count.textContent = markers.length.toLocaleString();
+        stat.style.display = '';
+      })
+      .catch(err => {
+        loading.classList.add('hidden');
+        console.error('Map markers failed:', err);
+        empty.classList.add('visible');
+      });
+  }
+
+  function applyFilter() {
+    const slug = document.getElementById('channelFilter')?.value || '';
+    loadMarkers(slug);
+  }
+
+  // Expose for the channel dropdown onchange
+  window.applyFilter = applyFilter;
+
+  // ── Initial load ──
+  loadMarkers('');
+
+})();
+</script>
+{% endblock %}

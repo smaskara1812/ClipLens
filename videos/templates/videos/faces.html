@@ -76,6 +76,20 @@
   }
   .identity-card-badge.auto { background: var(--surface-3); color: var(--text-muted); }
 
+  /* Source type badge — bottom-left corner of thumb */
+  .identity-source-badge {
+    position: absolute; bottom: 6px; left: 6px;
+    display: flex; gap: 2px; align-items: center;
+    background: rgba(0,0,0,.55);
+    border-radius: 5px; padding: 3px 5px;
+    backdrop-filter: blur(4px);
+  }
+  .identity-source-badge svg {
+    width: 11px; height: 11px;
+    stroke: rgba(255,255,255,.85);
+    flex-shrink: 0;
+  }
+
   /* Review progress bar under thumb */
   .review-bar {
     height: 3px; width: 100%;
@@ -329,16 +343,41 @@
 
 <!-- ── Merge modal ───────────────────────────────────────────────────────── -->
 <div class="modal-backdrop" id="mergeModal">
-  <div class="modal-box">
+  <div class="modal-box" style="max-width:440px;">
     <div class="modal-title">Merge into another person</div>
-    <div class="modal-label">This person will be merged into:</div>
-    <select class="modal-input" id="mergeSelect" style="cursor:pointer;"></select>
-    <p style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5;">
-      All face crops will be re-assigned to the selected person and this entry will be deleted.
+
+    <!-- Named people — dropdown -->
+    <div class="modal-label" style="margin-top:12px;">Named people</div>
+    <select class="modal-input" id="mergeNamedSelect" style="cursor:pointer;"
+            onchange="onMergeNamedChange()"></select>
+
+    <!-- Divider -->
+    <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px;">
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+      <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">or search auto-detected</span>
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+    </div>
+
+    <!-- Auto-named search -->
+    <div style="position:relative;">
+      <input class="modal-input" id="mergeAutoSearch" type="text"
+             placeholder="Type a name, e.g. Person #42…"
+             autocomplete="off"
+             oninput="onMergeAutoSearch()"
+             onfocus="onMergeAutoSearch()" />
+      <div id="mergeAutoResults"
+           style="display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);
+                  background:var(--surface);border:1px solid var(--border-2);
+                  border-radius:8px;max-height:180px;overflow-y:auto;z-index:200;
+                  box-shadow:0 8px 24px rgba(0,0,0,.4);"></div>
+    </div>
+
+    <p style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.5;">
+      All face crops will be re-assigned to the target person and this entry will be deleted.
     </p>
     <div class="modal-actions">
       <button class="modal-btn ghost" onclick="closeModal('mergeModal')">Cancel</button>
-      <button class="modal-btn primary" onclick="submitMerge()">Merge</button>
+      <button class="modal-btn primary" id="mergeSubmitBtn" onclick="submitMerge()" disabled>Merge</button>
     </div>
   </div>
 </div>
@@ -378,7 +417,7 @@ function savePageSize(val) {
   }
 })();
 
-// Merge dropdown: loaded on demand from API so it's never paginated or stale
+/// Merge dropdown: loaded on demand from API so it's never paginated or stale
 let _allIdentitiesCache = null;
 async function _loadAllIdentities() {
   if (_allIdentitiesCache) return _allIdentitiesCache;
@@ -493,59 +532,141 @@ document.getElementById('renameInput').addEventListener('keydown', e => {
 });
 
 // ── Merge ────────────────────────────────────────────────────────────────────
+let _mergeTargetId   = null;   // currently selected target identity ID
+let _mergeTargetName = null;
+
+function _setMergeTarget(id, name) {
+  _mergeTargetId   = id ? parseInt(id) : null;
+  _mergeTargetName = name || null;
+  document.getElementById('mergeSubmitBtn').disabled = !_mergeTargetId;
+}
+
 async function openMergeModal(evt, id, name) {
   evt.stopPropagation();
-  _activeId   = id;
-  _activeName = name;
+  _activeId    = id;
+  _activeName  = name;
+  _setMergeTarget(null, null);
 
-  const sel = document.getElementById('mergeSelect');
-  sel.innerHTML = '<option disabled>Loading…</option>';
+  // Reset inputs
+  const namedSel  = document.getElementById('mergeNamedSelect');
+  const autoInput = document.getElementById('mergeAutoSearch');
+  const autoRes   = document.getElementById('mergeAutoResults');
+  namedSel.innerHTML  = '<option value="" disabled selected>Loading…</option>';
+  autoInput.value     = '';
+  autoRes.style.display = 'none';
   openModal('mergeModal');
 
   let identities;
   try {
     identities = await _loadAllIdentities();
   } catch(e) {
-    sel.innerHTML = '<option disabled>Failed to load</option>';
+    namedSel.innerHTML = '<option disabled>Failed to load</option>';
     return;
   }
 
-  sel.innerHTML = '';
-  identities.forEach(i => {
-    if (i.id === id) return;
+  // Named people only in the dropdown (excluding self)
+  const named = identities.filter(i => i.id !== id && !i.is_auto);
+  namedSel.innerHTML = '<option value="" disabled selected>— select a named person —</option>';
+  if (named.length) {
+    named.forEach(i => {
+      const opt = document.createElement('option');
+      opt.value = i.id;
+      opt.textContent = i.name;
+      namedSel.appendChild(opt);
+    });
+  } else {
     const opt = document.createElement('option');
-    opt.value = i.id;
-    // Show name + crops + videos so duplicates can be told apart
-    const tag = i.is_auto ? '' : ' ✓';
-    opt.textContent = `${i.name}${tag} — ${i.crops} crop${i.crops !== 1 ? 's' : ''}, ${i.videos} video${i.videos !== 1 ? 's' : ''}`;
-    sel.appendChild(opt);
-  });
-
-  if (!sel.options.length) {
-    closeModal('mergeModal');
-    alert('No other people to merge into yet.');
+    opt.disabled = true;
+    opt.textContent = 'No named people yet';
+    namedSel.appendChild(opt);
   }
 }
 
+function onMergeNamedChange() {
+  const sel = document.getElementById('mergeNamedSelect');
+  const id  = sel.value;
+  if (id) {
+    // Clear auto search when a named person is selected
+    document.getElementById('mergeAutoSearch').value = '';
+    document.getElementById('mergeAutoResults').style.display = 'none';
+    const name = sel.options[sel.selectedIndex].textContent;
+    _setMergeTarget(id, name);
+  }
+}
+
+async function onMergeAutoSearch() {
+  const input   = document.getElementById('mergeAutoSearch');
+  const results = document.getElementById('mergeAutoResults');
+  const q       = input.value.trim().toLowerCase();
+
+  if (q.length === 0) {
+    results.style.display = 'none';
+    // Don't clear named selection when typing starts fresh
+    return;
+  }
+
+  let identities;
+  try {
+    identities = await _loadAllIdentities();
+  } catch(e) { return; }
+
+  // Auto-named people matching query, excluding self
+  const matches = identities.filter(i =>
+    i.id !== _activeId && i.is_auto && i.name.toLowerCase().includes(q)
+  ).slice(0, 20);
+
+  if (!matches.length) {
+    results.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--text-muted);">No matches</div>';
+    results.style.display = '';
+    _setMergeTarget(null, null);
+    return;
+  }
+
+  results.innerHTML = '';
+  matches.forEach(i => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:9px 14px;font-size:13px;cursor:pointer;display:flex;gap:8px;align-items:center;';
+    row.innerHTML = `<span style="flex:1;">${i.name}</span>`;
+    row.addEventListener('mouseenter', () => row.style.background = 'var(--surface-2)');
+    row.addEventListener('mouseleave', () => row.style.background = '');
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();  // prevent blur on input before click fires
+      input.value = i.name;
+      results.style.display = 'none';
+      // Clear the named dropdown
+      document.getElementById('mergeNamedSelect').selectedIndex = 0;
+      _setMergeTarget(i.id, i.name);
+    });
+    results.appendChild(row);
+  });
+  results.style.display = '';
+}
+
+// Hide auto results when clicking outside
+document.addEventListener('click', (e) => {
+  const autoRes = document.getElementById('mergeAutoResults');
+  if (autoRes && !autoRes.contains(e.target) && e.target.id !== 'mergeAutoSearch') {
+    autoRes.style.display = 'none';
+  }
+});
+
 async function submitMerge() {
-  const targetId = parseInt(document.getElementById('mergeSelect').value);
-  const btn = document.querySelector('#mergeModal .modal-btn.primary');
+  if (!_mergeTargetId) return;
+  const btn = document.getElementById('mergeSubmitBtn');
   btn.textContent = 'Merging…'; btn.disabled = true;
   try {
     const res = await fetch(`/api/faces/${_activeId}/merge/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ into: targetId }),
+      body: JSON.stringify({ into: _mergeTargetId }),
     });
     if (!res.ok) throw new Error((await res.json()).error || 'Error');
-    // Remove the source card from DOM
     const card = document.getElementById('icard-' + _activeId);
     if (card) card.remove();
-    _allIdentitiesCache = null; // invalidate cache
+    _allIdentitiesCache = null;
     closeModal('mergeModal');
   } catch (e) {
     alert(e.message);
-  } finally {
     btn.textContent = 'Merge'; btn.disabled = false;
   }
 }

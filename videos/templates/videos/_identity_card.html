@@ -1,8 +1,7 @@
 {% comment %}
 Shared partial for a single identity card on /faces/
-Context: row = {identity, total, confirmed, rejected, unreviewed, video_count}
-JS functions openCardMenu, renameIdentity, openMergeModal, deleteIdentity
-must be defined in the parent template (faces.html).
+Context: row = {identity, total, confirmed, rejected, unreviewed, video_count, photo_count, is_photo_only}
+JS functions openCardMenu must be defined in the parent template (faces.html).
 {% endcomment %}
 <div class="identity-card" id="icard-{{ row.identity.pk }}">
   <a href="{% url 'face_identity' row.identity.pk %}?from={{ request.get_full_path|urlencode }}" class="identity-card-link">
@@ -14,11 +13,28 @@ must be defined in the parent template (faces.html).
         <circle cx="12" cy="8" r="5"/><path d="M3 21c0-4.418 4.03-8 9-8s9 3.582 9 8"/>
       </svg>
       {% endif %}
+
+      <!-- Named/Auto badge -->
       {% if not row.identity.is_auto_named %}
       <span class="identity-card-badge">Named</span>
       {% else %}
       <span class="identity-card-badge auto">Auto</span>
       {% endif %}
+
+      <!-- Source type badge — bottom-left corner -->
+      <span class="identity-source-badge">
+        {% if row.video_count and row.photo_count %}
+          {# Both sources #}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Videos &amp; photos"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Videos &amp; photos"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        {% elif row.video_count %}
+          {# Video only #}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="From videos"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        {% elif row.photo_count %}
+          {# Photo only #}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="From photos"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        {% endif %}
+      </span>
     </div>
 
     <!-- Tiny review progress bar -->
@@ -37,7 +53,7 @@ must be defined in the parent template (faces.html).
   <div class="identity-card-body">
     <div class="identity-card-name-row">
       <div class="identity-card-name">{{ row.identity.name }}</div>
-      {% if not row.is_photo_only %}
+      <!-- Always show actions — photo-only faces need rename/merge too -->
       <button
         class="card-menu-btn"
         onclick="openCardMenu(event, {{ row.identity.pk }}, '{{ row.identity.name|escapejs }}')"
@@ -47,19 +63,16 @@ must be defined in the parent template (faces.html).
           <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
         </svg>
       </button>
-      {% endif %}
     </div>
     <div class="identity-card-meta">
-      {% if row.is_photo_only %}
-      <span>{{ row.photo_count|default:0 }} photo{{ row.photo_count|default:0|pluralize }}</span>
-      {% else %}
       <span>{{ row.total }} detection{{ row.total|pluralize }}</span>
+      {% if row.video_count %}
       <span class="dot">·</span>
       <span>{{ row.video_count }} video{{ row.video_count|pluralize }}</span>
+      {% endif %}
       {% if row.photo_count %}
       <span class="dot">·</span>
       <span>{{ row.photo_count }} photo{{ row.photo_count|pluralize }}</span>
-      {% endif %}
       {% endif %}
     </div>
     {% if row.total %}

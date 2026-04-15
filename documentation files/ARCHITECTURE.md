@@ -419,35 +419,57 @@ EMBED_ALLOW_ORIGINS=*           # domains allowed to iframe your videos
 ## Directory Structure
 
 ```
-ClipStream/
-├── ClipStream/
+ClipLens/                    # project root (was ClipStream)
+├── cliplens/                # Django project package
 │   ├── settings.py          # all settings (reads from .env)
 │   ├── celery.py            # Celery app config + task routing
 │   └── urls.py              # root URL conf
 │
-├── videos/
+├── videos/                  # single Django app
 │   ├── models.py            # all DB models
-│   ├── views.py             # page views + API endpoints
+│   ├── views.py             # page views + API endpoints (~3800 lines)
 │   ├── tasks.py             # all Celery async tasks
 │   ├── services.py          # FFmpeg HLS encoding logic
 │   ├── serializers.py       # DRF serializers for API responses
 │   ├── urls.py              # URL routing
 │   ├── admin.py             # Django admin registrations
 │   ├── migrations/          # DB schema history
+│   ├── management/
+│   │   └── commands/        # 9 management commands
+│   ├── static/videos/
+│   │   └── logos/           # all brand logo variants (light/dark, all sizes, favicons)
 │   └── templates/videos/    # all HTML templates
 │
-├── media/                   # all user-uploaded + generated files
-│   ├── videos/              # original uploaded files
+├── media/                   # all user-uploaded + generated files (not served in prod via Django)
+│   ├── originals/           # original uploaded video files (<uuid>.ext)
 │   ├── hls/                 # encoded HLS segments + playlists
-│   ├── frames/              # extracted video frames (JPEGs)
+│   │   └── <video_id>/
+│   │       ├── master.m3u8
+│   │       ├── 360p/
+│   │       ├── 720p/
+│   │       └── ...
+│   ├── thumbnails/          # video poster frames (JPEGs)
+│   ├── seek_sprites/        # seek preview sprite sheets
+│   │   └── <video_id>/sprites.jpg
+│   ├── frames/              # extracted video frames used for AI analysis
 │   ├── faces/               # cropped face images
 │   ├── subtitles/           # WebVTT caption files
+│   ├── audio/               # extracted WAV files (diarization input)
+│   ├── photos/              # uploaded photos
 │   └── channels/            # channel avatars + banners
+│
+├── documentation files/     # project documentation
+│   ├── ARCHITECTURE.md      # this file
+│   ├── SEEK_SPRITES.md      # seek preview sprite system
+│   ├── MANAGEMENT_COMMANDS.md # all management commands reference
+│   ├── SPEAKER_IDENTITY.md  # speaker diarization + identity system
+│   ├── PRODUCT_SPEC.md      # product feature spec
+│   └── ...
 │
 ├── .env                     # environment config (never commit this)
 ├── requirements.txt         # Python dependencies
 ├── manage.py
-└── ARCHITECTURE.md          # this file
+└── CLAUDE.md                # AI assistant guidance
 ```
 
 ---

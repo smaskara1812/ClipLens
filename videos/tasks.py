@@ -1533,7 +1533,9 @@ def analyze_photo_task(self, photo_id: str):
         # Match detected faces against known identities
         if raw_faces:
             NAMED_THRESHOLD = 0.45
-            AUTO_THRESHOLD  = 0.50
+            # Cross-source threshold is slightly lower than intra-video (0.50) because
+            # photo vs video appearance can differ meaningfully in lighting/angle/resolution.
+            AUTO_THRESHOLD  = 0.45
 
             named_identities = list(
                 FaceIdentity.objects.filter(is_auto_named=False).exclude(ref_embedding='')
@@ -1614,14 +1616,18 @@ def analyze_photo_task(self, photo_id: str):
             faces_dir.mkdir(parents=True, exist_ok=True)
 
             AUTO_CONFIRM_SIM = getattr(settings, 'FACE_AUTO_CONFIRM_THRESHOLD', 0.75)
+
+            # Pre-compute frontal score per face for best-crop selection
             face_frontal_scores = []
             for rf in raw_faces:
                 yaw = rf['pose'][0] if rf.get('pose') else 0.0
                 score = rf['confidence'] * (1.0 - min(abs(yaw), 90.0) / 90.0)
                 face_frontal_scores.append(score)
 
-            best_idx = max(range(len(raw_faces)), key=lambda i: face_frontal_scores[i])
-            best_crop_rel = ''
+            # Track the best (most-frontal) crop PER IDENTITY, not per photo.
+            # Previously this used a single photo-level best_idx, which caused all
+            # identities in a multi-face photo to get the same thumbnail.
+            identity_best: dict = {}  # identity.pk -> (frontal_score, crop_rel)
 
             for idx, (rf, identity) in enumerate(zip(raw_faces, matched_identities)):
                 crop_rel = ''
@@ -1658,16 +1664,21 @@ def analyze_photo_task(self, photo_id: str):
                     status=initial_status,
                 )
 
-                if idx == best_idx and crop_rel:
-                    best_crop_rel = crop_rel
+                # Track best crop for this specific identity
+                if identity and crop_rel:
+                    score = face_frontal_scores[idx]
+                    prev = identity_best.get(identity.pk)
+                    if prev is None or score > prev[0]:
+                        identity_best[identity.pk] = (score, crop_rel)
 
-            if best_crop_rel:
-                for identity in set(matched_identities):
-                    if not identity:
-                        continue
-                    if not identity.thumbnail:
-                        identity.thumbnail = best_crop_rel
-                        identity.save(update_fields=['thumbnail'])
+            # Assign each identity its own best crop as thumbnail (only if unset)
+            for identity in set(matched_identities):
+                if not identity:
+                    continue
+                best = identity_best.get(identity.pk)
+                if best and not identity.thumbnail:
+                    identity.thumbnail = best[1]
+                    identity.save(update_fields=['thumbnail'])
 
         # ── Generate thumbnail ────────────────────────────────────────────────
         try:

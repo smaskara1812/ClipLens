@@ -20,7 +20,7 @@ from django.contrib.auth.models import User
 from django.apps import apps
 from django.db import connection
 from django.db.models import Q, Sum, Count, F
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
@@ -1693,6 +1693,26 @@ def _fmt_bytes(n: int) -> str:
             return f'{n:.1f} {unit}' if unit != 'B' else f'{n} B'
         n /= 1024
     return f'{n:.1f} PB'
+
+
+def _dms_to_decimal(dms_arr, ref: str):
+    """Convert EXIF DMS array [deg, min, sec] + ref ('N'/'S'/'E'/'W') to decimal degrees.
+    Returns float or None if input is invalid.
+    """
+    if not dms_arr or len(dms_arr) < 3:
+        return None
+    try:
+        deg = float(dms_arr[0])
+        mn  = float(dms_arr[1])
+        sec = float(dms_arr[2])
+        if not all(map(lambda x: x == x, [deg, mn, sec])):  # NaN check
+            return None
+        dd = deg + mn / 60.0 + sec / 3600.0
+        if ref in ('S', 'W'):
+            dd = -dd
+        return round(dd, 6)
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 @superuser_required
@@ -3672,11 +3692,18 @@ def face_identity_tag(request, identity_id):
     if not user_channels.exists():
         return Response({'error': 'No channel.'}, status=status.HTTP_403_FORBIDDEN)
 
-    appears_in_own_video = DetectedFace.objects.filter(
-        identity=identity,
-        video__channel__in=user_channels,
-    ).exists()
-    if not appears_in_own_video:
+    appears_in_own_content = (
+        DetectedFace.objects.filter(
+            identity=identity,
+            video__channel__in=user_channels,
+        ).exists()
+        or
+        DetectedFace.objects.filter(
+            identity=identity,
+            photo__uploaded_by=request.user.username,
+        ).exists()
+    )
+    if not appears_in_own_content:
         return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
     name = request.data.get('name', '').strip()
@@ -3707,6 +3734,83 @@ def face_identity_remove_from_video(request, video_id, identity_id):
     DetectedFace.objects.filter(video=video, identity=identity).delete()
 
     # Clean up orphaned identity (no faces left anywhere)
+    if not DetectedFace.objects.filter(identity=identity).exists():
+        identity.delete()
+
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+@api_login_required
+def photo_faces_list(request, photo_id):
+    """
+    GET /api/photos/<id>/faces/
+    Returns all FaceIdentity objects detected in this photo,
+    each with their crop URLs for display in the photo detail page.
+    """
+    photo = get_object_or_404(Photo, id=photo_id)
+
+    identity_ids = (
+        DetectedFace.objects
+        .filter(photo=photo)
+        .exclude(identity__isnull=True)
+        .values_list('identity_id', flat=True)
+        .distinct()
+    )
+    identities = FaceIdentity.objects.filter(id__in=identity_ids).order_by(
+        'is_auto_named', 'name', 'id'
+    )
+
+    result = []
+    for identity in identities:
+        crops_qs = (
+            DetectedFace.objects
+            .filter(photo=photo, identity=identity)
+            .exclude(crop_path='')
+            .order_by('-confidence')[:4]
+        )
+        crops = [
+            {'id': df.id, 'url': df.crop_url, 'confidence': round(df.confidence or 0, 3)}
+            for df in crops_qs
+        ]
+        result.append({
+            'id':           identity.id,
+            'name':         identity.name,
+            'is_auto_named': identity.is_auto_named,
+            'thumbnail_url': identity.thumbnail_url or (crops[0]['url'] if crops else None),
+            'face_count':   len(crops),
+            'crops':        crops,
+        })
+
+    return Response(result)
+
+
+@api_view(['DELETE'])
+@api_login_required
+def photo_face_remove(request, photo_id, identity_id):
+    """
+    DELETE /api/photos/<photo_id>/faces/<identity_id>/remove/
+    Removes all DetectedFace rows for this identity in this photo.
+    Uploader of the photo only. Cleans up orphaned identities.
+    """
+    photo    = get_object_or_404(Photo, id=photo_id)
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
+
+    if photo.uploaded_by and photo.uploaded_by != request.user.username:
+        return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+    DetectedFace.objects.filter(photo=photo, identity=identity).delete()
+
+    # Refresh photo face_count / face_names cache
+    remaining_names = list(
+        FaceIdentity.objects.filter(faces__photo=photo)
+        .exclude(name='').distinct()
+        .values_list('name', flat=True)
+    )
+    photo.face_count = DetectedFace.objects.filter(photo=photo).count()
+    photo.face_names = ', '.join(remaining_names)
+    photo.save(update_fields=['face_count', 'face_names'])
+
     if not DetectedFace.objects.filter(identity=identity).exists():
         identity.delete()
 
@@ -3764,7 +3868,9 @@ def faces_page(request):
         user_channel_ids = list(user_channels.values_list('id', flat=True))
         ch_q = Q(
             Q(faces__video__channel_id__in=user_channel_ids) |
-            Q(faces__photo__channel_id__in=user_channel_ids)
+            Q(faces__photo__channel_id__in=user_channel_ids) |
+            # Photos uploaded by the user even if not assigned to a channel
+            Q(faces__photo__isnull=False, faces__photo__uploaded_by=request.user.username)
         )
 
         q = request.GET.get('q', '').strip()
@@ -3795,15 +3901,19 @@ def faces_page(request):
     identity_data = []
 
     for ident in identities:
+        vc = ident.video_count
+        pc = getattr(ident, 'photo_count', 0)
         identity_data.append({
-            'identity':   ident,
-            'total':      ident.total,
-            'confirmed':  ident.confirmed,
-            'rejected':   ident.rejected,
-            'unreviewed': max(0, ident.total - ident.confirmed - ident.rejected),
-            'video_count': ident.video_count,
-            'photo_count': getattr(ident, 'photo_count', 0),
-            'is_photo_only': False,
+            'identity':     ident,
+            'total':        ident.total,
+            'confirmed':    ident.confirmed,
+            'rejected':     ident.rejected,
+            'unreviewed':   max(0, ident.total - ident.confirmed - ident.rejected),
+            'video_count':  vc,
+            'photo_count':  pc,
+            # True only when this identity has zero video appearances — allows full
+            # actions menu and correct source badge on the card.
+            'is_photo_only': vc == 0 and pc > 0,
         })
 
     orphaned_data = list({'identity': ident} for ident in FaceIdentity.objects.filter(faces__isnull=True))
@@ -3871,7 +3981,11 @@ def face_identity_page(request, identity_id):
             .order_by('video_id', 'photo_id', 'timestamp')
         )
     else:
-        own_face_q = Q(video__channel_id__in=user_channel_ids) | Q(photo__channel_id__in=user_channel_ids)
+        own_face_q = (
+            Q(video__channel_id__in=user_channel_ids)
+            | Q(photo__channel_id__in=user_channel_ids)
+            | Q(photo__isnull=False, photo__uploaded_by=request.user.username)
+        )
         appears_in_mine = DetectedFace.objects.filter(identity=identity).filter(own_face_q).exists()
         if not appears_in_mine:
             from django.core.exceptions import PermissionDenied
@@ -4185,40 +4299,36 @@ def faces_cleanup_orphans(request):
 def face_identity_list(request):
     """
     GET /api/faces/list/
-    Returns all FaceIdentity rows visible to the current user, with crop
-    and video counts for disambiguation in the merge dropdown.
+    Returns all FaceIdentity rows visible to the current user.
+    Lightweight — only id, name, is_auto (used by merge dropdown).
+    Single query, no per-identity N+1.
     """
     user_channels = _user_channels(request.user)
     if not user_channels.exists():
         return Response([])
 
+    user_channel_ids = list(user_channels.values_list('id', flat=True))
     identity_ids = (
         DetectedFace.objects
-        .filter(Q(video__channel__in=user_channels) | Q(photo__channel__in=user_channels))
+        .filter(
+            Q(video__channel_id__in=user_channel_ids)
+            | Q(photo__channel_id__in=user_channel_ids)
+            | Q(photo__isnull=False, photo__uploaded_by=request.user.username)
+        )
         .values_list('identity_id', flat=True)
         .distinct()
     )
-    identities = FaceIdentity.objects.filter(id__in=identity_ids).order_by('name')
+    identities = (
+        FaceIdentity.objects
+        .filter(id__in=identity_ids)
+        .only('id', 'name', 'is_auto_named')
+        .order_by('name')
+    )
 
-    results = []
-    for ident in identities:
-        own_faces = DetectedFace.objects.filter(identity=ident).filter(
-            Q(video__channel__in=user_channels) | Q(photo__channel__in=user_channels)
-        )
-        crop_count  = own_faces.count()
-        video_count = own_faces.values('video_id').distinct().count()
-        photo_count = own_faces.values('photo_id').distinct().count()
-        results.append({
-            'id':          ident.pk,
-            'name':        ident.name,
-            'is_auto':     ident.is_auto_named,
-            'crops':       crop_count,
-            'videos':      video_count,
-            'photos':      photo_count,
-            'thumbnail':   ident.thumbnail_url,
-        })
-
-    return Response(results)
+    return Response([
+        {'id': i.pk, 'name': i.name, 'is_auto': i.is_auto_named}
+        for i in identities
+    ])
 
 
 @api_view(['DELETE'])
@@ -4609,6 +4719,55 @@ def photo_library_page(request):
         'current_sort': sort,
         'current_tab':  tab,
     })
+
+
+@login_required
+def photo_map_page(request):
+    """Interactive map view of all geotagged photos using Leaflet + MarkerCluster."""
+    # Pass user's channels for the filter dropdown
+    channels = list(Channel.objects.filter(
+        Q(owner=request.user) | Q(editors=request.user)
+    ).distinct().order_by('name'))
+    return render(request, 'videos/photo_map.html', {
+        'channels': channels,
+    })
+
+
+@login_required
+def photo_map_markers(request):
+    """JSON: all geotagged photos with pre-computed decimal lat/lng for Leaflet.
+    Returns only photos that have valid GPSInfo in exif_data.
+    Optional filter: ?channel=<slug>
+    """
+    qs = Photo.objects.filter(
+        visibility=Photo.VISIBILITY_PUBLIC,
+        status=Photo.STATUS_READY,
+        is_archived=False,
+        exif_data__has_key='GPSInfo',
+    ).only('id', 'title', 'thumbnail', 'exif_data', 'taken_at')
+
+    ch_slug = request.GET.get('channel', '').strip()
+    if ch_slug:
+        qs = qs.filter(channel__slug=ch_slug)
+
+    markers = []
+    for p in qs:
+        gps = (p.exif_data or {}).get('GPSInfo', {})
+        lat = _dms_to_decimal(gps.get('GPSLatitude'),  gps.get('GPSLatitudeRef',  'N'))
+        lng = _dms_to_decimal(gps.get('GPSLongitude'), gps.get('GPSLongitudeRef', 'E'))
+        if lat is None or lng is None:
+            continue
+        thumb_url = p.thumbnail.url if p.thumbnail else None
+        markers.append({
+            'id':        str(p.id),
+            'title':     p.title or 'Untitled',
+            'lat':       lat,
+            'lng':       lng,
+            'thumb':     thumb_url,
+            'taken_at':  p.taken_at.isoformat() if p.taken_at else None,
+        })
+
+    return JsonResponse({'markers': markers, 'total': len(markers)})
 
 
 @editor_required

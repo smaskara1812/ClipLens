@@ -30,6 +30,13 @@
     </svg>
     Photos
   </a>
+  <a href="{% url 'photo_map' %}" class="sidebar-item {% if url_name == 'photo_map' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+      <circle cx="12" cy="10" r="3"/>
+    </svg>
+    Photo Map
+  </a>
   <a href="{% url 'albums' %}" class="sidebar-item {% if url_name == 'albums' or url_name == 'album_detail' or url_name == 'album_shared' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>

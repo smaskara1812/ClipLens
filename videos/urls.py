@@ -146,17 +146,21 @@ urlpatterns = [
 
     # ── Photos (DAM) — pages ──
     path('photos/',                          views.photo_library_page,   name='photo_library'),
+    path('photos/map/',                      views.photo_map_page,       name='photo_map'),
     path('photos/duplicates/',               views.photo_duplicates_page, name='photo_duplicates'),
     path('photos/upload/',                   views.photo_upload_page,    name='photo_upload'),
     path('photos/<uuid:photo_id>/',          views.photo_detail_page,    name='photo_detail'),
 
     # ── Photos (DAM) — API ──
-    path('api/photos/',                         views.photo_list),
-    path('api/photos/upload/',                  views.photo_upload),
-    path('api/photos/bulk/',                    views.photo_bulk),
-    path('api/photos/<uuid:photo_id>/',         views.photo_detail_api),
-    path('api/photos/<uuid:photo_id>/status/',   views.photo_status),
-    path('api/photos/<uuid:photo_id>/archive/',  views.photo_toggle_archive),
+    path('api/photos/',                             views.photo_list),
+    path('api/photos/map-markers/',                 views.photo_map_markers),
+    path('api/photos/upload/',                      views.photo_upload),
+    path('api/photos/bulk/',                        views.photo_bulk),
+    path('api/photos/<uuid:photo_id>/',                                    views.photo_detail_api),
+    path('api/photos/<uuid:photo_id>/status/',                             views.photo_status),
+    path('api/photos/<uuid:photo_id>/archive/',                            views.photo_toggle_archive),
+    path('api/photos/<uuid:photo_id>/faces/',                              views.photo_faces_list),
+    path('api/photos/<uuid:photo_id>/faces/<int:identity_id>/remove/',     views.photo_face_remove),
 
     # ── Albums — pages ──
     path('albums/',                              views.albums_page,        name='albums'),
