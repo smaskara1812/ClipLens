@@ -112,6 +112,13 @@
     </svg>
     Analytics
   </a>
+</div>
+<div class="sidebar-divider"></div>
+{% endif %}
+
+<!-- Intelligence — visible to all authenticated users -->
+<div class="sidebar-section">
+  <div class="sidebar-heading">Intelligence</div>
   <a href="{% url 'faces' %}" class="sidebar-item {% if url_name == 'faces' or url_name == 'face_identity' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.418 4.03-8 9-8s9 3.582 9 8"/>
@@ -129,7 +136,6 @@
   </a>
 </div>
 <div class="sidebar-divider"></div>
-{% endif %}
 
 {% if is_editor %}
 <div class="sidebar-section">

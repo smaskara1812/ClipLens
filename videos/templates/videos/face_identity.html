@@ -509,7 +509,7 @@
     <button class="fi-confirm-all-btn" onclick="confirmAll()">✓ Confirm all unreviewed</button>
     {% endif %}
   </div>
-  {% if not can_edit %}
+  {% if not can_edit and is_editor %}
   <div style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-muted);margin-bottom:20px;">
     You don't have a channel yet — <a href="{% url 'setup_channel' %}" style="color:var(--accent)">create one</a> to manage face identities.
   </div>

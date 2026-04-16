@@ -662,6 +662,13 @@
     </div>
     {% endif %}
 
+    {% if request.GET.q and not request.user.is_authenticated %}
+    <div style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;color:var(--text-muted);margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span><a href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}" style="color:var(--accent);font-weight:600;">Sign in</a> to search inside videos — speech, scenes, people, chapters and photos.</span>
+    </div>
+    {% endif %}
+
     <!-- Search result tabs -->
     <div class="search-tabs">
       <button class="search-tab active" onclick="switchTab('all', this)">All</button>

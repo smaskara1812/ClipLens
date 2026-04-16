@@ -3287,76 +3287,6 @@
     } else { showToast('error', 'Failed to remove subtitle'); }
   }
 
-  // ── Face Recognition (public — available to all users) ──────────────────────
-
-  async function toggleFaces() {
-    const panel = document.getElementById('faceIdentitiesPanel');
-    const btn   = document.getElementById('facesToggleBtn');
-    if (panel.style.display === 'none') {
-      panel.style.display = 'block';
-      btn.textContent = 'Hide';
-      if (!panel._loaded) await loadFaces();
-    } else {
-      panel.style.display = 'none';
-      btn.textContent = 'Show';
-    }
-  }
-
-  async function loadFaces() {
-    const panel = document.getElementById('faceIdentitiesPanel');
-    panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0;">Loading…</div>';
-    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/faces/`, { credentials: 'include' });
-    if (!res.ok) { panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load faces.</div>'; return; }
-    const faces = await res.json();
-    if (!faces.length) {
-      panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No faces detected yet.</div>';
-      return;
-    }
-    panel.innerHTML = '';
-    faces.forEach(identity => {
-      const card = document.createElement('div');
-      card.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);';
-      const thumb = identity.thumbnail_url
-        ? `<img src="${identity.thumbnail_url}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">`
-        : `<div style="width:44px;height:44px;border-radius:50%;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;">👤</div>`;
-      const appearances = identity.appearances.slice(0, 5).map(t => {
-        const m = Math.floor(t/60), s = Math.floor(t%60);
-        return `<span onclick="seekTo(${t})" style="cursor:pointer;font-size:10px;background:var(--bg-elevated);border-radius:4px;padding:2px 5px;">${m}:${String(s).padStart(2,'0')}</span>`;
-      }).join(' ');
-      // Count distinct appearance segments: a new segment starts when gap > 1.5× interval
-      const allTs = identity.appearances;
-      let appearanceCount = allTs.length > 0 ? 1 : 0;
-      for (let i = 1; i < allTs.length; i++) {
-        if (allTs[i] - allTs[i-1] > FRAME_INTERVAL * 1.5) appearanceCount++;
-      }
-      const ownerControls = IS_OWNER ? `
-        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
-          <button class="btn btn-ghost btn-sm" onclick="tagFace(${identity.id})" style="font-size:11px;padding:3px 8px;">Tag</button>
-          <button class="btn btn-ghost btn-sm" onclick="mergeFace(${identity.id})" style="font-size:11px;padding:3px 8px;">Merge</button>
-          <button class="btn btn-ghost btn-sm" onclick="removeFace(${identity.id}, this)" style="font-size:11px;padding:3px 8px;color:var(--danger,#ef4444);">Remove</button>
-        </div>` : '';
-      card.innerHTML = `
-        ${thumb}
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-            <span id="fname-${identity.id}" style="font-size:13px;font-weight:500;">${identity.name}</span>
-            ${identity.is_auto_named ? '<span style="font-size:10px;color:var(--text-muted);background:var(--bg-elevated);border-radius:3px;padding:1px 5px;">untagged</span>' : ''}
-          </div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;">${appearances}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${appearanceCount} appearance${appearanceCount !== 1 ? 's' : ''} · ~${identity.face_count * FRAME_INTERVAL}s on screen</div>
-        </div>
-        ${ownerControls}`;
-      panel.appendChild(card);
-    });
-    panel._faces = faces;
-    panel._loaded = true;
-  }
-
-  async function seekTo(t) {
-    const video = document.getElementById('videoEl');
-    if (video) { video.currentTime = t; video.play(); }
-  }
-
   async function tagFace(identityId) {
     const name = prompt('Enter name for this person:');
     if (!name || !name.trim()) return;
@@ -3410,53 +3340,6 @@
       loadFaces();
     } else {
       showToast('error', 'Merge failed');
-    }
-  }
-
-  // ── Speakers in this Video ─────────────────────────────────────────────────
-  async function toggleSpeakers() {
-    const panel = document.getElementById('speakersPanel');
-    const btn   = document.getElementById('speakersToggleBtn');
-    if (panel.style.display === 'none') {
-      panel.style.display = 'block';
-      btn.textContent = 'Hide';
-      if (!panel._loaded) await loadSpeakers();
-    } else {
-      panel.style.display = 'none';
-      btn.textContent = 'Show';
-    }
-  }
-
-  async function loadSpeakers() {
-    const panel = document.getElementById('speakersPanel');
-    panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0;">Loading…</div>';
-    try {
-      const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/speakers/`, { credentials: 'include' });
-      if (!res.ok) { panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No speaker data — run diarization first.</div>'; return; }
-      const speakers = await res.json();
-      if (!speakers.length) {
-        panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No speakers detected yet. Run diarization to identify speakers in this video.</div>';
-        panel._loaded = true; return;
-      }
-      const ROLE_COLORS = { speaker: 'var(--accent)', narrator: 'var(--green)', background: 'var(--text-muted)' };
-      panel.innerHTML = speakers.map(s => `
-        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--surface-3);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:var(--text-muted);">
-            ${s.face_thumbnail ? `<img src="${s.face_thumbnail}" style="width:100%;height:100%;object-fit:cover;" />` : (s.name||'?').charAt(0).toUpperCase()}
-          </div>
-          <div style="flex:1;min-width:0;">
-            <a href="/speakers/${s.id}/" style="font-size:13px;font-weight:700;color:var(--text);text-decoration:none;">${s.name}</a>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:1px;">
-              <span style="color:${ROLE_COLORS[s.role] || 'var(--text-muted)'};font-weight:600;">${s.role}</span>
-              <span style="margin:0 4px;">·</span>${s.segment_count} segment${s.segment_count !== 1 ? 's' : ''}
-              ${s.face_name ? `<span style="margin:0 4px;">·</span><span style="color:var(--green);">↔ ${s.face_name}</span>` : ''}
-            </div>
-          </div>
-        </div>
-      `).join('');
-      panel._loaded = true;
-    } catch(e) {
-      panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load speakers.</div>';
     }
   }
 
@@ -3536,6 +3419,121 @@
     }
   }
   {% endif %}
+
+  // ── People & Speakers panels (available to all users) ────────────────────────
+
+  async function toggleFaces() {
+    const panel = document.getElementById('faceIdentitiesPanel');
+    const btn   = document.getElementById('facesToggleBtn');
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
+      btn.textContent = 'Hide';
+      if (!panel._loaded) await loadFaces();
+    } else {
+      panel.style.display = 'none';
+      btn.textContent = 'Show';
+    }
+  }
+
+  async function loadFaces() {
+    const panel = document.getElementById('faceIdentitiesPanel');
+    panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0;">Loading…</div>';
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/faces/`, { credentials: 'include' });
+    if (!res.ok) { panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load faces.</div>'; return; }
+    const faces = await res.json();
+    if (!faces.length) {
+      panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No faces detected yet.</div>';
+      return;
+    }
+    panel.innerHTML = '';
+    faces.forEach(identity => {
+      const card = document.createElement('div');
+      card.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);';
+      const thumb = identity.thumbnail_url
+        ? `<img src="${identity.thumbnail_url}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">`
+        : `<div style="width:44px;height:44px;border-radius:50%;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;">👤</div>`;
+      const appearances = identity.appearances.slice(0, 5).map(t => {
+        const m = Math.floor(t/60), s = Math.floor(t%60);
+        return `<span onclick="seekTo(${t})" style="cursor:pointer;font-size:10px;background:var(--bg-elevated);border-radius:4px;padding:2px 5px;">${m}:${String(s).padStart(2,'0')}</span>`;
+      }).join(' ');
+      const allTs = identity.appearances;
+      let appearanceCount = allTs.length > 0 ? 1 : 0;
+      for (let i = 1; i < allTs.length; i++) {
+        if (allTs[i] - allTs[i-1] > FRAME_INTERVAL * 1.5) appearanceCount++;
+      }
+      const ownerControls = IS_OWNER ? `
+        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
+          <button class="btn btn-ghost btn-sm" onclick="tagFace(${identity.id})" style="font-size:11px;padding:3px 8px;">Tag</button>
+          <button class="btn btn-ghost btn-sm" onclick="mergeFace(${identity.id})" style="font-size:11px;padding:3px 8px;">Merge</button>
+          <button class="btn btn-ghost btn-sm" onclick="removeFace(${identity.id}, this)" style="font-size:11px;padding:3px 8px;color:var(--danger,#ef4444);">Remove</button>
+        </div>` : '';
+      card.innerHTML = `
+        ${thumb}
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <span id="fname-${identity.id}" style="font-size:13px;font-weight:500;">${identity.name}</span>
+            ${identity.is_auto_named ? '<span style="font-size:10px;color:var(--text-muted);background:var(--bg-elevated);border-radius:3px;padding:1px 5px;">untagged</span>' : ''}
+          </div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">${appearances}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${appearanceCount} appearance${appearanceCount !== 1 ? 's' : ''} · ~${identity.face_count * FRAME_INTERVAL}s on screen</div>
+        </div>
+        ${ownerControls}`;
+      panel.appendChild(card);
+    });
+    panel._faces = faces;
+    panel._loaded = true;
+  }
+
+  function seekTo(t) {
+    const video = document.getElementById('videoEl');
+    if (video) { video.currentTime = t; video.play().catch(() => {}); }
+  }
+
+  async function toggleSpeakers() {
+    const panel = document.getElementById('speakersPanel');
+    const btn   = document.getElementById('speakersToggleBtn');
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
+      btn.textContent = 'Hide';
+      if (!panel._loaded) await loadSpeakers();
+    } else {
+      panel.style.display = 'none';
+      btn.textContent = 'Show';
+    }
+  }
+
+  async function loadSpeakers() {
+    const panel = document.getElementById('speakersPanel');
+    panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0;">Loading…</div>';
+    try {
+      const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/speakers/`, { credentials: 'include' });
+      if (!res.ok) { panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No speaker data — run diarization first.</div>'; return; }
+      const speakers = await res.json();
+      if (!speakers.length) {
+        panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No speakers detected yet. Run diarization to identify speakers in this video.</div>';
+        panel._loaded = true; return;
+      }
+      const ROLE_COLORS = { speaker: 'var(--accent)', narrator: 'var(--green)', background: 'var(--text-muted)' };
+      panel.innerHTML = speakers.map(s => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--surface-3);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:var(--text-muted);">
+            ${s.face_thumbnail ? `<img src="${s.face_thumbnail}" style="width:100%;height:100%;object-fit:cover;" />` : (s.name||'?').charAt(0).toUpperCase()}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <a href="/speakers/${s.id}/" style="font-size:13px;font-weight:700;color:var(--text);text-decoration:none;">${s.name}</a>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:1px;">
+              <span style="color:${ROLE_COLORS[s.role] || 'var(--text-muted)'};font-weight:600;">${s.role}</span>
+              <span style="margin:0 4px;">·</span>${s.segment_count} segment${s.segment_count !== 1 ? 's' : ''}
+              ${s.face_name ? `<span style="margin:0 4px;">·</span><span style="color:var(--green);">↔ ${s.face_name}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `).join('');
+      panel._loaded = true;
+    } catch(e) {
+      panel.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load speakers.</div>';
+    }
+  }
 
   // ── Subtitle (CC) picker ──────────────────────────────────────────────────────
   function toggleCcMenu(e) {

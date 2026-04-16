@@ -278,9 +278,11 @@
       <div class="speaker-card-body">
         <div class="speaker-card-name-row">
           <span class="speaker-card-name" title="{{ spk.name }}">{{ spk.name }}</span>
+          {% if is_editor %}
           <button class="card-menu-btn" onclick="openSpeakerMenu(event, {{ spk.id }}, '{{ spk.name|escapejs }}')" title="Actions">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
           </button>
+          {% endif %}
         </div>
         <div class="speaker-card-meta">
           <span>{{ spk.video_count }} video{{ spk.video_count|pluralize }}</span>

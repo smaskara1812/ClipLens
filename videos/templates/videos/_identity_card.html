@@ -53,7 +53,8 @@ JS functions openCardMenu must be defined in the parent template (faces.html).
   <div class="identity-card-body">
     <div class="identity-card-name-row">
       <div class="identity-card-name">{{ row.identity.name }}</div>
-      <!-- Always show actions — photo-only faces need rename/merge too -->
+      {% if is_editor %}
+      <!-- Actions menu — editors only -->
       <button
         class="card-menu-btn"
         onclick="openCardMenu(event, {{ row.identity.pk }}, '{{ row.identity.name|escapejs }}')"
@@ -63,6 +64,7 @@ JS functions openCardMenu must be defined in the parent template (faces.html).
           <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
         </svg>
       </button>
+      {% endif %}
     </div>
     <div class="identity-card-meta">
       <span>{{ row.total }} detection{{ row.total|pluralize }}</span>

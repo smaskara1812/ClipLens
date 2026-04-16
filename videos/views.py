@@ -280,13 +280,27 @@ def _is_superadmin(user) -> bool:
 
 
 def _user_channels(user):
-    """All channels the user can manage — primary owner OR co-editor."""
+    """
+    Returns channels the user can access for content scoping.
+
+    - Editors / superadmins: only channels they own or co-edit (existing behaviour).
+    - Viewers (authenticated non-editors): ALL channels, so they can browse
+      People and Speakers across the full library (all-read-access role).
+    - Unauthenticated: empty queryset.
+    """
     if not user or not user.is_authenticated:
         return Channel.objects.none()
     from django.db.models import Q
-    return Channel.objects.filter(
-        Q(owner=user) | Q(editors=user)
-    ).distinct().order_by('name')
+    try:
+        is_editor = user.profile.is_editor
+    except Exception:
+        is_editor = user.is_superuser
+    if is_editor:
+        return Channel.objects.filter(
+            Q(owner=user) | Q(editors=user)
+        ).distinct().order_by('name')
+    # Viewer: all read access — scope to every channel
+    return Channel.objects.all().order_by('name')
 
 
 def _user_channel(user):
@@ -536,7 +550,7 @@ def player_page(request):
 
     # ── Chapter name search ───────────────────────────────────────────────────
     chapter_matches = []
-    if q:
+    if q and request.user.is_authenticated:
         _ch_qs = VideoChapter.objects.filter(
             video__visibility=Video.VISIBILITY_PUBLIC,
             video__status=Video.STATUS_READY,
@@ -579,7 +593,7 @@ def player_page(request):
 
     # ── In-video speech search ────────────────────────────────────────────────
     segment_matches = []
-    if q:
+    if q and request.user.is_authenticated:
         _seg_qs = VideoSegment.objects.filter(
             video__visibility=Video.VISIBILITY_PUBLIC,
             video__status=Video.STATUS_READY,
@@ -637,7 +651,7 @@ def player_page(request):
     # ── In-video visual/scene search ─────────────────────────────────────────
     scene_matches  = []   # YOLO labels + descriptions + CLIP
     people_matches = []   # Face identity results (separate tab)
-    if q:
+    if q and request.user.is_authenticated:
         seen_scene_videos  = {}
         seen_people        = {}   # identity_id → {identity, videos: {vid_id: [moments]}}
 
@@ -970,7 +984,7 @@ def player_page(request):
 
     # ── Photo search ─────────────────────────────────────────────────────────
     photo_matches = []
-    if q:
+    if q and request.user.is_authenticated:
         _photo_qs = Photo.objects.filter(
             visibility=Photo.VISIBILITY_PUBLIC, status=Photo.STATUS_READY,
         ).select_related('channel')
@@ -4002,7 +4016,11 @@ def face_identity_page(request, identity_id):
         if not appears_in_mine:
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied
-        can_edit = True
+        # Viewers can browse but cannot edit identities — only editors/admins can modify
+        try:
+            can_edit = request.user.profile.is_editor
+        except Exception:
+            can_edit = request.user.is_superuser
         visible_faces = (
             DetectedFace.objects
             .filter(identity=identity)

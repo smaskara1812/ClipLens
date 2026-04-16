@@ -288,10 +288,12 @@
       <div class="faces-subtitle">{{ total_count }} identit{{ total_count|pluralize:"y,ies" }}{% if search_query %} matching "{{ search_query }}"{% else %} detected across your videos and photos{% endif %}</div>
     </div>
     <div class="faces-header-actions">
+      {% if is_editor %}
       <button class="bulk-select-btn" id="bulkSelectBtn" onclick="toggleSelectMode()" title="Select people to bulk merge or delete">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="5" width="4" height="4" rx="1"/><line x1="10" y1="7" x2="21" y2="7"/><rect x="3" y="12" width="4" height="4" rx="1"/><line x1="10" y1="14" x2="21" y2="14"/><rect x="3" y="19" width="4" height="4" rx="1"/><line x1="10" y1="21" x2="21" y2="21"/></svg>
         Select
       </button>
+      {% endif %}
       <form method="get" id="facesSearchForm" style="display:flex;align-items:center;gap:8px;">
         <input type="hidden" name="page" value="1" />
         <input type="hidden" name="page_size" value="{{ page_size }}" />
@@ -328,7 +330,7 @@
   </div>
   {% endif %}
 
-  {% if orphaned_data %}
+  {% if orphaned_data and is_editor %}
   <div class="orphan-banner" id="orphanBanner">
     <span>
       <strong>{{ orphaned_data|length }} orphaned identit{{ orphaned_data|length|pluralize:"y,ies" }}</strong>
