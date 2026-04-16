@@ -2310,6 +2310,7 @@ def record_view(request, video_id):
 
 
 @api_view(['GET'])
+@api_login_required
 def video_status(request, video_id):
     try:
         video = Video.objects.get(id=video_id)
@@ -2345,6 +2346,13 @@ def reprocess_video(request, video_id):
 
 @api_view(['GET'])
 def stream_playlist(request, video_id):
+    """
+    GET /api/videos/<id>/stream/
+    Serves the HLS master playlist with all relative URLs rewritten to absolute
+    /media/ paths so the manifest works regardless of which base URL it is loaded from
+    (direct /media/, embedded iframe, or this API endpoint).
+    Intentionally public — no auth — required for iframe embedding and CORS players.
+    """
     try:
         video = Video.objects.get(id=video_id)
     except Video.DoesNotExist:
@@ -2357,8 +2365,26 @@ def stream_playlist(request, video_id):
     if not playlist_path.exists():
         raise Http404
 
-    response = FileResponse(open(playlist_path, 'rb'), content_type='application/vnd.apple.mpegurl')
+    # The master.m3u8 contains relative paths like "720p/playlist.m3u8".
+    # When served from this API URL the browser resolves them relative to
+    # /api/videos/<id>/ — which 404s.  Rewrite every non-comment, non-empty
+    # line that doesn't start with '#' to an absolute /media/ URL so the
+    # manifest works from any base URL (embed, CORS player, this endpoint).
+    hls_dir_media = settings.MEDIA_URL + str(Path(video.hls_path).parent) + '/'
+    lines = playlist_path.read_text(encoding='utf-8').splitlines()
+    rewritten = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#') and not stripped.startswith('http'):
+            # Relative segment/playlist path — make it absolute
+            line = hls_dir_media + stripped
+        rewritten.append(line)
+
+    content = '\n'.join(rewritten)
+    from django.http import HttpResponse
+    response = HttpResponse(content, content_type='application/vnd.apple.mpegurl')
     response['Access-Control-Allow-Origin'] = '*'
+    response['Cache-Control'] = 'no-cache'
     return response
 
 
@@ -3602,6 +3628,7 @@ def audio_track_extract(request, video_id):
 # ─── Video Frames API ────────────────────────────────────────────────────────
 
 @api_view(['GET'])
+@api_login_required
 def video_frames_list(request, video_id):
     """GET /api/videos/<id>/frames/ — list all VideoFrame records for a video."""
     video = get_object_or_404(Video, id=video_id)
@@ -3667,6 +3694,7 @@ def run_diarization(request, video_id):
 # ─── Face Recognition API ────────────────────────────────────────────────────
 
 @api_view(['GET'])
+@api_login_required
 def video_faces_list(request, video_id):
     """
     GET /api/videos/<id>/faces/
@@ -5072,6 +5100,7 @@ def photo_toggle_archive(request, photo_id):
 
 
 @api_view(['GET'])
+@api_login_required
 def photo_status(request, photo_id):
     """Poll processing status — used by the upload page."""
     try:
@@ -5891,6 +5920,7 @@ def speaker_list_api(request):
 
 
 @api_view(['GET'])
+@api_login_required
 def video_speakers_list(request, video_id):
     """
     GET /api/videos/<id>/speakers/
