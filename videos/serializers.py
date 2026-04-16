@@ -382,7 +382,7 @@ class FaceIdentitySerializer(serializers.ModelSerializer):
         vid = self.context.get('video_id')
         if vid:
             qs = qs.filter(video_id=vid)
-        return qs.count()
+        return qs.exclude(status=DetectedFace.STATUS_REJECTED).count()
 
     def get_appearances(self, obj):
         """Sorted list of timestamps where this identity appears (scoped to video)."""
@@ -390,7 +390,7 @@ class FaceIdentitySerializer(serializers.ModelSerializer):
         vid = self.context.get('video_id')
         if vid:
             qs = qs.filter(video_id=vid)
-        return sorted(set(qs.values_list('timestamp', flat=True)))
+        return sorted(set(qs.exclude(status=DetectedFace.STATUS_REJECTED).values_list('timestamp', flat=True)))
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────

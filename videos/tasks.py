@@ -361,6 +361,46 @@ def _cosine_sim(a, b):
     return float(np.dot(a, b) / (na * nb))
 
 
+def _recalc_ref_embedding(identity):
+    """
+    Recalculate FaceIdentity.ref_embedding from its DetectedFace rows,
+    excluding rejected faces and weighting confirmed faces 2× vs unreviewed 1×.
+    Saves the result to the identity and returns the new numpy array, or None
+    if no eligible faces exist.
+    """
+    from .models import DetectedFace as _DF
+    rows = list(
+        _DF.objects
+        .filter(identity=identity)
+        .exclude(status=_DF.STATUS_REJECTED)
+        .exclude(embedding='')
+        .values('status', 'embedding')
+    )
+    if not rows:
+        return None
+    embeddings = []
+    weights = []
+    for row in rows:
+        try:
+            emb = np.array(json.loads(row['embedding']), dtype=np.float32)
+            w = 2.0 if row['status'] == _DF.STATUS_CONFIRMED else 1.0
+            embeddings.append(emb)
+            weights.append(w)
+        except Exception:
+            continue
+    if not embeddings:
+        return None
+    weights = np.array(weights, dtype=np.float32)
+    stacked = np.stack(embeddings, axis=0)
+    new_emb = np.average(stacked, axis=0, weights=weights)
+    norm = np.linalg.norm(new_emb)
+    if norm > 1e-8:
+        new_emb = new_emb / norm
+    identity.ref_embedding = json.dumps(new_emb.tolist())
+    identity.save(update_fields=['ref_embedding'])
+    return new_emb
+
+
 def _cluster_embeddings(embeddings, threshold=0.35):
     """
     Greedy clustering of face embeddings by cosine similarity.
@@ -847,10 +887,7 @@ def analyze_video_frames_task(self, video_id: str):
                     f'"{matched.name}" (sim={sim:.3f}) for {video_id}'
                 )
                 try:
-                    old_emb = np.array(json.loads(matched.ref_embedding), dtype=np.float32)
-                    new_emb = (old_emb + cluster_mean) / 2.0
-                    matched.ref_embedding = json.dumps(new_emb.tolist())
-                    matched.save(update_fields=['ref_embedding'])
+                    _recalc_ref_embedding(matched)
                 except Exception:
                     pass
                 identities.append(matched)
@@ -1603,13 +1640,9 @@ def analyze_photo_task(self, photo_id: str):
                     auto_identities.append(matched_identity)
                     auto_embs.append(emb)
                 else:
-                    # Update running average embedding
+                    # Recalculate embedding weighted by review status
                     try:
-                        old = np.array(json.loads(matched_identity.ref_embedding), dtype=np.float32)
-                        updated = (old + emb) / 2.0
-                        updated = updated / (np.linalg.norm(updated) + 1e-8)
-                        matched_identity.ref_embedding = json.dumps(updated.tolist())
-                        matched_identity.save(update_fields=['ref_embedding'])
+                        _recalc_ref_embedding(matched_identity)
                     except Exception:
                         pass
 

@@ -159,15 +159,32 @@
     <p>Real-time on-disk usage across all media assets. Sizes are read directly from the filesystem.</p>
   </div>
 
-  {% with total=grand.total %}
-
-  <!-- ── Summary cards ──────────────────────────────────────────────────── -->
+  <!-- ── Combined summary cards ───────────────────────────────────────── -->
   <div class="sd-cards">
-    <div class="sd-card">
+    <div class="sd-card" style="border-color:var(--accent)">
       <div class="sd-card-label">Total used</div>
+      <div class="sd-card-value">{{ combined_total|filesizeformat }}</div>
+      <div class="sd-card-sub">Videos + photos</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Videos</div>
       <div class="sd-card-value">{{ grand.total|filesizeformat }}</div>
       <div class="sd-card-sub">{{ grand.count }} video{{ grand.count|pluralize }}</div>
     </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Photos</div>
+      <div class="sd-card-value">{{ photo_grand.total|filesizeformat }}</div>
+      <div class="sd-card-sub">{{ photo_grand.count }} photo{{ photo_grand.count|pluralize }}</div>
+    </div>
+  </div>
+
+  <!-- ── Videos section ────────────────────────────────────────────────── -->
+  <div style="font-size:14px;font-weight:800;margin:24px 0 12px;">📹 Videos</div>
+
+  {% with total=grand.total %}
+
+  <!-- Summary cards -->
+  <div class="sd-cards">
     <div class="sd-card">
       <div class="sd-card-label">Originals</div>
       <div class="sd-card-value">{{ grand.original|filesizeformat }}</div>
@@ -195,10 +212,10 @@
     </div>
   </div>
 
-  <!-- ── Stacked bar ────────────────────────────────────────────────────── -->
+  <!-- Stacked bar -->
   {% if total > 0 %}
   <div class="sd-bar-wrap">
-    <div class="sd-bar-title">Breakdown by asset type</div>
+    <div class="sd-bar-title">Video breakdown by asset type</div>
     <div class="sd-bar" title="Total: {{ grand.total|filesizeformat }}">
       {% if grand.hls %}
       <div class="sd-bar-seg" style="width:{% widthratio grand.hls total 100 %}%;background:#6366f1;" title="HLS: {{ grand.hls|filesizeformat }}"></div>
@@ -321,6 +338,112 @@
     <div style="text-align:center;padding:40px;color:var(--text-muted);">No videos found.</div>
     {% endfor %}
   </div>
+
+  <!-- ── Photos section ────────────────────────────────────────────────── -->
+  {% if photo_grand.count %}
+  <div style="font-size:14px;font-weight:800;margin:36px 0 12px;">🖼 Photos</div>
+
+  <!-- Photo summary cards -->
+  <div class="sd-cards" style="margin-bottom:16px;">
+    <div class="sd-card">
+      <div class="sd-card-label">Originals</div>
+      <div class="sd-card-value">{{ photo_grand.file|filesizeformat }}</div>
+      <div class="sd-card-sub">Source files</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Thumbnails</div>
+      <div class="sd-card-value">{{ photo_grand.thumbnail|filesizeformat }}</div>
+      <div class="sd-card-sub">Resized previews</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Face crops</div>
+      <div class="sd-card-value">{{ photo_grand.faces|filesizeformat }}</div>
+      <div class="sd-card-sub">Detection crops</div>
+    </div>
+  </div>
+
+  <!-- Photo stacked bar -->
+  {% with photo_total=photo_grand.total %}
+  {% if photo_total > 0 %}
+  <div class="sd-bar-wrap">
+    <div class="sd-bar-title">Photo breakdown by asset type</div>
+    <div class="sd-bar" title="Total: {{ photo_total|filesizeformat }}">
+      {% if photo_grand.file %}
+      <div class="sd-bar-seg" style="width:{% widthratio photo_grand.file photo_total 100 %}%;background:#f59e0b;" title="Originals: {{ photo_grand.file|filesizeformat }}"></div>
+      {% endif %}
+      {% if photo_grand.thumbnail %}
+      <div class="sd-bar-seg" style="width:{% widthratio photo_grand.thumbnail photo_total 100 %}%;background:#84cc16;" title="Thumbnails: {{ photo_grand.thumbnail|filesizeformat }}"></div>
+      {% endif %}
+      {% if photo_grand.faces %}
+      <div class="sd-bar-seg" style="width:{% widthratio photo_grand.faces photo_total 100 %}%;background:#ec4899;" title="Faces: {{ photo_grand.faces|filesizeformat }}"></div>
+      {% endif %}
+    </div>
+    <div class="sd-bar-legend">
+      <span class="sd-bar-dot"><span style="background:#f59e0b"></span>Originals ({{ photo_grand.file|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#84cc16"></span>Thumbnails ({{ photo_grand.thumbnail|filesizeformat }})</span>
+      <span class="sd-bar-dot"><span style="background:#ec4899"></span>Face crops ({{ photo_grand.faces|filesizeformat }})</span>
+    </div>
+  </div>
+  {% endif %}
+  {% endwith %}
+
+  <!-- Photo table (collapsible) -->
+  <div class="sd-ch" id="ph-all">
+    <div class="sd-ch-bar">
+      {% if photo_grand.file      %}<div style="flex:{{ photo_grand.file }};background:#f59e0b;"></div>{% endif %}
+      {% if photo_grand.thumbnail %}<div style="flex:{{ photo_grand.thumbnail }};background:#84cc16;"></div>{% endif %}
+      {% if photo_grand.faces     %}<div style="flex:{{ photo_grand.faces }};background:#ec4899;"></div>{% endif %}
+    </div>
+    <div class="sd-ch-head" onclick="toggleChannel('ph-all')">
+      <div class="sd-ch-name">All Photos</div>
+      <div class="sd-ch-meta">{{ photo_grand.count }} photo{{ photo_grand.count|pluralize }}</div>
+      <div class="sd-ch-total">{{ photo_grand.total|filesizeformat }}</div>
+      <div class="sd-ch-arrow">▶</div>
+    </div>
+    <div class="sd-table-wrap">
+      <table class="sd-table">
+        <thead>
+          <tr>
+            <th>Photo</th>
+            <th>Channel</th>
+            <th>Original</th>
+            <th>Thumbnail</th>
+            <th>Faces</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in photo_rows %}
+          <tr>
+            <td>
+              <a class="sd-video-title" href="{% url 'photo_detail' row.photo.id %}" title="{{ row.photo.title }}">
+                {{ row.photo.title|default:"Untitled"|truncatechars:45 }}
+              </a>
+              <span class="sd-video-status {% if row.photo.is_archived %}pending{% else %}ready{% endif %}">
+                {% if row.photo.is_archived %}archived{% else %}{{ row.photo.status }}{% endif %}
+              </span>
+            </td>
+            <td style="text-align:left;color:var(--text-muted);">{{ row.channel_name }}</td>
+            <td {% if not row.sizes.file %}class="sd-zero"{% endif %}>{{ row.sizes.file|filesizeformat }}</td>
+            <td {% if not row.sizes.thumbnail %}class="sd-zero"{% endif %}>{{ row.sizes.thumbnail|filesizeformat }}</td>
+            <td {% if not row.sizes.faces %}class="sd-zero"{% endif %}>{{ row.sizes.faces|filesizeformat }}</td>
+            <td><strong>{{ row.sizes.total|filesizeformat }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="sd-total-row">
+            <td colspan="2">Total</td>
+            <td>{{ photo_grand.file|filesizeformat }}</td>
+            <td>{{ photo_grand.thumbnail|filesizeformat }}</td>
+            <td>{{ photo_grand.faces|filesizeformat }}</td>
+            <td>{{ photo_grand.total|filesizeformat }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 
 </div>
 

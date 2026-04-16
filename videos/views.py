@@ -826,6 +826,7 @@ def player_page(request):
                 video__visibility=Video.VISIBILITY_PUBLIC,
                 video__status=Video.STATUS_READY,
             )
+            .exclude(status=DetectedFace.STATUS_REJECTED)
             .select_related('video', 'video__channel', 'identity')
         )
         if _can_use_fuzzy_search():
@@ -864,6 +865,7 @@ def player_page(request):
                 photo__visibility=Photo.VISIBILITY_PUBLIC,
                 photo__status=Photo.STATUS_READY,
             )
+            .exclude(status=DetectedFace.STATUS_REJECTED)
             .select_related('photo', 'photo__channel', 'identity')
         )
         if _can_use_fuzzy_search():
@@ -1731,7 +1733,7 @@ def _dms_to_decimal(dms_arr, ref: str):
 
 @superuser_required
 def storage_dashboard_page(request):
-    """Per-video and per-channel disk usage breakdown. Superadmin only."""
+    """Per-video, per-photo, and per-channel disk usage breakdown. Superadmin only."""
     media = Path(settings.MEDIA_ROOT)
 
     videos = (
@@ -1806,17 +1808,47 @@ def storage_dashboard_page(request):
     # Sort channels by total size descending
     channels = sorted(ch_map.items(), key=lambda x: x[1]['total'], reverse=True)
 
+    # ── Photos ───────────────────────────────────────────────────────────────
+    PHOTO_KEYS = ('file', 'thumbnail', 'faces')
+
+    photo_rows  = []
+    photo_grand = {k: 0 for k in PHOTO_KEYS}
+    photo_grand['total'] = 0
+
+    for p in Photo.objects.select_related('channel').order_by('channel__name', '-created_at'):
+        ps = {}
+        ps['file']      = _path_size(p.file.path)      if (p.file      and p.file.name)      else 0
+        ps['thumbnail'] = _path_size(p.thumbnail.path) if (p.thumbnail and p.thumbnail.name) else 0
+        ps['faces']     = _path_size(media / 'faces' / 'photos' / str(p.id))
+        ps['total']     = sum(ps[k] for k in PHOTO_KEYS)
+
+        for k in PHOTO_KEYS:
+            photo_grand[k] += ps[k]
+        photo_grand['total'] += ps['total']
+
+        ch_name = p.channel.name if p.channel else '— Unassigned —'
+        photo_rows.append({'photo': p, 'sizes': ps, 'channel_name': ch_name})
+
+    photo_grand['count'] = len(photo_rows)
+
+    # Combined grand total (videos + photos)
+    combined_total = grand['total'] + photo_grand['total']
+
     # Pre-format sizes for template
     def fmt_row(d):
         return {k: _fmt_bytes(v) if isinstance(v, int) and k not in ('count',) else v
                 for k, v in d.items()}
 
     return render(request, 'videos/storage_dashboard.html', {
-        'rows':        rows,
-        'channels':    channels,
-        'grand':       grand,
-        'asset_keys':  ASSET_KEYS,
-        'fmt_bytes':   _fmt_bytes,   # pass helper to template via context
+        'rows':           rows,
+        'channels':       channels,
+        'grand':          grand,
+        'asset_keys':     ASSET_KEYS,
+        'fmt_bytes':      _fmt_bytes,
+        'photo_rows':     photo_rows,
+        'photo_grand':    photo_grand,
+        'photo_keys':     PHOTO_KEYS,
+        'combined_total': combined_total,
     })
 
 
@@ -3707,6 +3739,7 @@ def video_faces_list(request, video_id):
     identity_ids = (
         DetectedFace.objects
         .filter(video=video)
+        .exclude(status=DetectedFace.STATUS_REJECTED)
         .values_list('identity_id', flat=True)
         .distinct()
     )
@@ -4030,6 +4063,7 @@ def face_identity_page(request, identity_id):
         visible_faces = (
             DetectedFace.objects
             .filter(identity=identity)
+            .exclude(status=DetectedFace.STATUS_REJECTED)
             .exclude(crop_path='')
             .select_related('video', 'photo')
             .order_by('video_id', 'photo_id', 'timestamp')
@@ -4053,6 +4087,7 @@ def face_identity_page(request, identity_id):
             DetectedFace.objects
             .filter(identity=identity)
             .filter(own_face_q)
+            .exclude(status=DetectedFace.STATUS_REJECTED)
             .exclude(crop_path='')
             .select_related('video', 'photo')
             .order_by('video_id', 'photo_id', 'timestamp')
@@ -4273,6 +4308,12 @@ def face_set_status(request, face_id):
 
     face.status = new_status
     face.save(update_fields=['status'])
+    # Recalculate identity embedding now that review status changed
+    try:
+        from .tasks import _recalc_ref_embedding
+        _recalc_ref_embedding(face.identity)
+    except Exception:
+        pass
     return Response({'id': face.pk, 'status': face.status})
 
 
@@ -4346,7 +4387,10 @@ def faces_cleanup_orphans(request):
     POST /api/faces/cleanup-orphans/
     Deletes all FaceIdentity rows that have no DetectedFace rows attached.
     These are ghost identities left over from re-analysis runs.
+    Editor/admin only — this is a global destructive operation.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     result = FaceIdentity.objects.filter(faces__isnull=True).delete()
     deleted_count = result[1].get('videos.FaceIdentity', 0)
     return Response({'deleted': deleted_count})
@@ -4684,6 +4728,10 @@ def photo_library_page(request):
     """Gallery / library view — analogous to player_page for videos."""
     tab = request.GET.get('tab', 'photos')   # 'photos' | 'archive'
 
+    # Archive tab is restricted to editors and admins; redirect viewers to main library
+    if tab == 'archive' and not _is_editor(request.user):
+        tab = 'photos'
+
     base_qs = Photo.objects.filter(visibility=Photo.VISIBILITY_PUBLIC, status=Photo.STATUS_READY)
 
     if tab == 'archive':
@@ -4846,6 +4894,16 @@ def photo_detail_page(request, photo_id):
         from django.contrib.auth.views import redirect_to_login
         return redirect_to_login(request.get_full_path())
 
+    # Archived photos are only visible to editors/admins or the uploader
+    if photo.is_archived:
+        is_uploader = (
+            request.user.is_authenticated
+            and photo.uploaded_by
+            and photo.uploaded_by == request.user.username
+        )
+        if not _is_editor(request.user) and not is_uploader:
+            raise Http404
+
     # Record a view (fire-and-forget style, no race-condition safety needed)
     Photo.objects.filter(id=photo_id).update(views_count=F('views_count') + 1)
 
@@ -4868,6 +4926,9 @@ def photo_list(request):
     ?channel=<slug>          — filter by channel slug
     """
     show_archived = request.query_params.get('archived', '0') == '1'
+    # Archived photos are restricted to editors/admins; non-editors always see is_archived=False
+    if show_archived and not _is_editor(request.user):
+        show_archived = False
     photos = Photo.objects.filter(
         visibility=Photo.VISIBILITY_PUBLIC, status=Photo.STATUS_READY,
         is_archived=show_archived,          # main library hides archived; archive tab shows only archived
@@ -5089,7 +5150,9 @@ def photo_detail_api(request, photo_id):
 @api_view(['POST'])
 @api_login_required
 def photo_toggle_archive(request, photo_id):
-    """POST /api/photos/<id>/archive/ — toggle archived state."""
+    """POST /api/photos/<id>/archive/ — toggle archived state. Editor/admin only."""
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     try:
         photo = Photo.objects.get(id=photo_id)
     except Photo.DoesNotExist:
@@ -5149,9 +5212,10 @@ def search_suggest(request):
     for name in Channel.objects.filter(name__icontains=q).values_list('name', flat=True)[:3]:
         _add(name, 'channel')
 
-    # Face / person names
-    for name in FaceIdentity.objects.filter(name__icontains=q).values_list('name', flat=True)[:3]:
-        _add(name, 'person')
+    # Face / person names — only for authenticated users (names may be private)
+    if request.user.is_authenticated:
+        for name in FaceIdentity.objects.filter(name__icontains=q).values_list('name', flat=True)[:3]:
+            _add(name, 'person')
 
     # Photo titles (if under limit)
     if len(suggestions) < 10:
@@ -5715,7 +5779,10 @@ def speaker_rename(request, speaker_id):
     """
     POST /api/speakers/<id>/rename/
     Body: {"name": "Alice"}
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     name    = request.data.get('name', '').strip()
     if not name:
@@ -5732,7 +5799,10 @@ def speaker_set_role(request, speaker_id):
     """
     POST /api/speakers/<id>/set-role/
     Body: {"role": "narrator"} — one of speaker/narrator/background
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     role    = request.data.get('role', '').strip()
     valid   = {SpeakerIdentity.ROLE_SPEAKER, SpeakerIdentity.ROLE_NARRATOR, SpeakerIdentity.ROLE_BACKGROUND}
@@ -5749,7 +5819,10 @@ def speaker_link_face(request, speaker_id):
     """
     POST /api/speakers/<id>/link-face/
     Body: {"face_identity_id": 42}  or  {"face_identity_id": null} to unlink
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     fi_id   = request.data.get('face_identity_id')
     if fi_id is None:
@@ -5782,7 +5855,10 @@ def speaker_suggestion_accept(request, speaker_id, suggestion_id):
     """
     POST /api/speakers/<id>/suggestions/<suggestion_id>/accept/
     Accept a pending voice→face suggestion and link this speaker to that face.
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     suggestion = get_object_or_404(
         SpeakerFaceSuggestion.objects.select_related('face_identity'),
@@ -5829,7 +5905,10 @@ def speaker_suggestion_reject(request, speaker_id, suggestion_id):
     """
     POST /api/speakers/<id>/suggestions/<suggestion_id>/reject/
     Reject a pending voice→face suggestion.
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     suggestion = get_object_or_404(
         SpeakerFaceSuggestion,
@@ -5851,7 +5930,10 @@ def speaker_merge(request, speaker_id):
     POST /api/speakers/<id>/merge/
     Body: {"into_id": 7}
     Moves all segments from speaker_id → into_id, then deletes speaker_id.
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     into_id = request.data.get('into_id')
     if not into_id:
@@ -5889,7 +5971,10 @@ def speaker_delete(request, speaker_id):
     """
     DELETE /api/speakers/<id>/delete/
     Unlinks segments (sets speaker_identity=NULL) then deletes the identity.
+    Editor/admin only.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
     speaker = get_object_or_404(SpeakerIdentity, id=speaker_id)
     VideoSegment.objects.filter(speaker_identity=speaker).update(speaker_identity=None)
     speaker.delete()

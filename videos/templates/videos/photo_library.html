@@ -268,6 +268,7 @@
       </svg>
       Photos
     </a>
+    {% if is_editor %}
     <a href="{% url 'photo_library' %}?tab=archive"
        class="tab-pill {% if current_tab == 'archive' %}active{% endif %}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
@@ -276,6 +277,7 @@
       </svg>
       Archive
     </a>
+    {% endif %}
   </div>
 
   <!-- Search + filters -->
