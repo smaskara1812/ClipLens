@@ -184,9 +184,9 @@ LOGIN_URL          = '/login/'
 LOGIN_REDIRECT_URL = '/player/'
 LOGOUT_REDIRECT_URL = '/player/'
 
-# Session expires after 8 hours of inactivity; use secure cookie in production
+# Session expires after 8 hours of inactivity; use secure cookie only over HTTPS
 SESSION_COOKIE_AGE    = 60 * 60 * 8   # 8 hours
-SESSION_COOKIE_SECURE = not DEBUG      # True in production (HTTPS only)
+SESSION_COOKIE_SECURE = SITE_URL.startswith('https://')   # True only when actually on HTTPS
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 AUTH_PASSWORD_VALIDATORS = [
