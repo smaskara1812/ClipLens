@@ -41,6 +41,7 @@ urlpatterns = [
 
     # ── API: Search ──
     path('api/search/suggest/', views.search_suggest),
+    path('api/search/scoped/',  views.scoped_search_api),
 
     # ── API: Channels ──
     path('api/channels/',                                               views.channel_list),
@@ -180,6 +181,7 @@ urlpatterns = [
     path('events/<slug:slug>/',    views.event_detail_page,   name='event_detail'),
 
     # ── Events — API ──
-    path('api/events/',                views.event_list_create),
-    path('api/events/<int:event_id>/', views.event_detail_api),
+    path('api/events/',                        views.event_list_create),
+    path('api/events/<int:event_id>/',         views.event_detail_api),
+    path('api/events/<int:event_id>/search/',  views.event_search_api),
 ]

@@ -338,6 +338,265 @@
       <pre class="cmd-output" id="out-fill_blip_descriptions"></pre>
     </div>
 
+    <!-- ═══ 2b. Individual AI Steps ══════════════════════════════════════════ -->
+    <div class="cmd-section-heading">🔬 Individual AI Steps</div>
+
+    <!-- ── run_yolo ──────────────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_yolo">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(245,158,11,.12);">📦</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Run YOLO Object Detection</div>
+          <div class="cmd-desc">Re-runs YOLOv8 on existing videos and updates <code>VideoFrame.labels</code> only. Does not touch BLIP, CLIP, or face data. Useful after switching YOLO model versions.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-yolo">YOLOv8n · Object Labels</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="run_yolo-scope" onchange="(function(){
+            const v = document.getElementById('run_yolo-scope').value;
+            document.getElementById('run_yolo-video-row').style.display   = v==='video'   ? '' : 'none';
+            document.getElementById('run_yolo-channel-row').style.display = v==='channel' ? '' : 'none';
+          })()">
+            <option value="all">All ready videos</option>
+            <option value="channel">All videos in a channel</option>
+            <option value="video">Single video</option>
+          </select>
+        </div>
+        <div class="field-row" id="run_yolo-video-row" style="display:none;">
+          <label class="field-label">Video</label>
+          <select class="form-select" id="run_yolo-video_id">
+            <option value="">— select video —</option>
+            {% for v in videos %}<option value="{{ v.id }}">{{ v.title|default:v.id }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="run_yolo-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="run_yolo-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_yolo-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope   = document.getElementById('run_yolo-scope').value;
+          const videoId = document.getElementById('run_yolo-video_id').value;
+          const channel = document.getElementById('run_yolo-channel').value;
+          const args = { dry_run: document.getElementById('run_yolo-dry_run').checked, sync: true };
+          if (scope === 'video'   && videoId) args.video_id = videoId;
+          if (scope === 'channel' && channel) args.channel  = channel;
+          runCommand('run_yolo', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run YOLO
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-run_yolo"></pre>
+    </div>
+
+    <!-- ── run_blip ──────────────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_blip">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(16,185,129,.12);">🖼️</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Run BLIP / Florence-2 Scene Captions</div>
+          <div class="cmd-desc">Re-runs scene captioning on frames and updates <code>VideoFrame.description</code>. By default only fills frames with an empty description. Use <em>Force</em> to overwrite existing captions.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-blip">BLIP / Florence-2 · Scene Caption</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="run_blip-scope" onchange="(function(){
+            const v = document.getElementById('run_blip-scope').value;
+            document.getElementById('run_blip-video-row').style.display   = v==='video'   ? '' : 'none';
+            document.getElementById('run_blip-channel-row').style.display = v==='channel' ? '' : 'none';
+          })()">
+            <option value="all">All ready videos</option>
+            <option value="channel">All videos in a channel</option>
+            <option value="video">Single video</option>
+          </select>
+        </div>
+        <div class="field-row" id="run_blip-video-row" style="display:none;">
+          <label class="field-label">Video</label>
+          <select class="form-select" id="run_blip-video_id">
+            <option value="">— select video —</option>
+            {% for v in videos %}<option value="{{ v.id }}">{{ v.title|default:v.id }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="run_blip-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="run_blip-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Model override <span style="font-weight:400;text-transform:none;">(blank = use settings)</span></label>
+          <select class="form-select" id="run_blip-model">
+            <option value="">Use SCENE_CAPTION_MODEL from settings</option>
+            <option value="blip">BLIP</option>
+            <option value="florence2">Florence-2</option>
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_blip-force" /> Force (overwrite existing descriptions)</label>
+        <label class="toggle-row"><input type="checkbox" id="run_blip-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope   = document.getElementById('run_blip-scope').value;
+          const videoId = document.getElementById('run_blip-video_id').value;
+          const channel = document.getElementById('run_blip-channel').value;
+          const args = {
+            dry_run: document.getElementById('run_blip-dry_run').checked,
+            force:   document.getElementById('run_blip-force').checked,
+            sync: true,
+          };
+          const model = document.getElementById('run_blip-model').value;
+          if (model) args.model = model;
+          if (scope === 'video'   && videoId) args.video_id = videoId;
+          if (scope === 'channel' && channel) args.channel  = channel;
+          runCommand('run_blip', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run BLIP
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-run_blip"></pre>
+    </div>
+
+    <!-- ── run_clip ──────────────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_clip">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(99,102,241,.12);">🔍</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Run CLIP Embeddings</div>
+          <div class="cmd-desc">Re-computes CLIP visual embeddings on frames and updates <code>VideoFrame.clip_embedding</code>. Needed for semantic/visual search. By default only fills missing embeddings.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-clip">CLIP · Visual Embedding</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="run_clip-scope" onchange="(function(){
+            const v = document.getElementById('run_clip-scope').value;
+            document.getElementById('run_clip-video-row').style.display   = v==='video'   ? '' : 'none';
+            document.getElementById('run_clip-channel-row').style.display = v==='channel' ? '' : 'none';
+          })()">
+            <option value="all">All ready videos</option>
+            <option value="channel">All videos in a channel</option>
+            <option value="video">Single video</option>
+          </select>
+        </div>
+        <div class="field-row" id="run_clip-video-row" style="display:none;">
+          <label class="field-label">Video</label>
+          <select class="form-select" id="run_clip-video_id">
+            <option value="">— select video —</option>
+            {% for v in videos %}<option value="{{ v.id }}">{{ v.title|default:v.id }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="run_clip-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="run_clip-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_clip-force" /> Force (overwrite existing embeddings)</label>
+        <label class="toggle-row"><input type="checkbox" id="run_clip-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope   = document.getElementById('run_clip-scope').value;
+          const videoId = document.getElementById('run_clip-video_id').value;
+          const channel = document.getElementById('run_clip-channel').value;
+          const args = {
+            dry_run: document.getElementById('run_clip-dry_run').checked,
+            force:   document.getElementById('run_clip-force').checked,
+            sync: true,
+          };
+          if (scope === 'video'   && videoId) args.video_id = videoId;
+          if (scope === 'channel' && channel) args.channel  = channel;
+          runCommand('run_clip', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run CLIP
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-run_clip"></pre>
+    </div>
+
+    <!-- ── run_insightface ───────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_insightface">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(236,72,153,.12);">👤</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Run InsightFace Detection</div>
+          <div class="cmd-desc">Re-runs face detection + ArcFace embedding on frames. Replaces existing DetectedFace rows for each processed video and re-clusters into FaceIdentity groups. Does not touch YOLO, BLIP, or CLIP.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-face">InsightFace buffalo_l · Faces</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="run_insightface-scope" onchange="(function(){
+            const v = document.getElementById('run_insightface-scope').value;
+            document.getElementById('run_insightface-video-row').style.display   = v==='video'   ? '' : 'none';
+            document.getElementById('run_insightface-channel-row').style.display = v==='channel' ? '' : 'none';
+          })()">
+            <option value="all">All ready videos</option>
+            <option value="channel">All videos in a channel</option>
+            <option value="video">Single video</option>
+          </select>
+        </div>
+        <div class="field-row" id="run_insightface-video-row" style="display:none;">
+          <label class="field-label">Video</label>
+          <select class="form-select" id="run_insightface-video_id">
+            <option value="">— select video —</option>
+            {% for v in videos %}<option value="{{ v.id }}">{{ v.title|default:v.id }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="run_insightface-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="run_insightface-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_insightface-dry_run" /> Dry Run (preview only — no faces deleted/replaced)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope   = document.getElementById('run_insightface-scope').value;
+          const videoId = document.getElementById('run_insightface-video_id').value;
+          const channel = document.getElementById('run_insightface-channel').value;
+          const args = {
+            dry_run: document.getElementById('run_insightface-dry_run').checked,
+            sync: true,
+          };
+          if (scope === 'video'   && videoId) args.video_id = videoId;
+          if (scope === 'channel' && channel) args.channel  = channel;
+          runCommand('run_insightface', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run InsightFace
+        </button>
+        <span class="cmd-dryrun-hint">⚠️ Replaces all face data for processed videos.</span>
+      </div>
+      <pre class="cmd-output" id="out-run_insightface"></pre>
+    </div>
+
     <!-- ═══ 3. Import & streaming ═══════════════════════════════════════════ -->
     <div class="cmd-section-heading">📥 Import &amp; streaming</div>
 

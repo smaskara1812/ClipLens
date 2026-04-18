@@ -304,6 +304,9 @@
   </div>
   {% endif %}
 
+  <!-- Scoped search -->
+  {% include 'videos/includes/scoped_search.html' with scope="channel" scope_id=channel.slug %}
+
   <!-- Tabs — only rendered when both content types exist -->
   {% if videos and photos %}
   <div class="ch-tabs" id="chTabs">

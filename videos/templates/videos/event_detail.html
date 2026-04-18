@@ -118,6 +118,111 @@
     color: var(--text-muted); font-size: 13px;
     padding: 48px 0; text-align: center;
   }
+
+  /* ── Event search ──────────────────────────────────────────────────── */
+  .ev-search-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 28px;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius); padding: 8px 14px;
+    transition: border-color .15s;
+  }
+  .ev-search-bar:focus-within { border-color: var(--accent); }
+  .ev-search-bar svg { color: var(--text-muted); flex-shrink: 0; }
+  .ev-search-input {
+    flex: 1; background: none; border: none; outline: none;
+    font-size: 14px; color: var(--text);
+  }
+  .ev-search-input::placeholder { color: var(--text-muted); }
+  .ev-search-clear {
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    padding: 0; display: none; line-height: 1;
+  }
+  .ev-search-clear.visible { display: block; }
+
+  /* Search results panel */
+  .ev-search-results {
+    display: none;
+    border: 1px solid var(--border-2); border-radius: var(--radius);
+    background: var(--surface); overflow: hidden; margin-bottom: 24px;
+  }
+  .ev-search-results.visible { display: block; }
+  .ev-sr-tabs {
+    display: flex; gap: 0; border-bottom: 1px solid var(--border);
+    padding: 0 16px; overflow-x: auto; scrollbar-width: none;
+    background: var(--surface-2);
+  }
+  .ev-sr-tab {
+    padding: 9px 14px; font-size: 12px; font-weight: 600;
+    color: var(--text-muted); background: none; border: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    cursor: pointer; white-space: nowrap; transition: color .12s, border-color .12s;
+  }
+  .ev-sr-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ev-sr-tab .ev-sr-badge {
+    display: inline-block; background: var(--surface-3);
+    border-radius: 10px; font-size: 10px; padding: 1px 5px;
+    margin-left: 4px; color: var(--text-muted);
+  }
+  .ev-sr-tab.active .ev-sr-badge { background: var(--accent-soft); color: var(--accent); }
+  .ev-sr-pane { display: none; padding: 16px; }
+  .ev-sr-pane.active { display: block; }
+
+  /* Result rows */
+  .ev-sr-row {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border-2);
+    text-decoration: none; color: var(--text);
+  }
+  .ev-sr-row:last-child { border-bottom: none; }
+  .ev-sr-thumb {
+    width: 72px; height: 44px; flex-shrink: 0;
+    border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--surface-3); display: flex; align-items: center; justify-content: center;
+  }
+  .ev-sr-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .ev-sr-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
+  .ev-sr-meta  { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Moment list inside a result row */
+  .ev-sr-moments { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .ev-sr-moment {
+    display: inline-flex; align-items: flex-start; gap: 8px;
+    font-size: 12px; color: var(--text-muted);
+    text-decoration: none;
+  }
+  .ev-sr-moment:hover { color: var(--accent); }
+  .ev-sr-ts {
+    flex-shrink: 0; font-size: 11px; font-weight: 700;
+    background: var(--surface-3); border-radius: 4px;
+    padding: 1px 6px; color: var(--text);
+  }
+
+  /* People cards */
+  .ev-sr-people { display: flex; flex-wrap: wrap; gap: 12px; }
+  .ev-sr-person {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px; text-decoration: none; color: var(--text);
+    width: 80px; text-align: center;
+  }
+  .ev-sr-face {
+    width: 56px; height: 56px; border-radius: 50%;
+    overflow: hidden; background: var(--surface-3);
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--border-2);
+  }
+  .ev-sr-face img { width: 100%; height: 100%; object-fit: cover; }
+  .ev-sr-person-name { font-size: 11px; font-weight: 600; line-height: 1.3; }
+  .ev-sr-person-meta { font-size: 10px; color: var(--text-muted); }
+
+  /* Photo grid in results */
+  .ev-sr-photos { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ev-sr-photo { width: 80px; height: 80px; border-radius: var(--radius-sm); overflow: hidden;
+                  text-decoration: none; display: block; background: var(--surface-3); }
+  .ev-sr-photo img { width: 100%; height: 100%; object-fit: cover; }
+
+  .ev-sr-empty { font-size: 13px; color: var(--text-muted); padding: 20px 0; text-align: center; }
+  .ev-sr-spinner { text-align: center; padding: 24px 0; color: var(--text-muted); font-size: 13px; }
 </style>
 {% endblock %}
 
@@ -189,8 +294,29 @@
     </div>
   </div>
 
+  <!-- Event Search Bar -->
+  <div class="ev-search-bar">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input class="ev-search-input" id="evSearchInput" type="text"
+      placeholder="Search this event — who was present, what was said, what happened…"
+      autocomplete="off" />
+    <button class="ev-search-clear" id="evSearchClear" onclick="clearEvSearch()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Search Results Panel (hidden until search is active) -->
+  <div class="ev-search-results" id="evSearchResults">
+    <div class="ev-sr-tabs" id="evSrTabs"></div>
+    <div id="evSrPanes"></div>
+  </div>
+
   <!-- Tabs -->
-  <div class="ev-tabs">
+  <div class="ev-tabs" id="evContentTabs">
     {% if videos %}
     <button class="ev-tab {% if not photos or videos %}active{% endif %}" id="tab-videos" onclick="switchTab('videos')">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
@@ -267,6 +393,197 @@ function switchTab(tab) {
   if (btn) btn.classList.add('active');
   if (pane) pane.classList.add('active');
 }
+</script>
+
+<script>
+// ── Event in-page search ────────────────────────────────────────────────────
+(function () {
+  const EVENT_ID   = {{ event.id }};
+  const input      = document.getElementById('evSearchInput');
+  const clearBtn   = document.getElementById('evSearchClear');
+  const resultsDiv = document.getElementById('evSearchResults');
+  const tabsDiv    = document.getElementById('evSrTabs');
+  const panesDiv   = document.getElementById('evSrPanes');
+  const contentTabs= document.getElementById('evContentTabs');
+
+  let debounceTimer = null;
+
+  function clearEvSearch() {
+    input.value = '';
+    clearBtn.classList.remove('visible');
+    resultsDiv.classList.remove('visible');
+    tabsDiv.innerHTML = '';
+    panesDiv.innerHTML = '';
+    if (contentTabs) contentTabs.style.display = '';
+    document.querySelectorAll('.ev-pane').forEach(p => p.style.display = '');
+  }
+  window.clearEvSearch = clearEvSearch;
+
+  input.addEventListener('input', function () {
+    const q = this.value.trim();
+    clearBtn.classList.toggle('visible', !!q);
+    clearTimeout(debounceTimer);
+    if (!q) { clearEvSearch(); return; }
+    debounceTimer = setTimeout(() => doSearch(q), 350);
+  });
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') clearEvSearch();
+  });
+
+  function doSearch(q) {
+    // Hide normal tabs while results are shown
+    if (contentTabs) contentTabs.style.display = 'none';
+    document.querySelectorAll('.ev-pane').forEach(p => p.style.display = 'none');
+
+    resultsDiv.classList.add('visible');
+    tabsDiv.innerHTML  = '';
+    panesDiv.innerHTML = '<div class="ev-sr-spinner">Searching…</div>';
+
+    fetch(`/api/events/${EVENT_ID}/search/?q=${encodeURIComponent(q)}`, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(data => renderResults(data, q))
+    .catch(() => {
+      panesDiv.innerHTML = '<div class="ev-sr-empty">Search failed — please try again.</div>';
+    });
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function thumb(url, w, h) {
+    const ww = w || 72; const hh = h || 44;
+    if (url) return `<img src="${esc(url)}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" />`;
+    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/></svg>`;
+  }
+
+  function renderResults(data, q) {
+    tabsDiv.innerHTML  = '';
+    panesDiv.innerHTML = '';
+
+    const tabs = [];
+    if (data.total === 0) {
+      panesDiv.innerHTML = `<div class="ev-sr-empty">No results for "<strong>${esc(q)}</strong>"</div>`;
+      return;
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function addTab(id, label, count) {
+      tabs.push({ id, label, count });
+    }
+    function addPane(id, html) {
+      const div = document.createElement('div');
+      div.className = 'ev-sr-pane';
+      div.id = `evsr-${id}`;
+      div.innerHTML = html;
+      panesDiv.appendChild(div);
+    }
+
+    // ── Videos ──────────────────────────────────────────────────────────
+    if (data.videos.length) {
+      addTab('videos', 'Videos', data.videos.length);
+      addPane('videos', data.videos.map(v => `
+        <a href="${esc(v.url)}" class="ev-sr-row">
+          <div class="ev-sr-thumb">${thumb(v.thumbnail_url)}</div>
+          <div><div class="ev-sr-title">${esc(v.title)}</div>
+          <div class="ev-sr-meta">${v.duration ? Math.round(v.duration/60) + ' min' : ''}</div></div>
+        </a>`).join(''));
+    }
+
+    // ── People (faces) ───────────────────────────────────────────────────
+    if (data.people.length) {
+      addTab('people', 'People', data.people.length);
+      addPane('people', `<div class="ev-sr-people">${
+        data.people.map(p => `
+          <a href="/faces/${p.identity_id}/" class="ev-sr-person">
+            <div class="ev-sr-face">${p.sample_crop
+              ? `<img src="${esc(p.sample_crop)}" alt="${esc(p.name)}" />`
+              : `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>`}</div>
+            <div class="ev-sr-person-name">${esc(p.name) || 'Unknown'}</div>
+            <div class="ev-sr-person-meta">
+              ${p.video_count ? `${p.video_count} video${p.video_count !== 1 ? 's' : ''}` : ''}
+              ${p.photo_count ? `${p.photo_count} photo${p.photo_count !== 1 ? 's' : ''}` : ''}
+            </div>
+          </a>`).join('')
+      }</div>`);
+    }
+
+    // ── Speech ───────────────────────────────────────────────────────────
+    if (data.speech.length) {
+      const total = data.speech.reduce((n, s) => n + s.moments.length, 0);
+      addTab('speech', 'Speech', total);
+      addPane('speech', data.speech.map(s => `
+        <div class="ev-sr-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="ev-sr-thumb">${thumb(s.thumbnail_url)}</div>
+            <div class="ev-sr-title">${esc(s.video_title)}</div>
+          </div>
+          <div class="ev-sr-moments">
+            ${s.moments.map(m => `
+              <a href="${esc(m.url)}" class="ev-sr-moment">
+                <span class="ev-sr-ts">${esc(m.time_fmt)}</span>
+                <span>${esc(m.text)}</span>
+              </a>`).join('')}
+          </div>
+        </div>`).join(''));
+    }
+
+    // ── Scenes ───────────────────────────────────────────────────────────
+    if (data.scenes.length) {
+      const total = data.scenes.reduce((n, s) => n + s.moments.length, 0);
+      addTab('scenes', 'Scenes', total);
+      addPane('scenes', data.scenes.map(s => `
+        <div class="ev-sr-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="ev-sr-thumb">${thumb(s.thumbnail_url)}</div>
+            <div class="ev-sr-title">${esc(s.video_title)}</div>
+          </div>
+          <div class="ev-sr-moments">
+            ${s.moments.map(m => `
+              <a href="${esc(m.url)}" class="ev-sr-moment">
+                <span class="ev-sr-ts">${esc(m.time_fmt)}</span>
+                <span class="ev-sr-meta">${m.source === 'scene' ? '🖼 ' : '📦 '}${esc(m.text)}</span>
+              </a>`).join('')}
+          </div>
+        </div>`).join(''));
+    }
+
+    // ── Photos ───────────────────────────────────────────────────────────
+    if (data.photos.length) {
+      addTab('photos', 'Photos', data.photos.length);
+      addPane('photos', `<div class="ev-sr-photos">${
+        data.photos.map(p => `
+          <a href="${esc(p.url)}" class="ev-sr-photo" title="${esc(p.title)}">
+            ${thumb(p.thumbnail_url)}
+          </a>`).join('')
+      }</div>`);
+    }
+
+    // ── Render tabs ───────────────────────────────────────────────────────
+    tabs.forEach((t, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'ev-sr-tab' + (i === 0 ? ' active' : '');
+      btn.innerHTML = `${esc(t.label)} <span class="ev-sr-badge">${t.count}</span>`;
+      btn.addEventListener('click', () => switchSrTab(t.id));
+      tabsDiv.appendChild(btn);
+    });
+    if (tabs.length) {
+      document.getElementById(`evsr-${tabs[0].id}`).classList.add('active');
+    }
+  }
+
+  function switchSrTab(id) {
+    tabsDiv.querySelectorAll('.ev-sr-tab').forEach((t, i) => {
+      t.classList.toggle('active', t.textContent.toLowerCase().startsWith(id));
+    });
+    panesDiv.querySelectorAll('.ev-sr-pane').forEach(p => {
+      p.classList.toggle('active', p.id === `evsr-${id}`);
+    });
+  }
+})();
 </script>
 
 {% if is_editor %}

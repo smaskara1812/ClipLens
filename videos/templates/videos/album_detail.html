@@ -144,6 +144,9 @@
     <button onclick="cancelSelectMode()" style="background:rgba(255,255,255,.1);">Cancel</button>
   </div>
 
+  <!-- Scoped search -->
+  {% include 'videos/includes/scoped_search.html' with scope="album" scope_id=album.id %}
+
   <!-- Photo grid -->
   {% if photos %}
   <div class="photo-grid" id="photoGrid">

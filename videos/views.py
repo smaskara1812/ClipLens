@@ -472,6 +472,17 @@ def player_page(request):
     if cat_slug:
         videos = videos.filter(category__slug=cat_slug)
 
+    # ── Event filter — scope videos/photos to a specific event ───────────────
+    event_slug   = request.GET.get('event', '').strip()
+    current_event = None
+    if event_slug:
+        try:
+            current_event = Event.objects.select_related('album', 'playlist').get(slug=event_slug)
+            if current_event.playlist_id:
+                videos = videos.filter(playlist_items__playlist=current_event.playlist)
+        except Event.DoesNotExist:
+            event_slug = ''
+
     duration_filter = request.GET.get('duration', '').strip()
     if duration_filter == 'short':
         videos = videos.filter(duration__lt=240)
@@ -518,6 +529,11 @@ def player_page(request):
     if categories is None:
         categories = list(Category.objects.all())
         cache.set('all_categories', categories, getattr(django_settings, 'CACHE_TTL_CATEGORIES', 3600))
+
+    all_events = cache.get('all_events_list')
+    if all_events is None:
+        all_events = list(Event.objects.only('id', 'name', 'slug', 'event_date').order_by('-event_date', '-created_at')[:100])
+        cache.set('all_events_list', all_events, 120)
 
     unread_count = 0
     if request.user.is_authenticated:
@@ -991,6 +1007,7 @@ def player_page(request):
     # ── Channel and playlist search ───────────────────────────────────────────
     channel_matches  = []
     playlist_matches = []
+    event_matches    = []
     if q:
         if _can_use_fuzzy_search():
             channel_matches = list(
@@ -1000,6 +1017,21 @@ def player_page(request):
             playlist_matches = list(
                 _postgres_fuzzy_filter(Playlist.objects.filter(is_public=True), q, ('title',))
                 .select_related('owner')[:20]
+            )
+            from django.contrib.postgres.search import SearchQuery as _EvSQ, SearchVector as _EvSV
+            _ev_fts = Event.objects.annotate(
+                _s=_EvSV('name', 'description', 'tags', config='english')
+            ).filter(_s=_EvSQ(q, config='english', search_type='plain'))
+            _ev_fuzzy = _postgres_fuzzy_filter(Event.objects, q, ('name', 'tags'))
+            event_matches = list(
+                Event.objects
+                .filter(Q(pk__in=_ev_fts.values('pk')) | Q(pk__in=_ev_fuzzy.values('pk')))
+                .select_related('album', 'playlist', 'cover_photo')
+                .annotate(
+                    ev_photo_count=Count('album__album_photos', distinct=True),
+                    ev_video_count=Count('playlist__items', distinct=True),
+                )
+                .order_by('-event_date', '-created_at')[:12]
             )
         else:
             channel_matches = list(
@@ -1013,6 +1045,16 @@ def player_page(request):
                 .filter(title__icontains=q, is_public=True)
                 .select_related('owner')
                 .order_by('title')[:20]
+            )
+            event_matches = list(
+                Event.objects
+                .filter(Q(name__icontains=q) | Q(tags__icontains=q) | Q(description__icontains=q))
+                .select_related('album', 'playlist', 'cover_photo')
+                .annotate(
+                    ev_photo_count=Count('album__album_photos', distinct=True),
+                    ev_video_count=Count('playlist__items', distinct=True),
+                )
+                .order_by('-event_date', '-created_at')[:12]
             )
 
     # ── Photo search ─────────────────────────────────────────────────────────
@@ -1159,12 +1201,16 @@ def player_page(request):
         'current_duration':    duration_filter,
         'current_date':        date_filter,
         'current_sort':        sort,
+        'current_event':       current_event,
+        'current_event_slug':  event_slug,
+        'all_events':          all_events,
         'segment_matches':     segment_matches,
         'chapter_matches':     chapter_matches,
         'scene_matches':       scene_matches,
         'people_matches':      people_matches,
         'channel_matches':     channel_matches,
         'playlist_matches':    playlist_matches,
+        'event_matches':       event_matches,
         'photo_matches':       photo_matches,
         'moment_matches':      moment_matches,
         'frame_matches':       scene_matches,   # keep for any legacy template refs
@@ -1176,6 +1222,7 @@ def player_page(request):
             'duration': duration_filter,
             'date': date_filter,
             'sort': sort,
+            'event': event_slug,
         },
     })
 
@@ -1700,6 +1747,8 @@ def admin_commands_run(request):
         'auto_confirm_similar', 'patch_master_playlists', 'fill_blip_descriptions',
         'run_diarization', 'rebuild_speaker_face_suggestions',
         'generate_seek_sprites',
+        # Individual AI step commands
+        'run_yolo', 'run_blip', 'run_clip', 'run_insightface',
     }
     if cmd not in ALLOWED:
         return Response({'error': f'Command not allowed: {cmd}'}, status=status.HTTP_400_BAD_REQUEST)
@@ -5881,6 +5930,444 @@ def event_detail_api(request, event_id):
             event.cover_photo = None
     event.save()
     return Response({'ok': True, 'slug': event.slug})
+
+
+@api_view(['GET'])
+@api_login_required
+def event_search_api(request, event_id):
+    """
+    GET /api/events/<id>/search/?q=<query>
+
+    Full-text + semantic search scoped to a single event.
+    Searches across:
+      • Video titles / descriptions (event playlist)
+      • Speech transcripts (VideoSegment)
+      • Scene descriptions + YOLO labels (VideoFrame)
+      • Face identities (DetectedFace)
+      • Photo titles / labels / descriptions (event album)
+
+    Returns structured JSON that the event detail page renders client-side.
+    """
+    event = get_object_or_404(Event.objects.select_related('album', 'playlist'), id=event_id)
+    q = request.GET.get('q', '').strip()
+    if not q:
+        return Response({'error': 'q is required'}, status=400)
+
+    # ── Scope: video IDs and photo IDs in this event ──────────────────────────
+    video_ids = []
+    if event.playlist_id:
+        video_ids = list(
+            Video.objects
+            .filter(playlist_items__playlist=event.playlist, status=Video.STATUS_READY)
+            .values_list('id', flat=True)
+        )
+    photo_ids = []
+    if event.album_id:
+        photo_ids = list(
+            Photo.objects
+            .filter(album_photos__album=event.album, status=Photo.STATUS_READY)
+            .values_list('id', flat=True)
+        )
+
+    # ── 1. Video title match ──────────────────────────────────────────────────
+    video_results = []
+    if video_ids:
+        _vqs = Video.objects.filter(id__in=video_ids)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _VSQ, SearchVector as _VSV
+            _fts = _vqs.annotate(_s=_VSV('title', 'description', 'tags', config='english')).filter(
+                _s=_VSQ(q, config='english', search_type='plain')
+            )
+            _fuzzy = _postgres_fuzzy_filter(_vqs, q, ('title', 'tags'))
+            _vqs = _vqs.filter(Q(pk__in=_fts.values('pk')) | Q(pk__in=_fuzzy.values('pk'))).distinct()
+        else:
+            _vqs = _vqs.filter(_q_icontains_all_terms('title', q) | _q_icontains_all_terms('tags', q))
+        for v in _vqs.only('id', 'title', 'thumbnail', 'duration')[:20]:
+            video_results.append({
+                'type': 'video',
+                'id': str(v.id),
+                'title': v.title,
+                'thumbnail_url': v.thumbnail_url,
+                'duration': v.duration,
+                'url': f'/watch/{v.id}/',
+            })
+
+    # ── 2. Speech / transcript search ────────────────────────────────────────
+    speech_results = []
+    if video_ids:
+        _sqs = VideoSegment.objects.filter(video_id__in=video_ids)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _SSQ
+            _sqs = _sqs.filter(text__search=_SSQ(q, config='english', search_type='plain'))
+        else:
+            _sqs = _sqs.filter(_q_icontains_all_terms('text', q))
+        seen_vids = {}
+        for seg in _sqs.select_related('video').order_by('video_id', 'start_seconds')[:300]:
+            vid_id = str(seg.video_id)
+            if vid_id not in seen_vids:
+                seen_vids[vid_id] = {'video': seg.video, 'moments': []}
+            if len(seen_vids[vid_id]['moments']) < 10:
+                seen_vids[vid_id]['moments'].append({
+                    'start':    seg.start_seconds,
+                    'text':     seg.text,
+                    'time_fmt': _fmt_seconds_display(seg.start_seconds),
+                    'url':      f'/watch/{seg.video_id}/?t={seg.start_seconds:.1f}',
+                })
+        for vdata in seen_vids.values():
+            speech_results.append({
+                'type': 'speech',
+                'video_id': str(vdata['video'].id),
+                'video_title': vdata['video'].title,
+                'thumbnail_url': vdata['video'].thumbnail_url,
+                'moments': vdata['moments'],
+            })
+
+    # ── 3. Scene / YOLO search ───────────────────────────────────────────────
+    scene_results = []
+    if video_ids:
+        _frqs = VideoFrame.objects.filter(video_id__in=video_ids)
+        seen_scene = {}
+
+        # YOLO labels
+        _yqs = _frqs.exclude(labels='')
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _YSQ
+            _fts_y = _yqs.filter(labels__search=_YSQ(q, config='english', search_type='plain'))
+            _fz_y  = _postgres_fuzzy_filter(_yqs, q, ('labels',), threshold=0.5)
+            _yqs   = _yqs.filter(Q(pk__in=_fts_y.values('pk')) | Q(pk__in=_fz_y.values('pk')))
+        else:
+            _yqs = _yqs.filter(_q_icontains_all_terms('labels', q))
+        for frm in _yqs.select_related('video').order_by('video_id', 'timestamp')[:200]:
+            vid_id = str(frm.video_id)
+            if vid_id not in seen_scene:
+                seen_scene[vid_id] = {'video': frm.video, 'moments': []}
+            if len(seen_scene[vid_id]['moments']) < 10:
+                seen_scene[vid_id]['moments'].append({
+                    'timestamp': frm.timestamp,
+                    'text': frm.labels,
+                    'source': 'object',
+                    'time_fmt': _fmt_seconds_display(frm.timestamp),
+                    'url': f'/watch/{frm.video_id}/?t={frm.timestamp:.1f}',
+                })
+
+        # Scene descriptions
+        _dqs = _frqs.exclude(description='')
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _DSQ
+            _dqs = _dqs.filter(description__search=_DSQ(q, config='english', search_type='plain'))
+        else:
+            _dqs = _dqs.filter(_q_icontains_all_terms('description', q))
+        for frm in _dqs.select_related('video').order_by('video_id', 'timestamp')[:200]:
+            vid_id = str(frm.video_id)
+            if vid_id not in seen_scene:
+                seen_scene[vid_id] = {'video': frm.video, 'moments': []}
+            if len(seen_scene[vid_id]['moments']) < 10:
+                seen_scene[vid_id]['moments'].append({
+                    'timestamp': frm.timestamp,
+                    'text': frm.description,
+                    'source': 'scene',
+                    'time_fmt': _fmt_seconds_display(frm.timestamp),
+                    'url': f'/watch/{frm.video_id}/?t={frm.timestamp:.1f}',
+                })
+
+        for vdata in seen_scene.values():
+            scene_results.append({
+                'type': 'scene',
+                'video_id': str(vdata['video'].id),
+                'video_title': vdata['video'].title,
+                'thumbnail_url': vdata['video'].thumbnail_url,
+                'moments': vdata['moments'],
+            })
+
+    # ── 4. Face / people search ──────────────────────────────────────────────
+    people_results = []
+    if video_ids or photo_ids:
+        _face_qs = DetectedFace.objects.filter(
+            Q(video_id__in=video_ids) | Q(photo_id__in=photo_ids)
+        ).exclude(status=DetectedFace.STATUS_REJECTED).select_related('identity', 'video', 'photo')
+
+        if _can_use_fuzzy_search():
+            _fi_fuzzy = _postgres_fuzzy_filter(FaceIdentity.objects.exclude(name=''), q, ('name',))
+            _face_qs = _face_qs.filter(
+                Q(identity__name__icontains=q) | Q(identity_id__in=_fi_fuzzy.values('id'))
+            )
+        else:
+            _face_qs = _face_qs.filter(identity__name__icontains=q)
+
+        seen_idents = {}
+        for df in _face_qs.order_by('identity_id')[:200]:
+            iid = df.identity_id
+            if iid not in seen_idents:
+                seen_idents[iid] = {
+                    'identity_id': iid,
+                    'name': df.identity.name if df.identity else '',
+                    'video_ids': set(),
+                    'photo_ids': set(),
+                    'sample_crop': df.crop_url,
+                    'appearances': 0,
+                }
+            seen_idents[iid]['appearances'] += 1
+            if df.video_id:
+                seen_idents[iid]['video_ids'].add(str(df.video_id))
+            if df.photo_id:
+                seen_idents[iid]['photo_ids'].add(str(df.photo_id))
+        for p in seen_idents.values():
+            p['video_count'] = len(p.pop('video_ids'))
+            p['photo_count'] = len(p.pop('photo_ids'))
+            people_results.append(p)
+
+    # ── 5. Photo search ──────────────────────────────────────────────────────
+    photo_results = []
+    if photo_ids:
+        _pqs = Photo.objects.filter(id__in=photo_ids)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _PSQ, SearchVector as _PSV
+            _fts_p  = _pqs.annotate(_s=_PSV('title', 'description', 'tags', config='english')).filter(
+                _s=_PSQ(q, config='english', search_type='plain')
+            )
+            _fts_pl = _pqs.filter(labels__search=_PSQ(q, config='english', search_type='plain'))
+            _fts_pd = _pqs.filter(scene_description__search=_PSQ(q, config='english', search_type='plain'))
+            _fts_pf = _pqs.filter(face_names__search=_PSQ(q, config='english', search_type='plain'))
+            _fuzz_p = _postgres_fuzzy_filter(_pqs, q, ('title', 'tags', 'labels', 'face_names'))
+            _pqs = _pqs.filter(
+                Q(pk__in=_fts_p.values('pk')) | Q(pk__in=_fts_pl.values('pk'))
+                | Q(pk__in=_fts_pd.values('pk')) | Q(pk__in=_fts_pf.values('pk'))
+                | Q(pk__in=_fuzz_p.values('pk')) | Q(face_names__icontains=q)
+            ).distinct()
+        else:
+            _pqs = _pqs.filter(
+                _q_icontains_all_terms('title', q) | _q_icontains_all_terms('tags', q)
+                | _q_icontains_all_terms('labels', q) | Q(face_names__icontains=q)
+            ).distinct()
+        for p in _pqs.only('id', 'title', 'thumbnail')[:40]:
+            photo_results.append({
+                'id': str(p.id),
+                'title': p.title,
+                'thumbnail_url': p.thumbnail_url,
+                'url': f'/photos/{p.id}/',
+            })
+
+    return Response({
+        'q': q,
+        'videos':  video_results,
+        'speech':  speech_results,
+        'scenes':  scene_results,
+        'people':  people_results,
+        'photos':  photo_results,
+        'total': len(video_results) + len(speech_results) + len(scene_results) + len(people_results) + len(photo_results),
+    })
+
+
+@api_view(['GET'])
+@api_login_required
+def scoped_search_api(request):
+    """
+    GET /api/search/scoped/?q=<query>&scope=channel|playlist|album&id=<slug_or_uuid>
+
+    Full-text search scoped to a channel, playlist, or album.
+    Returns JSON with: videos, speech, scenes, people, photos.
+    """
+    q          = request.GET.get('q', '').strip()
+    scope      = request.GET.get('scope', '').strip()   # channel | playlist | album
+    scope_id   = request.GET.get('id', '').strip()
+
+    if not q or scope not in ('channel', 'playlist', 'album') or not scope_id:
+        return Response({'error': 'q, scope, and id are required'}, status=400)
+
+    # ── Resolve the scope into video_ids / photo_ids ──────────────────────────
+    video_ids = []
+    photo_ids = []
+
+    if scope == 'channel':
+        try:
+            ch = Channel.objects.get(slug=scope_id)
+        except Channel.DoesNotExist:
+            return Response({'error': 'Channel not found'}, status=404)
+        video_ids = list(
+            Video.objects.filter(channel=ch, status=Video.STATUS_READY,
+                                 visibility=Video.VISIBILITY_PUBLIC)
+            .values_list('id', flat=True)
+        )
+        photo_ids = list(
+            Photo.objects.filter(channel=ch, status=Photo.STATUS_READY,
+                                 visibility=Photo.VISIBILITY_PUBLIC)
+            .values_list('id', flat=True)
+        )
+
+    elif scope == 'playlist':
+        try:
+            import uuid as _uuid_mod
+            pl = Playlist.objects.get(id=_uuid_mod.UUID(scope_id))
+        except (Playlist.DoesNotExist, ValueError):
+            return Response({'error': 'Playlist not found'}, status=404)
+        video_ids = list(
+            Video.objects.filter(playlist_items__playlist=pl, status=Video.STATUS_READY)
+            .values_list('id', flat=True)
+        )
+
+    elif scope == 'album':
+        try:
+            import uuid as _uuid_mod
+            alb = Album.objects.get(id=_uuid_mod.UUID(scope_id))
+        except (Album.DoesNotExist, ValueError):
+            return Response({'error': 'Album not found'}, status=404)
+        photo_ids = list(
+            Photo.objects.filter(album_photos__album=alb, status=Photo.STATUS_READY)
+            .values_list('id', flat=True)
+        )
+
+    # ── Shared search logic (reused from event_search_api) ────────────────────
+
+    # 1. Video title match
+    video_results = []
+    if video_ids:
+        _vqs = Video.objects.filter(id__in=video_ids)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _VS, SearchVector as _VV
+            _fts = _vqs.annotate(_s=_VV('title', 'description', 'tags', config='english')).filter(
+                _s=_VS(q, config='english', search_type='plain')
+            )
+            _fuzzy = _postgres_fuzzy_filter(_vqs, q, ('title', 'tags'))
+            _vqs = _vqs.filter(Q(pk__in=_fts.values('pk')) | Q(pk__in=_fuzzy.values('pk'))).distinct()
+        else:
+            _vqs = _vqs.filter(_q_icontains_all_terms('title', q) | _q_icontains_all_terms('tags', q))
+        for v in _vqs.only('id', 'title', 'thumbnail', 'duration')[:20]:
+            video_results.append({
+                'type': 'video', 'id': str(v.id), 'title': v.title,
+                'thumbnail_url': v.thumbnail_url, 'duration': v.duration,
+                'url': f'/watch/{v.id}/',
+            })
+
+    # 2. Speech search
+    speech_results = []
+    if video_ids:
+        _sqs = VideoSegment.objects.filter(video_id__in=video_ids)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _SS
+            _sqs = _sqs.filter(text__search=_SS(q, config='english', search_type='plain'))
+        else:
+            _sqs = _sqs.filter(_q_icontains_all_terms('text', q))
+        seen_vids = {}
+        for seg in _sqs.select_related('video').order_by('video_id', 'start_seconds')[:300]:
+            vid_id = str(seg.video_id)
+            if vid_id not in seen_vids:
+                seen_vids[vid_id] = {'video': seg.video, 'moments': []}
+            if len(seen_vids[vid_id]['moments']) < 10:
+                seen_vids[vid_id]['moments'].append({
+                    'start': seg.start_seconds, 'text': seg.text,
+                    'time_fmt': _fmt_seconds_display(seg.start_seconds),
+                    'url': f'/watch/{seg.video_id}/?t={seg.start_seconds:.1f}',
+                })
+        for vd in seen_vids.values():
+            speech_results.append({
+                'type': 'speech', 'video_id': str(vd['video'].id),
+                'video_title': vd['video'].title,
+                'thumbnail_url': vd['video'].thumbnail_url,
+                'moments': vd['moments'],
+            })
+
+    # 3. Scene / YOLO search
+    scene_results = []
+    if video_ids:
+        _frqs = VideoFrame.objects.filter(video_id__in=video_ids)
+        seen_scene = {}
+        for _fq, _src in (
+            (_frqs.exclude(labels=''), 'object'),
+            (_frqs.exclude(description=''), 'scene'),
+        ):
+            field = 'labels' if _src == 'object' else 'description'
+            thresh = 0.5 if _src == 'object' else None
+            if _can_use_postgres_fts():
+                from django.contrib.postgres.search import SearchQuery as _FS
+                _fts_sc = _fq.filter(**{f'{field}__search': _FS(q, config='english', search_type='plain')})
+                if thresh:
+                    _fz_sc = _postgres_fuzzy_filter(_fq, q, (field,), threshold=thresh)
+                    _fq = _fq.filter(Q(pk__in=_fts_sc.values('pk')) | Q(pk__in=_fz_sc.values('pk')))
+                else:
+                    _fq = _fts_sc
+            else:
+                _fq = _fq.filter(_q_icontains_all_terms(field, q))
+            for frm in _fq.select_related('video').order_by('video_id', 'timestamp')[:200]:
+                vid_id = str(frm.video_id)
+                if vid_id not in seen_scene:
+                    seen_scene[vid_id] = {'video': frm.video, 'moments': []}
+                if len(seen_scene[vid_id]['moments']) < 10:
+                    seen_scene[vid_id]['moments'].append({
+                        'timestamp': frm.timestamp,
+                        'text': getattr(frm, field),
+                        'source': _src,
+                        'time_fmt': _fmt_seconds_display(frm.timestamp),
+                        'url': f'/watch/{frm.video_id}/?t={frm.timestamp:.1f}',
+                    })
+        for vd in seen_scene.values():
+            scene_results.append({
+                'type': 'scene', 'video_id': str(vd['video'].id),
+                'video_title': vd['video'].title,
+                'thumbnail_url': vd['video'].thumbnail_url,
+                'moments': vd['moments'],
+            })
+
+    # 4. People / faces
+    people_results = []
+    if video_ids or photo_ids:
+        _fq = DetectedFace.objects.filter(
+            Q(video_id__in=video_ids) | Q(photo_id__in=photo_ids)
+        ).exclude(status=DetectedFace.STATUS_REJECTED).select_related('identity', 'video', 'photo')
+        if _can_use_fuzzy_search():
+            _fi_f = _postgres_fuzzy_filter(FaceIdentity.objects.exclude(name=''), q, ('name',))
+            _fq = _fq.filter(Q(identity__name__icontains=q) | Q(identity_id__in=_fi_f.values('id')))
+        else:
+            _fq = _fq.filter(identity__name__icontains=q)
+        seen_p = {}
+        for df in _fq.order_by('identity_id')[:200]:
+            iid = df.identity_id
+            if iid not in seen_p:
+                seen_p[iid] = {
+                    'identity_id': iid,
+                    'name': df.identity.name if df.identity else '',
+                    'sample_crop': df.crop_url, 'video_ids': set(), 'photo_ids': set(),
+                }
+            if df.video_id: seen_p[iid]['video_ids'].add(str(df.video_id))
+            if df.photo_id: seen_p[iid]['photo_ids'].add(str(df.photo_id))
+        for p in seen_p.values():
+            p['video_count'] = len(p.pop('video_ids'))
+            p['photo_count'] = len(p.pop('photo_ids'))
+            people_results.append(p)
+
+    # 5. Photo search
+    photo_results = []
+    if photo_ids:
+        _pqs = Photo.objects.filter(id__in=photo_ids)
+        if _can_use_postgres_fts():
+            from django.contrib.postgres.search import SearchQuery as _PS, SearchVector as _PV
+            _fts_p  = _pqs.annotate(_s=_PV('title', 'description', 'tags', config='english')).filter(_s=_PS(q, config='english', search_type='plain'))
+            _fts_pl = _pqs.filter(labels__search=_PS(q, config='english', search_type='plain'))
+            _fts_pd = _pqs.filter(scene_description__search=_PS(q, config='english', search_type='plain'))
+            _fts_pf = _pqs.filter(face_names__search=_PS(q, config='english', search_type='plain'))
+            _fuzz_p = _postgres_fuzzy_filter(_pqs, q, ('title', 'tags', 'labels', 'face_names'))
+            _pqs = _pqs.filter(
+                Q(pk__in=_fts_p.values('pk')) | Q(pk__in=_fts_pl.values('pk'))
+                | Q(pk__in=_fts_pd.values('pk')) | Q(pk__in=_fts_pf.values('pk'))
+                | Q(pk__in=_fuzz_p.values('pk')) | Q(face_names__icontains=q)
+            ).distinct()
+        else:
+            _pqs = _pqs.filter(
+                _q_icontains_all_terms('title', q) | _q_icontains_all_terms('tags', q)
+                | _q_icontains_all_terms('labels', q) | Q(face_names__icontains=q)
+            ).distinct()
+        for p in _pqs.only('id', 'title', 'thumbnail')[:40]:
+            photo_results.append({'id': str(p.id), 'title': p.title,
+                                  'thumbnail_url': p.thumbnail_url, 'url': f'/photos/{p.id}/'})
+
+    return Response({
+        'q': q, 'scope': scope,
+        'videos':  video_results,
+        'speech':  speech_results,
+        'scenes':  scene_results,
+        'people':  people_results,
+        'photos':  photo_results,
+        'total': len(video_results) + len(speech_results) + len(scene_results) + len(people_results) + len(photo_results),
+    })
 
 
 # ─── Speaker Identity Pages ───────────────────────────────────────────────────

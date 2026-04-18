@@ -97,6 +97,9 @@
       <span style="font-size:12px;color:var(--text-muted);">{{ items|length }} video{{ items|length|pluralize }}</span>
     </div>
 
+    <!-- Scoped search -->
+    {% include 'videos/includes/scoped_search.html' with scope="playlist" scope_id=playlist.id %}
+
     {% if items %}
     <div class="pl-items" id="plItems">
       {% for item in items %}

@@ -136,10 +136,22 @@
   <div class="ev-header">
     <h1>Events</h1>
     {% if is_editor %}
-    <a href="{% url 'events_upload' %}" style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;font-size:13px;font-weight:600;background:var(--accent);color:#fff;border-radius:var(--radius-sm);text-decoration:none;transition:background .15s;" onmouseover="this.style.background='var(--accent-h)'" onmouseout="this.style.background='var(--accent)'">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Folder Upload
-    </a>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button onclick="openCreateModal()"
+        style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;font-size:13px;font-weight:600;
+               background:var(--surface-2);color:var(--text);border:1px solid var(--border-2);
+               border-radius:var(--radius-sm);cursor:pointer;transition:background .15s;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Event
+      </button>
+      <a href="{% url 'events_upload' %}"
+        style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;font-size:13px;font-weight:600;
+               background:var(--accent);color:#fff;border-radius:var(--radius-sm);text-decoration:none;transition:background .15s;"
+        onmouseover="this.style.background='var(--accent-h)'" onmouseout="this.style.background='var(--accent)'">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Folder Upload
+      </a>
+    </div>
     {% endif %}
   </div>
 
@@ -218,6 +230,32 @@
 </div>
 
 {% if is_editor %}
+<!-- Create Event Modal -->
+<div class="ev-modal-backdrop" id="createModal">
+  <div class="ev-modal">
+    <h2>New Event</h2>
+    <div class="ev-modal-field">
+      <label>Event name <span style="color:#ef4444;">*</span></label>
+      <input type="text" id="createName" placeholder="e.g. Founders Day 2024" />
+    </div>
+    <div class="ev-modal-field">
+      <label>Event date <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
+      <input type="date" id="createDate" />
+    </div>
+    <div class="ev-modal-field">
+      <label>Description <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
+      <textarea id="createDesc" rows="3" placeholder="Brief description of the event…"></textarea>
+    </div>
+    <div style="padding:10px 12px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted);margin-bottom:14px;">
+      <strong>Note:</strong> Creates an empty event with its own Photo Album and Video Playlist. You can add content later from the event page, or use <em>Folder Upload</em> to import from your computer.
+    </div>
+    <div class="ev-modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeCreateModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="createSaveBtn" onclick="saveCreate()">Create Event</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit Event Modal -->
 <div class="ev-modal-backdrop" id="editModal">
   <div class="ev-modal">
@@ -251,6 +289,45 @@
 const CSRF = '{{ csrf_token }}';
 let _editId = null;
 let _selectedCoverId = '';
+
+// ── Create Event ──────────────────────────────────────────────────────────────
+function openCreateModal() {
+  document.getElementById('createName').value = '';
+  document.getElementById('createDate').value = '';
+  document.getElementById('createDesc').value = '';
+  document.getElementById('createModal').classList.add('open');
+  setTimeout(() => document.getElementById('createName').focus(), 50);
+}
+function closeCreateModal() {
+  document.getElementById('createModal').classList.remove('open');
+}
+document.getElementById('createModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeCreateModal();
+});
+async function saveCreate() {
+  const name = document.getElementById('createName').value.trim();
+  if (!name) { showToast('error', 'Event name is required'); return; }
+  const btn = document.getElementById('createSaveBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  const res = await fetch('/api/events/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({
+      name,
+      event_date: document.getElementById('createDate').value || null,
+      description: document.getElementById('createDesc').value.trim(),
+    }),
+  });
+  btn.disabled = false; btn.textContent = 'Create Event';
+  if (res.ok) {
+    const data = await res.json();
+    showToast('success', 'Event created!');
+    setTimeout(() => { window.location.href = `/events/${data.slug}/`; }, 600);
+  } else {
+    const err = await res.json().catch(() => ({}));
+    showToast('error', err.error || 'Failed to create event');
+  }
+}
 
 function selectThumb(el) {
   document.querySelectorAll('#thumbPicker .ev-thumb-picker-item, #thumbPicker .ev-thumb-none')

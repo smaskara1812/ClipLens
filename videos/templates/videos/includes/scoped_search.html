@@ -1,0 +1,325 @@
+{% comment %}
+Reusable scoped search bar + results panel.
+Include with:
+  {% include 'videos/includes/scoped_search.html' with scope="channel" scope_id=channel.slug %}
+  {% include 'videos/includes/scoped_search.html' with scope="playlist" scope_id=playlist.id %}
+  {% include 'videos/includes/scoped_search.html' with scope="album" scope_id=album.id %}
+{% endcomment %}
+<style>
+.scoped-search-wrap {
+  margin-bottom: 24px;
+}
+.scoped-search-bar {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: var(--radius); padding: 9px 14px;
+  transition: border-color .15s;
+}
+.scoped-search-bar:focus-within { border-color: var(--accent); }
+.scoped-search-bar svg { color: var(--text-muted); flex-shrink: 0; }
+.scoped-search-input {
+  flex: 1; background: none; border: none; outline: none;
+  font-size: 14px; color: var(--text);
+}
+.scoped-search-input::placeholder { color: var(--text-muted); }
+.scoped-search-kbd {
+  font-size: 11px; color: var(--text-subtle);
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 6px; white-space: nowrap; flex-shrink: 0;
+}
+.scoped-search-clear {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); padding: 0; display: none; line-height: 1;
+}
+.scoped-search-clear.visible { display: block; }
+
+/* Results panel */
+.scoped-search-results {
+  display: none; margin-top: 8px;
+  border: 1px solid var(--border-2); border-radius: var(--radius);
+  background: var(--surface); overflow: hidden;
+}
+.scoped-search-results.visible { display: block; }
+.scsr-tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  padding: 0 16px; overflow-x: auto; scrollbar-width: none;
+  background: var(--surface-2);
+}
+.scsr-tab {
+  padding: 9px 14px; font-size: 12px; font-weight: 600;
+  color: var(--text-muted); background: none; border: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  cursor: pointer; white-space: nowrap; transition: color .12s, border-color .12s;
+  font-family: inherit;
+}
+.scsr-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.scsr-tab .scsr-badge {
+  display: inline-block; background: var(--surface-3);
+  border-radius: 10px; font-size: 10px; padding: 1px 5px;
+  margin-left: 4px; color: var(--text-muted);
+}
+.scsr-tab.active .scsr-badge { background: var(--accent-soft); color: var(--accent); }
+.scsr-pane { display: none; padding: 16px; max-height: 480px; overflow-y: auto; }
+.scsr-pane.active { display: block; }
+
+/* Result rows */
+.scsr-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--border-2);
+  text-decoration: none; color: var(--text);
+}
+.scsr-row:last-child { border-bottom: none; }
+.scsr-thumb {
+  width: 80px; height: 48px; flex-shrink: 0;
+  border-radius: var(--radius-sm); overflow: hidden;
+  background: var(--surface-3); display: flex; align-items: center; justify-content: center;
+}
+.scsr-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.scsr-thumb-sq {
+  width: 48px; height: 48px;
+}
+.scsr-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
+.scsr-meta  { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.scsr-moments { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; }
+.scsr-moment {
+  display: inline-flex; align-items: flex-start; gap: 8px;
+  font-size: 12px; color: var(--text-muted); text-decoration: none;
+}
+.scsr-moment:hover { color: var(--accent); }
+.scsr-ts {
+  flex-shrink: 0; font-size: 11px; font-weight: 700;
+  background: var(--surface-3); border-radius: 4px;
+  padding: 1px 6px; color: var(--text);
+}
+
+/* People grid */
+.scsr-people { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 0; }
+.scsr-person {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 5px; text-decoration: none; color: var(--text); width: 72px; text-align: center;
+}
+.scsr-face {
+  width: 52px; height: 52px; border-radius: 50%;
+  overflow: hidden; background: var(--surface-3);
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--border-2);
+}
+.scsr-face img { width: 100%; height: 100%; object-fit: cover; }
+.scsr-person-name { font-size: 11px; font-weight: 600; line-height: 1.3; }
+.scsr-person-meta { font-size: 10px; color: var(--text-muted); }
+
+/* Photo strip */
+.scsr-photos { display: flex; flex-wrap: wrap; gap: 6px; }
+.scsr-photo { width: 80px; height: 80px; border-radius: var(--radius-sm); overflow: hidden;
+               text-decoration: none; display: block; background: var(--surface-3); flex-shrink: 0; }
+.scsr-photo img { width: 100%; height: 100%; object-fit: cover; }
+
+.scsr-empty   { font-size: 13px; color: var(--text-muted); padding: 24px 0; text-align: center; }
+.scsr-spinner { font-size: 13px; color: var(--text-muted); padding: 24px 0; text-align: center; }
+</style>
+
+<div class="scoped-search-wrap" id="scopedSearchWrap-{{ scope }}-{{ scope_id }}">
+  <div class="scoped-search-bar">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input class="scoped-search-input" type="text"
+      id="scopedQ-{{ scope }}-{{ scope_id }}"
+      placeholder="Search {% if scope == 'channel' %}videos, photos, speech, scenes, faces{% elif scope == 'playlist' %}videos, speech, scenes{% else %}photos, faces{% endif %}…"
+      autocomplete="off" />
+    <span class="scoped-search-kbd">/ to focus</span>
+    <button class="scoped-search-clear" id="scopedClear-{{ scope }}-{{ scope_id }}" type="button">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+  <div class="scoped-search-results" id="scopedResults-{{ scope }}-{{ scope_id }}">
+    <div class="scsr-tabs" id="scopedTabs-{{ scope }}-{{ scope_id }}"></div>
+    <div id="scopedPanes-{{ scope }}-{{ scope_id }}"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const SCOPE    = '{{ scope }}';
+  const SCOPE_ID = '{{ scope_id }}';
+  const KEY      = `${SCOPE}-${SCOPE_ID}`;
+
+  const input    = document.getElementById(`scopedQ-${KEY}`);
+  const clearBtn = document.getElementById(`scopedClear-${KEY}`);
+  const results  = document.getElementById(`scopedResults-${KEY}`);
+  const tabsEl   = document.getElementById(`scopedTabs-${KEY}`);
+  const panesEl  = document.getElementById(`scopedPanes-${KEY}`);
+
+  if (!input) return;
+
+  let timer = null;
+
+  function clearSearch() {
+    input.value = '';
+    clearBtn.classList.remove('visible');
+    results.classList.remove('visible');
+    tabsEl.innerHTML = '';
+    panesEl.innerHTML = '';
+  }
+
+  clearBtn.addEventListener('click', clearSearch);
+
+  // "/" key focuses the search bar
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== input &&
+        !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+      e.preventDefault();
+      input.focus();
+    }
+    if (e.key === 'Escape' && document.activeElement === input) {
+      clearSearch();
+      input.blur();
+    }
+  });
+
+  input.addEventListener('input', function () {
+    const q = this.value.trim();
+    clearBtn.classList.toggle('visible', !!q);
+    clearTimeout(timer);
+    if (!q) { clearSearch(); return; }
+    timer = setTimeout(() => runSearch(q), 350);
+  });
+
+  function runSearch(q) {
+    results.classList.add('visible');
+    tabsEl.innerHTML  = '';
+    panesEl.innerHTML = `<div class="scsr-spinner">Searching…</div>`;
+    const url = `/api/search/scoped/?q=${encodeURIComponent(q)}&scope=${SCOPE}&id=${encodeURIComponent(SCOPE_ID)}`;
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(r => r.json())
+      .then(data => render(data, q))
+      .catch(() => { panesEl.innerHTML = `<div class="scsr-empty">Search failed — try again.</div>`; });
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function thumb(url, sq) {
+    const cls = sq ? 'scsr-thumb scsr-thumb-sq' : 'scsr-thumb';
+    const img = url ? `<img src="${esc(url)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;" />`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/></svg>`;
+    return `<div class="${cls}">${img}</div>`;
+  }
+
+  function render(data, q) {
+    tabsEl.innerHTML = '';
+    panesEl.innerHTML = '';
+
+    if (!data.total) {
+      panesEl.innerHTML = `<div class="scsr-empty">No results for "<strong>${esc(q)}</strong>"</div>`;
+      return;
+    }
+
+    const tabs = [];
+    function addTab(id, label, n) { if (n) tabs.push({ id, label, n }); }
+    function addPane(id, html) {
+      const d = document.createElement('div');
+      d.className = 'scsr-pane'; d.id = `scsr-${KEY}-${id}`;
+      d.innerHTML = html; panesEl.appendChild(d);
+    }
+
+    // Videos
+    if (data.videos.length) {
+      addTab('videos', 'Videos', data.videos.length);
+      addPane('videos', data.videos.map(v =>
+        `<a href="${esc(v.url)}" class="scsr-row">
+          ${thumb(v.thumbnail_url)}
+          <div>
+            <div class="scsr-title">${esc(v.title)}</div>
+            <div class="scsr-meta">${v.duration ? Math.round(v.duration/60) + ' min' : ''}</div>
+          </div>
+        </a>`).join(''));
+    }
+
+    // People
+    if (data.people.length) {
+      addTab('people', 'People', data.people.length);
+      addPane('people', `<div class="scsr-people">${data.people.map(p =>
+        `<a href="/faces/${p.identity_id}/" class="scsr-person">
+          <div class="scsr-face">${p.sample_crop
+            ? `<img src="${esc(p.sample_crop)}" alt="${esc(p.name)}" />`
+            : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>`}
+          </div>
+          <div class="scsr-person-name">${esc(p.name)||'Unknown'}</div>
+          <div class="scsr-person-meta">
+            ${p.video_count?`${p.video_count}v`:''}${p.video_count&&p.photo_count?' · ':''}${p.photo_count?`${p.photo_count}p`:''}
+          </div>
+        </a>`).join('')}</div>`);
+    }
+
+    // Speech
+    if (data.speech.length) {
+      const n = data.speech.reduce((s, v) => s + v.moments.length, 0);
+      addTab('speech', 'Speech', n);
+      addPane('speech', data.speech.map(s =>
+        `<div class="scsr-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${thumb(s.thumbnail_url)}
+            <div class="scsr-title">${esc(s.video_title)}</div>
+          </div>
+          <div class="scsr-moments">${s.moments.map(m =>
+            `<a href="${esc(m.url)}" class="scsr-moment">
+              <span class="scsr-ts">${esc(m.time_fmt)}</span>
+              <span>${esc(m.text)}</span>
+            </a>`).join('')}
+          </div>
+        </div>`).join(''));
+    }
+
+    // Scenes
+    if (data.scenes.length) {
+      const n = data.scenes.reduce((s, v) => s + v.moments.length, 0);
+      addTab('scenes', 'Scenes', n);
+      addPane('scenes', data.scenes.map(s =>
+        `<div class="scsr-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${thumb(s.thumbnail_url)}
+            <div class="scsr-title">${esc(s.video_title)}</div>
+          </div>
+          <div class="scsr-moments">${s.moments.map(m =>
+            `<a href="${esc(m.url)}" class="scsr-moment">
+              <span class="scsr-ts">${esc(m.time_fmt)}</span>
+              <span class="scsr-meta">${m.source==='scene'?'🖼 ':'📦 '}${esc(m.text)}</span>
+            </a>`).join('')}
+          </div>
+        </div>`).join(''));
+    }
+
+    // Photos
+    if (data.photos.length) {
+      addTab('photos', 'Photos', data.photos.length);
+      addPane('photos', `<div class="scsr-photos">${data.photos.map(p =>
+        `<a href="${esc(p.url)}" class="scsr-photo" title="${esc(p.title)}">
+          ${p.thumbnail_url ? `<img src="${esc(p.thumbnail_url)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;" />` : ''}
+        </a>`).join('')}</div>`);
+    }
+
+    // Build tabs
+    tabs.forEach((t, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'scsr-tab' + (i === 0 ? ' active' : '');
+      btn.innerHTML = `${esc(t.label)} <span class="scsr-badge">${t.n}</span>`;
+      btn.addEventListener('click', () => {
+        tabsEl.querySelectorAll('.scsr-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        panesEl.querySelectorAll('.scsr-pane').forEach(p => p.classList.remove('active'));
+        const pane = document.getElementById(`scsr-${KEY}-${t.id}`);
+        if (pane) pane.classList.add('active');
+      });
+      tabsEl.appendChild(btn);
+    });
+    // Activate first tab
+    if (tabs.length) {
+      const first = document.getElementById(`scsr-${KEY}-${tabs[0].id}`);
+      if (first) first.classList.add('active');
+    }
+  }
+})();
+</script>

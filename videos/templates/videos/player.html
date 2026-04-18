@@ -637,8 +637,31 @@
       </select>
       {% endif %}
 
+      <!-- Event filter dropdown -->
+      {% if all_events %}
+      <div class="filter-divider"></div>
+      <select class="filter-select {% if current_event_slug %}active{% endif %}" onchange="applySelect('event', this.value)" title="Filter by event">
+        <option value="" {% if not current_event_slug %}selected{% endif %}>📅 Event: All</option>
+        {% for ev in all_events %}
+        <option value="{{ ev.slug }}" {% if current_event_slug == ev.slug %}selected{% endif %}>{{ ev.name }}{% if ev.event_date %} ({{ ev.event_date|date:"M j, Y" }}){% endif %}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+
+      <!-- Event filter chip — shown when scoped to an event -->
+      {% if current_event %}
+      <div class="filter-divider"></div>
+      <div class="filter-chip" style="display:inline-flex;align-items:center;gap:6px;
+           padding:5px 10px;border-radius:20px;background:var(--accent-soft);
+           border:1px solid var(--accent);font-size:12px;font-weight:600;color:var(--accent);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        {{ current_event.name }}
+        <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}" style="color:var(--accent);text-decoration:none;margin-left:2px;">×</a>
+      </div>
+      {% endif %}
+
       <!-- Clear filters (shown when any filter is active) -->
-      {% if current_sort or current_duration or current_date or current_cat %}
+      {% if current_sort or current_duration or current_date or current_cat or current_event_slug %}
       <div class="filter-divider"></div>
       <button class="filter-clear" onclick="clearFilters()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -710,6 +733,11 @@
       {% if playlist_matches %}
       <button class="search-tab" onclick="switchTab('playlists', this)">
         Playlists <span class="tab-count">{{ playlist_matches|length }}</span>
+      </button>
+      {% endif %}
+      {% if event_matches %}
+      <button class="search-tab" onclick="switchTab('events', this)">
+        Events <span class="tab-count">{{ event_matches|length }}</span>
       </button>
       {% endif %}
       {% if photo_matches %}
@@ -1058,6 +1086,38 @@
               Playlist · {% if pl.owner.channel %}{{ pl.owner.channel.name }}{% else %}{{ pl.owner.username }}{% endif %}
               · {{ pl.items.count }} video{{ pl.items.count|pluralize }}
             </div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Events tab -->
+    {% if event_matches %}
+    <div class="search-section active" id="tab-events">
+      <div class="playlist-matches">
+        {% for ev in event_matches %}
+        <a href="{% url 'event_detail' ev.slug %}" class="playlist-result-row" style="align-items:center;">
+          <div class="playlist-result-thumb" style="background:var(--surface-3);display:flex;align-items:center;justify-content:center;">
+            {% if ev.cover_photo and ev.cover_photo.thumbnail %}
+            <img src="{{ ev.cover_photo.thumbnail_url }}" alt="{{ ev.name }}" style="width:100%;height:100%;object-fit:cover;" />
+            {% else %}
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            {% endif %}
+          </div>
+          <div class="playlist-result-info">
+            <div class="playlist-result-name">{{ ev.name }}</div>
+            <div class="playlist-result-meta">
+              Event{% if ev.event_date %} · {{ ev.event_date|date:"F j, Y" }}{% endif %}
+              · {{ ev.ev_photo_count }} photo{{ ev.ev_photo_count|pluralize }}
+              · {{ ev.ev_video_count }} video{{ ev.ev_video_count|pluralize }}
+            </div>
+          </div>
+          <div style="margin-left:auto;flex-shrink:0;">
+            <span style="font-size:11px;padding:4px 10px;border-radius:20px;background:var(--accent-soft);color:var(--accent);font-weight:600;">
+              Browse →
+            </span>
           </div>
         </a>
         {% endfor %}
