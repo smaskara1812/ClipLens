@@ -6,8 +6,9 @@ from .models import (
     Comment, CommentLike, VideoLike, Playlist, PlaylistItem,
     WatchHistory, SavedVideo, WatchTimeEntry, VideoChapter,
     EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
-    FaceIdentity, DetectedFace, SpeakerIdentity, SpeakerFaceSuggestion, UserProfile,
-    Photo, Album, AlbumPhoto,
+    FaceIdentity, FaceIdentityNickname, DetectedFace,
+    SpeakerIdentity, SpeakerFaceSuggestion, UserProfile,
+    Photo, Album, AlbumPhoto, Event,
 )
 
 
@@ -149,16 +150,34 @@ class VideoFrameAdmin(admin.ModelAdmin):
     readonly_fields = ['timestamp', 'labels', 'face_count', 'face_names', 'description']
 
 
+class FaceIdentityNicknameInline(admin.TabularInline):
+    model = FaceIdentityNickname
+    extra = 1
+    fields = ('nickname', 'added_by', 'created_at')
+    readonly_fields = ('created_at',)
+    raw_id_fields = ('added_by',)
+
+
 @admin.register(FaceIdentity)
 class FaceIdentityAdmin(admin.ModelAdmin):
     list_display   = ['name', 'is_auto_named', 'face_count_display', 'created_at']
     search_fields  = ['name']
     list_filter    = ['is_auto_named']
     readonly_fields= ['ref_embedding', 'thumbnail', 'created_at']
+    inlines        = [FaceIdentityNicknameInline]
 
     def face_count_display(self, obj):
         return obj.faces.count()
     face_count_display.short_description = 'Detected Faces'
+
+
+@admin.register(FaceIdentityNickname)
+class FaceIdentityNicknameAdmin(admin.ModelAdmin):
+    list_display   = ['nickname', 'identity', 'added_by', 'created_at']
+    search_fields  = ['nickname', 'identity__name']
+    list_filter    = ['created_at']
+    raw_id_fields  = ['identity', 'added_by']
+    readonly_fields= ['created_at']
 
 
 @admin.register(DetectedFace)
@@ -248,3 +267,33 @@ class WatchTimeEntryAdmin(admin.ModelAdmin):
     list_filter   = ['date']
     search_fields = ['video__title']
     raw_id_fields = ['video']
+
+
+@admin.register(Event)
+class EventAdmin(admin.ModelAdmin):
+    list_display       = ['name', 'event_date', 'photo_count_display', 'video_count_display', 'created_by', 'created_at']
+    list_filter        = ['event_date', 'created_by']
+    search_fields      = ['name', 'description', 'tags']
+    prepopulated_fields = {'slug': ('name',)}
+    readonly_fields    = ['created_at', 'photo_count_display', 'video_count_display']
+    raw_id_fields      = ['cover_photo', 'album', 'playlist', 'created_by']
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'slug', 'description', 'event_date', 'tags'),
+        }),
+        ('Cover & Collections', {
+            'fields': ('cover_photo', 'album', 'playlist'),
+        }),
+        ('Meta', {
+            'fields': ('created_by', 'created_at', 'photo_count_display', 'video_count_display'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    def photo_count_display(self, obj):
+        return obj.photo_count
+    photo_count_display.short_description = 'Photos'
+
+    def video_count_display(self, obj):
+        return obj.video_count
+    video_count_display.short_description = 'Videos'

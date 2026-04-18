@@ -48,12 +48,32 @@ class Command(BaseCommand):
             default=False,
             help='Run tasks synchronously in this process instead of via Celery',
         )
+        parser.add_argument(
+            '--video-id',
+            type=str,
+            default=None,
+            metavar='UUID',
+            help='Limit to a single video by UUID',
+        )
+        parser.add_argument(
+            '--channel',
+            type=str,
+            default=None,
+            metavar='SLUG',
+            help='Limit to videos in a specific channel (by slug)',
+        )
 
     def handle(self, *args, **options):
-        dry_run  = options['dry_run']
-        run_sync = options['sync']
+        dry_run      = options['dry_run']
+        run_sync     = options['sync']
+        video_id     = options.get('video_id')
+        channel_slug = options.get('channel')
 
         ready_videos = Video.objects.filter(status=Video.STATUS_READY)
+        if video_id:
+            ready_videos = ready_videos.filter(id=video_id)
+        if channel_slug:
+            ready_videos = ready_videos.filter(channel__slug=channel_slug)
 
         # A video is "missing descriptions" if either:
         #   (a) it has no VideoFrame rows at all, OR

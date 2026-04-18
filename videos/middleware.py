@@ -1,3 +1,40 @@
+import re
+from django.shortcuts import redirect
+from django.conf import settings
+
+
+class LoginRequiredMiddleware:
+    """
+    Forces all users to be authenticated before accessing any page.
+    Exempt: login, register, embed pages, HLS stream API, health check, media files.
+    """
+
+    # Paths that are always public — regex patterns matched against request.path
+    EXEMPT = re.compile(
+        r'^('
+        r'/login/'
+        r'|/register/'
+        r'|/embed/[^/]+/'          # public embed iframe
+        r'|/api/videos/[^/]+/stream/'   # HLS manifest for embed players
+        r'|/api/health/'
+        r'|/media/'                # dev media file serving
+        r'|/static/'
+        r'|/admin/'                # Django admin has its own auth
+        r'|/__debug__/'            # Django debug toolbar
+        r')'
+    )
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if not request.user.is_authenticated and not self.EXEMPT.match(request.path):
+            login_url = settings.LOGIN_URL
+            next_url  = request.get_full_path()
+            return redirect(f'{login_url}?next={next_url}')
+        return self.get_response(request)
+
+
 class HLSHeadersMiddleware:
     """
     Adds correct CORS + Content-Type headers for HLS media files (.m3u8, .ts).

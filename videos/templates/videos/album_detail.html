@@ -130,6 +130,8 @@
       {% if not album.is_smart %}
       <button class="btn btn-ghost btn-sm" id="selectModeBtn" onclick="toggleSelectMode()">Select</button>
       {% endif %}
+      <button class="btn btn-ghost btn-sm" onclick="openAlbumEdit()">Edit</button>
+      <button class="btn btn-ghost btn-sm" style="color:#ef4444;border-color:rgba(239,68,68,.3);" onclick="deleteAlbum()">Delete</button>
       {% endif %}
     </div>
   </div>
@@ -263,4 +265,175 @@ async function bulkDelete() {
   }
 }
 </script>
+
+{% if not is_shared_view and request.user == album.owner %}
+<style>
+  .alb-edit-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,.5); align-items: center; justify-content: center;
+  }
+  .alb-edit-backdrop.open { display: flex; }
+  .alb-edit-modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 28px 28px 24px;
+    width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto;
+  }
+  .alb-edit-modal h2 { font-size: 17px; font-weight: 800; margin-bottom: 18px; }
+  .alb-edit-field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 5px; }
+  .alb-edit-field label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .alb-edit-field input, .alb-edit-field textarea {
+    padding: 8px 11px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; outline: none; width: 100%; box-sizing: border-box;
+  }
+  .alb-edit-field input:focus, .alb-edit-field textarea:focus { border-color: var(--accent); }
+  .alb-edit-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .alb-edit-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+  .alb-thumb-picker-label { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+  .alb-thumb-picker {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+    gap: 5px; max-height: 200px; overflow-y: auto;
+    padding: 4px; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+    background: var(--surface-2);
+  }
+  .alb-thumb-picker-item {
+    aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
+    cursor: pointer; border: 2px solid transparent; transition: border-color .12s; position: relative;
+  }
+  .alb-thumb-picker-item img { width: 100%; height: 100%; object-fit: cover; }
+  .alb-thumb-picker-item.selected { border-color: var(--accent); }
+  .alb-thumb-picker-item.selected::after {
+    content: '✓'; position: absolute; bottom: 3px; right: 4px;
+    font-size: 11px; font-weight: 800; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,.8);
+  }
+  .alb-thumb-none {
+    aspect-ratio: 1; border-radius: var(--radius-sm); cursor: pointer;
+    border: 2px solid transparent; transition: border-color .12s;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-3); color: var(--text-subtle); font-size: 10px;
+    text-align: center; font-weight: 600;
+  }
+  .alb-thumb-none.selected { border-color: var(--accent); color: var(--accent); }
+  .alb-thumb-picker-hint { font-size: 11px; color: var(--text-subtle); margin-top: 6px; }
+</style>
+
+<div class="alb-edit-backdrop" id="albEditBackdrop">
+  <div class="alb-edit-modal">
+    <h2>Edit Album</h2>
+    <div class="alb-edit-field">
+      <label>Title</label>
+      <input type="text" id="albTitle" value="{{ album.title|escape }}" />
+    </div>
+    <div class="alb-edit-field">
+      <label>Description</label>
+      <textarea id="albDesc" rows="3">{{ album.description|escape }}</textarea>
+    </div>
+    <div class="alb-edit-field">
+      <label class="alb-edit-check">
+        <input type="checkbox" id="albPublic" {% if album.is_public %}checked{% endif %} style="width:16px;height:16px;" />
+        Public album
+      </label>
+    </div>
+
+    {% if photos %}
+    <div style="margin-bottom:14px;">
+      <div class="alb-thumb-picker-label">Cover thumbnail</div>
+      <div class="alb-thumb-picker" id="albThumbPicker">
+        <div class="alb-thumb-none {% if not album.cover_photo_id %}selected{% endif %}"
+             data-id="" onclick="selectAlbThumb(this)">None</div>
+        {% for photo in photos %}
+        {% if photo.thumbnail %}
+        <div class="alb-thumb-picker-item {% if album.cover_photo_id == photo.id %}selected{% endif %}"
+             data-id="{{ photo.id }}" onclick="selectAlbThumb(this)">
+          <img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <p class="alb-thumb-picker-hint">Pick any photo in this album. The cover is only used for the album card and header preview.</p>
+    </div>
+    {% else %}
+    <p class="alb-thumb-picker-hint" style="margin-bottom:14px;">Add photos to this album before you can set a custom cover.</p>
+    {% endif %}
+
+    <div class="alb-edit-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeAlbumEdit()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="albSaveBtn" onclick="saveAlbumEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _albCoverId = '{{ album.cover_photo_id|default:"" }}';
+
+function selectAlbThumb(el) {
+  const picker = document.getElementById('albThumbPicker');
+  if (!picker) return;
+  picker.querySelectorAll('.alb-thumb-picker-item, .alb-thumb-none').forEach(n => n.classList.remove('selected'));
+  el.classList.add('selected');
+  _albCoverId = el.dataset.id || '';
+}
+
+function openAlbumEdit() {
+  _albCoverId = '{{ album.cover_photo_id|default:"" }}';
+  const picker = document.getElementById('albThumbPicker');
+  if (picker) {
+    picker.querySelectorAll('.alb-thumb-picker-item, .alb-thumb-none').forEach(n => {
+      n.classList.toggle('selected', (n.dataset.id || '') === _albCoverId);
+    });
+  }
+  document.getElementById('albEditBackdrop').classList.add('open');
+  setTimeout(() => document.getElementById('albTitle').focus(), 50);
+}
+function closeAlbumEdit() {
+  document.getElementById('albEditBackdrop').classList.remove('open');
+}
+document.getElementById('albEditBackdrop').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeAlbumEdit();
+});
+
+async function saveAlbumEdit() {
+  const title = document.getElementById('albTitle').value.trim();
+  if (!title) { showToast('error', 'Title is required'); return; }
+  const btn = document.getElementById('albSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const res = await fetch(`/api/albums/${ALBUM_ID}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+    body: JSON.stringify({
+      title,
+      description: document.getElementById('albDesc').value.trim(),
+      is_public:   document.getElementById('albPublic').checked,
+      cover_photo_id: _albCoverId || null,
+    }),
+  });
+  btn.disabled = false; btn.textContent = 'Save';
+  if (res.ok) {
+    closeAlbumEdit();
+    showToast('success', 'Album updated');
+    setTimeout(() => location.reload(), 700);
+  } else {
+    const err = await res.json().catch(() => ({}));
+    showToast('error', err.error || 'Failed to save changes');
+  }
+}
+
+async function deleteAlbum() {
+  if (!confirm('Delete this album?\n\nPhotos inside will remain in your library — only the album itself will be removed.')) return;
+  const res = await fetch(`/api/albums/${ALBUM_ID}/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+  });
+  if (res.ok) {
+    showToast('success', 'Album deleted');
+    setTimeout(() => { window.location.href = '{% url "albums" %}'; }, 700);
+  } else {
+    showToast('error', 'Failed to delete album');
+  }
+}
+</script>
+{% endif %}
 {% endblock %}

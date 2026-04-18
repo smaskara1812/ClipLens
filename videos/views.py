@@ -35,8 +35,8 @@ from .models import (
     Comment, CommentLike, VideoChapter, VideoLike,
     Playlist, PlaylistItem, WatchHistory, SavedVideo,
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
-    FaceIdentity, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
-    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment,
+    FaceIdentity, FaceIdentityNickname, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
+    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event,
 )
 from .serializers import (
     VideoListSerializer, VideoDetailSerializer, VideoUploadSerializer,
@@ -829,18 +829,34 @@ def player_page(request):
             .exclude(status=DetectedFace.STATUS_REJECTED)
             .select_related('video', 'video__channel', 'identity')
         )
+        # Build identity ID set matching name OR any nickname
+        _nick_ids_video = (
+            FaceIdentityNickname.objects
+            .filter(nickname__icontains=q)
+            .values_list('identity_id', flat=True)
+        )
         if _can_use_fuzzy_search():
             _people_fuzzy = _postgres_fuzzy_filter(
                 FaceIdentity.objects.exclude(name=''),
                 q,
                 ('name',),
             )
+            _nick_fuzzy_ids = (
+                FaceIdentityNickname.objects
+                .filter(nickname__trigram_similar=q)
+                .values_list('identity_id', flat=True)
+            )
             _people_qs = _people_qs.filter(
                 Q(identity__name__icontains=q)
                 | Q(identity_id__in=_people_fuzzy.values('id'))
+                | Q(identity_id__in=_nick_ids_video)
+                | Q(identity_id__in=_nick_fuzzy_ids)
             )
         else:
-            _people_qs = _people_qs.filter(identity__name__icontains=q)
+            _people_qs = _people_qs.filter(
+                Q(identity__name__icontains=q)
+                | Q(identity_id__in=_nick_ids_video)
+            )
 
         for df in _people_qs.order_by('identity_id', 'video_id', 'timestamp')[:300]:
             iid = df.identity_id
@@ -868,18 +884,33 @@ def player_page(request):
             .exclude(status=DetectedFace.STATUS_REJECTED)
             .select_related('photo', 'photo__channel', 'identity')
         )
+        _nick_ids_photo = (
+            FaceIdentityNickname.objects
+            .filter(nickname__icontains=q)
+            .values_list('identity_id', flat=True)
+        )
         if _can_use_fuzzy_search():
             _people_fuzzy = _postgres_fuzzy_filter(
                 FaceIdentity.objects.exclude(name=''),
                 q,
                 ('name',),
             )
+            _nick_fuzzy_photo_ids = (
+                FaceIdentityNickname.objects
+                .filter(nickname__trigram_similar=q)
+                .values_list('identity_id', flat=True)
+            )
             _people_photo_qs = _people_photo_qs.filter(
                 Q(identity__name__icontains=q)
                 | Q(identity_id__in=_people_fuzzy.values('id'))
+                | Q(identity_id__in=_nick_ids_photo)
+                | Q(identity_id__in=_nick_fuzzy_photo_ids)
             )
         else:
-            _people_photo_qs = _people_photo_qs.filter(identity__name__icontains=q)
+            _people_photo_qs = _people_photo_qs.filter(
+                Q(identity__name__icontains=q)
+                | Q(identity_id__in=_nick_ids_photo)
+            )
 
         for df in _people_photo_qs.order_by('identity_id', 'photo_id', 'id')[:300]:
             iid = df.identity_id
@@ -1625,14 +1656,24 @@ def admin_commands_page(request):
     categories = list(Category.objects.values('name', 'slug').order_by('name'))
     users      = list(User.objects.values('id', 'username').order_by('username'))
     videos     = list(
-        Video.objects.values('id', 'title', 'status')
+        Video.objects.values('id', 'title', 'status', 'channel__name')
         .order_by('-created_at')[:400]
+    )
+    playlists = list(
+        Playlist.objects.values('id', 'title')
+        .order_by('title')[:200]
+    )
+    albums = list(
+        Album.objects.values('id', 'title')
+        .order_by('title')[:200]
     )
     return render(request, 'videos/admin_commands.html', {
         'channels':   channels,
         'categories': categories,
         'users':      users,
         'videos':     videos,
+        'playlists':  playlists,
+        'albums':     albums,
     })
 
 
@@ -2226,6 +2267,16 @@ def video_upload(request):
     if thumbnail_file:
         video.thumbnail = thumbnail_file
     video.save()
+
+    # Optionally add to a playlist (used by folder/event uploads)
+    playlist_id = request.data.get('playlist_id', '').strip()
+    if playlist_id:
+        try:
+            _pl = Playlist.objects.get(id=playlist_id)
+            _order = PlaylistItem.objects.filter(playlist=_pl).count()
+            PlaylistItem.objects.get_or_create(playlist=_pl, video=video, defaults={'order': _order})
+        except Playlist.DoesNotExist:
+            pass
 
     # Notify subscribers
     _notify_subscribers_new_video(video)
@@ -4054,12 +4105,12 @@ def face_identity_page(request, identity_id):
     """
     from django.core.paginator import Paginator
 
-    identity      = get_object_or_404(FaceIdentity, id=identity_id)
-    user_channels = _user_channels(request.user)
-    user_channel_ids = list(user_channels.values_list('id', flat=True))
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
 
-    if not user_channel_ids:
-        can_edit = False
+    # Editors/admins can see all face identities globally — identities are shared across channels.
+    # Viewers are restricted to identities that appear in content they can access.
+    if _is_editor(request.user):
+        can_edit = True
         visible_faces = (
             DetectedFace.objects
             .filter(identity=identity)
@@ -4069,6 +4120,9 @@ def face_identity_page(request, identity_id):
             .order_by('video_id', 'photo_id', 'timestamp')
         )
     else:
+        # Viewer: restrict to faces from channels they can access
+        user_channels    = _user_channels(request.user)
+        user_channel_ids = list(user_channels.values_list('id', flat=True))
         own_face_q = (
             Q(video__channel_id__in=user_channel_ids)
             | Q(photo__channel_id__in=user_channel_ids)
@@ -4078,11 +4132,7 @@ def face_identity_page(request, identity_id):
         if not appears_in_mine:
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied
-        # Viewers can browse but cannot edit identities — only editors/admins can modify
-        try:
-            can_edit = request.user.profile.is_editor
-        except Exception:
-            can_edit = request.user.is_superuser
+        can_edit = False
         visible_faces = (
             DetectedFace.objects
             .filter(identity=identity)
@@ -4177,28 +4227,30 @@ def face_identity_page(request, identity_id):
     paginator = Paginator(all_groups, 5)
     page_obj  = paginator.get_page(request.GET.get('page', 1))
 
-    if user_channel_ids:
-        mergeable_ids = (
-            DetectedFace.objects
-            .filter(Q(video__channel_id__in=user_channel_ids) | Q(photo__channel_id__in=user_channel_ids))
-            .exclude(identity_id=identity.pk)
-            .values_list('identity_id', flat=True)
-            .distinct()
-        )
-        all_identities = FaceIdentity.objects.filter(id__in=mergeable_ids).order_by('name')
+    # Merge dropdown: editors see all identities globally; viewers see identities in their channels
+    if can_edit:
+        all_identities = FaceIdentity.objects.exclude(pk=identity.pk).order_by('name')
     else:
-        all_identities = FaceIdentity.objects.none()
+        _vc_ids = user_channel_ids if 'user_channel_ids' in dir() else []
+        if _vc_ids:
+            _mergeable = (
+                DetectedFace.objects
+                .filter(Q(video__channel_id__in=_vc_ids) | Q(photo__channel_id__in=_vc_ids))
+                .exclude(identity_id=identity.pk)
+                .values_list('identity_id', flat=True)
+                .distinct()
+            )
+            all_identities = FaceIdentity.objects.filter(id__in=_mergeable).order_by('name')
+        else:
+            all_identities = FaceIdentity.objects.none()
 
+    # Editors can delete any identity; viewers cannot delete
     can_delete = False
     if can_edit:
+        # Deletable if ALL detected faces for this identity have crop images (none are ghost rows)
         total_all = DetectedFace.objects.filter(identity=identity).count()
-        my_faces_cnt = (
-            DetectedFace.objects
-            .filter(identity=identity)
-            .filter(Q(video__channel_id__in=user_channel_ids) | Q(photo__channel_id__in=user_channel_ids))
-            .count()
-        )
-        can_delete = (total_all == my_faces_cnt)
+        has_crops = DetectedFace.objects.filter(identity=identity).exclude(crop_path='').count()
+        can_delete = (total_all == has_crops)
 
     # ── Co-appearances ────────────────────────────────────────────────────────
     # Find identities who appear in the same videos or photos as this identity,
@@ -4260,6 +4312,13 @@ def face_identity_page(request, identity_id):
     _total_photo_count = sum(1 for g in all_groups if g['kind'] == 'photo')
     _has_audio         = identity.speaker_identities.exists()
 
+    nicknames = list(
+        FaceIdentityNickname.objects
+        .filter(identity=identity)
+        .order_by('created_at')
+        .values('id', 'nickname')
+    )
+
     return render(request, 'videos/face_identity.html', {
         'identity':          identity,
         'page_obj':          page_obj,
@@ -4274,6 +4333,7 @@ def face_identity_page(request, identity_id):
         'can_delete':        can_delete,
         'back_url':          back_url,
         'co_appearances':       co_appearances,
+        'nicknames':            nicknames,
         'frame_interval':       getattr(settings, 'FRAME_INTERVAL_SECONDS', 5),
         'unread_count':         _unread_count(request),
     })
@@ -4293,13 +4353,11 @@ def face_set_status(request, face_id):
     """
     POST /api/faces/crops/<id>/status/
     Body: {"status": "confirmed" | "rejected" | "unreviewed"}
-    Only the owner of the source video/photo channel can set its status.
+    Editor/admin only — face identities are shared globally across channels.
     """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
     face = get_object_or_404(DetectedFace, id=face_id)
-    user_channels = _user_channels(request.user)
-    owner_channel_id = face.video.channel_id if face.video_id else (face.photo.channel_id if face.photo_id else None)
-    if not user_channels.exists() or owner_channel_id is None or not user_channels.filter(pk=owner_channel_id).exists():
-        return Response({'error': 'Forbidden — this crop belongs to another channel.'}, status=403)
 
     new_status = request.data.get('status', '').strip()
     valid = {DetectedFace.STATUS_CONFIRMED, DetectedFace.STATUS_REJECTED, DetectedFace.STATUS_UNREVIEWED}
@@ -4323,13 +4381,11 @@ def face_set_thumbnail(request, face_id):
     """
     POST /api/faces/crops/<id>/set-thumbnail/
     Sets the crop as the thumbnail for its FaceIdentity.
-    Only the owner of the source video/photo channel can do this.
+    Editor/admin only — face identities are shared globally across channels.
     """
-    face = get_object_or_404(DetectedFace, id=face_id)
-    user_channels = _user_channels(request.user)
-    owner_channel_id = face.video.channel_id if face.video_id else (face.photo.channel_id if face.photo_id else None)
-    if not user_channels.exists() or owner_channel_id is None or not user_channels.filter(pk=owner_channel_id).exists():
+    if not _is_editor(request.user):
         return Response({'error': 'Forbidden.'}, status=403)
+    face = get_object_or_404(DetectedFace, id=face_id)
     if not face.crop_path:
         return Response({'error': 'This crop has no image.'}, status=400)
 
@@ -4348,17 +4404,11 @@ def face_identity_rename(request, identity_id):
     """
     POST/PATCH /api/faces/<id>/rename/
     Body: {"name": "John Doe"}
-    Any user who has this identity in at least one of their videos/photos can rename it.
-    The rename is global — all channels that share this identity see the new name.
+    Editor/admin only — rename is global across all channels that share this identity.
     """
-    identity      = get_object_or_404(FaceIdentity, id=identity_id)
-    user_channels = _user_channels(request.user)
-    if not user_channels.exists():
-        return Response({'error': 'No channel.'}, status=403)
-    if not DetectedFace.objects.filter(identity=identity).filter(
-        Q(video__channel__in=user_channels) | Q(photo__channel__in=user_channels)
-    ).exists():
-        return Response({'error': 'Forbidden — this identity does not appear in your content.'}, status=403)
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
 
     name = request.data.get('name', '').strip()
     if not name:
@@ -4380,6 +4430,56 @@ def face_identity_rename(request, identity_id):
     return Response({'id': identity.pk, 'name': identity.name, 'speakers_synced': synced})
 
 
+@api_view(['GET', 'POST'])
+@api_login_required
+def face_identity_nicknames(request, identity_id):
+    """
+    GET  /api/faces/<id>/nicknames/  — list all nicknames for this identity
+    POST /api/faces/<id>/nicknames/  — add a nickname (editor/admin only)
+    Body: {"nickname": "Bobby"}
+    """
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
+    if request.method == 'POST':
+        if not _is_editor(request.user):
+            return Response({'error': 'Forbidden.'}, status=403)
+        nickname = request.data.get('nickname', '').strip()
+        if not nickname:
+            return Response({'error': 'nickname is required.'}, status=400)
+        if len(nickname) > 100:
+            return Response({'error': 'nickname too long (max 100 chars).'}, status=400)
+        obj, created = FaceIdentityNickname.objects.get_or_create(
+            identity=identity,
+            nickname=nickname,
+            defaults={'added_by': request.user},
+        )
+        if not created:
+            return Response({'error': 'This nickname already exists for this person.'}, status=400)
+        return Response({'id': obj.pk, 'nickname': obj.nickname}, status=201)
+
+    # GET — return all nicknames
+    nicks = list(
+        FaceIdentityNickname.objects
+        .filter(identity=identity)
+        .order_by('created_at')
+        .values('id', 'nickname')
+    )
+    return Response(nicks)
+
+
+@api_view(['DELETE'])
+@api_login_required
+def face_identity_nickname_delete(request, identity_id, nickname_id):
+    """
+    DELETE /api/faces/<id>/nicknames/<nick_id>/
+    Editor/admin only.
+    """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
+    nick = get_object_or_404(FaceIdentityNickname, id=nickname_id, identity_id=identity_id)
+    nick.delete()
+    return Response(status=204)
+
+
 @api_view(['POST'])
 @api_login_required
 def faces_cleanup_orphans(request):
@@ -4394,6 +4494,7 @@ def faces_cleanup_orphans(request):
     result = FaceIdentity.objects.filter(faces__isnull=True).delete()
     deleted_count = result[1].get('videos.FaceIdentity', 0)
     return Response({'deleted': deleted_count})
+
 
 
 @api_view(['GET'])
@@ -5037,10 +5138,30 @@ def photo_upload(request):
     if not file_obj:
         return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Basic content-type check
-    ct = getattr(file_obj, 'content_type', '')
-    if not ct.startswith('image/'):
-        return Response({'error': 'Only image files are accepted.'}, status=status.HTTP_400_BAD_REQUEST)
+    # Extension-based validation (more reliable than content-type for large/RAW files).
+    # Browsers often send 'application/octet-stream' for HEIC, PSD, RAW files.
+    ALLOWED_PHOTO_EXTS = {
+        # Standard web formats
+        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+        # High-quality / print formats
+        'tiff', 'tif',
+        # HEIC/HEIF — iPhone, modern cameras
+        'heic', 'heif',
+        # Photoshop / graphic editors
+        'psd', 'psb',
+        # Camera RAW formats (require rawpy if installed)
+        'cr2', 'cr3', 'nef', 'nrw', 'arw', 'srf', 'sr2',
+        'dng', 'orf', 'rw2', 'rwl', 'ptx', 'pef', 'raf', 'x3f',
+        # Other common raster formats
+        'avif',
+    }
+    ext = file_obj.name.rsplit('.', 1)[-1].lower() if '.' in file_obj.name else ''
+    ct  = getattr(file_obj, 'content_type', '') or ''
+    if ext not in ALLOWED_PHOTO_EXTS and not ct.startswith('image/'):
+        return Response(
+            {'error': f'File type ".{ext}" is not supported. Accepted: JPG, PNG, HEIC, TIFF, PSD, WebP, RAW formats.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     title = request.data.get('title', '').strip() or file_obj.name.rsplit('.', 1)[0]
 
@@ -5072,6 +5193,20 @@ def photo_upload(request):
         uploaded_by=request.user.username,
         status=Photo.STATUS_PENDING,
     )
+
+    # Optionally add to an album (used by folder/event uploads)
+    album_id = request.data.get('album_id', '').strip()
+    if album_id:
+        try:
+            _album = Album.objects.select_related('cover_photo').get(id=album_id)
+            _order = AlbumPhoto.objects.filter(album=_album).count()
+            AlbumPhoto.objects.create(album=_album, photo=photo, order=_order)
+            _update = {'photo_count': _order + 1}
+            if not _album.cover_photo_id:
+                _update['cover_photo'] = photo
+            Album.objects.filter(id=album_id).update(**_update)
+        except Album.DoesNotExist:
+            pass
 
     _tasks.analyze_photo_task.apply_async(
         args=[str(photo.id)],
@@ -5216,6 +5351,14 @@ def search_suggest(request):
     if request.user.is_authenticated:
         for name in FaceIdentity.objects.filter(name__icontains=q).values_list('name', flat=True)[:3]:
             _add(name, 'person')
+        # Also suggest from nicknames (deduplicated — only add the canonical name)
+        for nick_row in (
+            FaceIdentityNickname.objects
+            .filter(nickname__icontains=q)
+            .select_related('identity')
+            .values('identity__name')[:3]
+        ):
+            _add(nick_row['identity__name'], 'person')
 
     # Photo titles (if under limit)
     if len(suggestions) < 10:
@@ -5352,6 +5495,7 @@ def album_detail_page(request, album_id):
     return render(request, 'videos/album_detail.html', {
         'album':  album,
         'photos': photos,
+        'is_editor': _is_editor(request.user),
     })
 
 
@@ -5464,14 +5608,15 @@ def album_detail(request, album_id):
             .order_by('album_photos__order', 'album_photos__added_at')
         ) if not album.is_smart else _resolve_smart_album(album.smart_filter or {})
         return Response({
-            'id':           str(album.id),
-            'title':        album.title,
-            'description':  album.description,
-            'is_smart':     album.is_smart,
-            'smart_filter': album.smart_filter,
-            'is_public':    album.is_public,
-            'photo_count':  album.photo_count,
-            'share_url':    album.share_url,
+            'id':             str(album.id),
+            'title':          album.title,
+            'description':    album.description,
+            'is_smart':       album.is_smart,
+            'smart_filter':   album.smart_filter,
+            'is_public':      album.is_public,
+            'photo_count':    album.photo_count,
+            'share_url':      album.share_url,
+            'cover_photo_id': str(album.cover_photo_id) if album.cover_photo_id else None,
             'photos': [{'id': str(p.id), 'title': p.title, 'thumbnail_url': p.thumbnail_url,
                         'photo_url': p.photo_url} for p in photos_qs[:200]],
         })
@@ -5481,6 +5626,20 @@ def album_detail(request, album_id):
         for f in updatable:
             if f in request.data:
                 setattr(album, f, request.data[f])
+        if 'cover_photo_id' in request.data:
+            cp_id = request.data.get('cover_photo_id')
+            if cp_id in (None, ''):
+                album.cover_photo = None
+            else:
+                member_qs = (
+                    Photo.objects.filter(album_photos__album=album)
+                ) if not album.is_smart else _resolve_smart_album(album.smart_filter or {})
+                if not member_qs.filter(id=cp_id).exists():
+                    return Response(
+                        {'error': 'Cover must be a photo that appears in this album.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                album.cover_photo_id = cp_id
         album.save()
         return Response({'ok': True})
 
@@ -5522,6 +5681,206 @@ def album_photos(request, album_id):
             photo_count=AlbumPhoto.objects.filter(album=album).count()
         )
         return Response({'ok': True})
+
+
+# ─── Events ──────────────────────────────────────────────────────────────────
+
+@login_required
+def events_page(request):
+    """GET /events/ — list all events."""
+    events = (
+        Event.objects
+        .select_related('album', 'album__cover_photo', 'playlist', 'cover_photo')
+        .annotate(
+            album_photo_count=Count('album__album_photos', distinct=True),
+            playlist_video_count=Count('playlist__items', distinct=True),
+        )
+        .order_by('-event_date', '-created_at')
+    )
+    return render(request, 'videos/events_list.html', {
+        'events':       events,
+        'is_editor':    _is_editor(request.user),
+        'unread_count': _unread_count(request),
+    })
+
+
+@login_required
+def event_detail_page(request, slug):
+    """GET /events/<slug>/ — event detail with videos + photos tabs."""
+    event = get_object_or_404(Event.objects.select_related('album', 'playlist', 'cover_photo'), slug=slug)
+
+    photos = []
+    if event.album_id:
+        photos = list(
+            Photo.objects
+            .filter(album_photos__album=event.album, status=Photo.STATUS_READY)
+            .order_by('album_photos__order', 'album_photos__added_at')
+            .only('id', 'title', 'thumbnail', 'width', 'height', 'file_size', 'status')
+        )
+
+    videos = []
+    if event.playlist_id:
+        videos = list(
+            Video.objects
+            .filter(playlist_items__playlist=event.playlist)
+            .order_by('playlist_items__order', 'playlist_items__added_at')
+            .only('id', 'title', 'thumbnail', 'duration', 'status', 'seek_sprite')
+        )
+
+    return render(request, 'videos/event_detail.html', {
+        'event':        event,
+        'photos':       photos,
+        'videos':       videos,
+        'is_editor':    _is_editor(request.user),
+        'unread_count': _unread_count(request),
+    })
+
+
+@login_required
+def events_upload_page(request):
+    """GET /events/upload/ — folder upload UI."""
+    if not _is_editor(request.user):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied
+    channels = _user_channels(request.user)
+    return render(request, 'videos/events_upload.html', {
+        'channels':     channels,
+        'is_editor':    True,
+        'unread_count': _unread_count(request),
+    })
+
+
+@api_view(['GET', 'POST'])
+@api_login_required
+def event_list_create(request):
+    """
+    GET  /api/events/ — list all events (lightweight)
+    POST /api/events/ — create a new event + auto-create Album and Playlist
+    Body: {name, description, event_date (YYYY-MM-DD), channel_id}
+    Returns: {id, slug, album_id, playlist_id}
+    """
+    if request.method == 'GET':
+        evts = Event.objects.all().order_by('-event_date', '-created_at')
+        return Response([{
+            'id':          e.pk,
+            'slug':        e.slug,
+            'name':        e.name,
+            'event_date':  str(e.event_date) if e.event_date else None,
+            'album_id':    str(e.album_id) if e.album_id else None,
+            'playlist_id': str(e.playlist_id) if e.playlist_id else None,
+        } for e in evts])
+
+    # POST — editor only
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    name = request.data.get('name', '').strip()
+    if not name:
+        return Response({'error': 'name is required.'}, status=400)
+
+    # Build unique slug
+    base_slug = slugify(name)[:240]
+    slug = base_slug
+    counter = 1
+    while Event.objects.filter(slug=slug).exists():
+        slug = f'{base_slug}-{counter}'
+        counter += 1
+
+    channel = None
+    channel_id = request.data.get('channel_id', '').strip()
+    if channel_id:
+        channel = _user_channels(request.user).filter(pk=channel_id).first()
+
+    event_date = request.data.get('event_date') or None
+
+    # Create the Album sub-container
+    album = Album.objects.create(
+        owner=request.user,
+        channel=channel,
+        title=name,
+        description=request.data.get('description', ''),
+        is_public=True,
+    )
+
+    # Create the Playlist sub-container
+    playlist = Playlist.objects.create(
+        owner=request.user,
+        title=name,
+        description=request.data.get('description', ''),
+        is_public=True,
+    )
+
+    event = Event.objects.create(
+        name=name,
+        slug=slug,
+        description=request.data.get('description', ''),
+        event_date=event_date,
+        tags=name,  # use name as initial tag; user can edit later
+        album=album,
+        playlist=playlist,
+        created_by=request.user,
+    )
+
+    return Response({
+        'id':          event.pk,
+        'slug':        event.slug,
+        'album_id':    str(album.id),
+        'playlist_id': str(playlist.id),
+    }, status=201)
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+@api_login_required
+def event_detail_api(request, event_id):
+    """
+    GET    /api/events/<id>/ — return event metadata + photos for thumbnail picker
+    PATCH  /api/events/<id>/ — update event metadata (name, description, event_date, tags, cover_photo_id)
+    DELETE /api/events/<id>/ — delete event (does NOT delete album/playlist)
+    Editor/admin only.
+    """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
+    event = get_object_or_404(Event.objects.select_related('album', 'cover_photo'), id=event_id)
+
+    if request.method == 'GET':
+        photos = []
+        if event.album_id:
+            photos = [
+                {'id': str(p.id), 'thumbnail_url': p.thumbnail_url}
+                for p in Photo.objects
+                    .filter(album_photos__album=event.album, status=Photo.STATUS_READY)
+                    .only('id', 'thumbnail')[:60]
+            ]
+        return Response({
+            'id':             event.pk,
+            'cover_photo_id': str(event.cover_photo_id) if event.cover_photo_id else None,
+            'photos':         photos,
+        })
+
+    if request.method == 'DELETE':
+        event.delete()
+        return Response(status=204)
+
+    # PATCH
+    updatable = ['name', 'description', 'event_date', 'tags']
+    for f in updatable:
+        if f in request.data:
+            setattr(event, f, request.data[f])
+    if 'name' in request.data and request.data['name'].strip():
+        new_slug = slugify(request.data['name'])[:240]
+        if new_slug != event.slug and not Event.objects.filter(slug=new_slug).exclude(pk=event.pk).exists():
+            event.slug = new_slug
+    if 'cover_photo_id' in request.data:
+        cp_id = request.data['cover_photo_id']
+        if cp_id:
+            try:
+                event.cover_photo = Photo.objects.get(id=cp_id)
+            except (Photo.DoesNotExist, Exception):
+                pass
+        else:
+            event.cover_photo = None
+    event.save()
+    return Response({'ok': True, 'slug': event.slug})
 
 
 # ─── Speaker Identity Pages ───────────────────────────────────────────────────

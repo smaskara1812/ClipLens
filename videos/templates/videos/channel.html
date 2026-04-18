@@ -330,7 +330,7 @@
     <div class="video-grid">
       {% for v in videos %}
       <a href="{% url 'watch' v.id %}" class="vcard">
-        <div class="vcard-thumb">
+        <div class="vcard-thumb"{% if v.seek_sprite %} data-sprite="/media/{{ v.seek_sprite }}" data-duration="{{ v.duration|floatformat:0 }}"{% endif %}>
           {% if v.thumbnail_url %}
             <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
           {% else %}

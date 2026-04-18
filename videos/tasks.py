@@ -19,6 +19,61 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+# ── Photo format normaliser ───────────────────────────────────────────────────
+
+def _open_any_photo(img_path: Path, ext: str = ''):
+    """
+    Open any photo file and return a PIL Image in RGB mode.
+    Handles: HEIC/HEIF (pillow-heif), PSD (Pillow built-in), RAW (rawpy),
+    TIFF, AVIF, and all standard formats supported by Pillow.
+
+    Falls back to plain Pillow open if specialised libs are not installed.
+    """
+    from PIL import Image as _PIL
+    ext = ext or img_path.suffix.lower().lstrip('.')
+
+    # HEIC / HEIF — requires pillow-heif
+    if ext in ('heic', 'heif'):
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            logger.warning('_open_any_photo: pillow-heif not installed; attempting PIL fallback')
+        return _PIL.open(str(img_path)).convert('RGB')
+
+    # PSD / PSB — Pillow supports via PsdImagePlugin but needs explicit flatten
+    if ext in ('psd', 'psb'):
+        import PIL.PsdImagePlugin  # ensure plugin is loaded
+        img = _PIL.open(str(img_path))
+        # PSD may have multiple layers — flatten to composite
+        if hasattr(img, 'layers') and img.layers:
+            try:
+                # Pillow exposes the merged/composite image as the first frame
+                img.seek(0)
+            except EOFError:
+                pass
+        return img.convert('RGB')
+
+    # RAW camera formats — requires rawpy (optional)
+    RAW_EXTS = {'cr2', 'cr3', 'nef', 'nrw', 'arw', 'srf', 'sr2',
+                'dng', 'orf', 'rw2', 'rwl', 'ptx', 'pef', 'raf', 'x3f'}
+    if ext in RAW_EXTS:
+        try:
+            import rawpy
+            import numpy as _np
+            with rawpy.imread(str(img_path)) as raw:
+                rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=False, output_bps=8)
+            return _PIL.fromarray(rgb)
+        except ImportError:
+            logger.warning('_open_any_photo: rawpy not installed; RAW file may fail to open')
+        except Exception as exc:
+            logger.warning(f'_open_any_photo: rawpy failed ({exc}); trying PIL fallback')
+        return _PIL.open(str(img_path)).convert('RGB')
+
+    # All other formats — standard PIL open
+    return _PIL.open(str(img_path)).convert('RGB')
+
+
 # ── Video processing ──────────────────────────────────────────────────────────
 
 @shared_task(
@@ -1273,6 +1328,14 @@ def _extract_photo_exif(img_path):
         'GPSInfo',
     }
     try:
+        # Register HEIC opener if available so EXIF can be read from HEIC files
+        ext = Path(img_path).suffix.lower().lstrip('.')
+        if ext in ('heic', 'heif'):
+            try:
+                import pillow_heif
+                pillow_heif.register_heif_opener()
+            except ImportError:
+                pass
         img = _PILImg.open(img_path)
         raw = img.getexif()
         if not raw:
@@ -1489,11 +1552,23 @@ def analyze_photo_task(self, photo_id: str):
         # ── Extract EXIF (before converting to RGB which strips EXIF) ─────────
         exif_data, taken_at = _extract_photo_exif(img_path)
 
+        # ── Normalise image to PIL RGB — handles HEIC, PSD, RAW, TIFF, etc. ──
+        img_ext = img_path.suffix.lower().lstrip('.')
+        pil_img = _open_any_photo(img_path, img_ext)
+
         # ── Run inference ─────────────────────────────────────────────────────
-        pil_img = _PILImage.open(str(img_path)).convert('RGB')
+        # For special formats that YOLO can't open directly, use the PIL array
+        _yolo_source: str | np.ndarray
+        if img_ext in {'heic', 'heif', 'psd', 'psb', 'avif',
+                       'cr2', 'cr3', 'nef', 'nrw', 'arw', 'srf', 'sr2',
+                       'dng', 'orf', 'rw2', 'rwl', 'ptx', 'pef', 'raf', 'x3f'}:
+            import numpy as _np2
+            _yolo_source = _np2.array(pil_img)[:, :, ::-1].copy()  # RGB→BGR for YOLO
+        else:
+            _yolo_source = str(img_path)
 
         # YOLO
-        yolo_results = yolo.predict(source=str(img_path), verbose=False, conf=0.40, iou=0.45)
+        yolo_results = yolo.predict(source=_yolo_source, verbose=False, conf=0.40, iou=0.45)
         labels_set = set()
         for r in yolo_results:
             for cls_id in r.boxes.cls.tolist():

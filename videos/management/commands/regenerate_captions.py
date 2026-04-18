@@ -63,13 +63,29 @@ class Command(BaseCommand):
             default=False,
             help='Run tasks synchronously in this process instead of via Celery',
         )
+        parser.add_argument(
+            '--channel',
+            type=str,
+            default=None,
+            metavar='SLUG',
+            help='Limit to videos in a specific channel (by slug)',
+        )
+        parser.add_argument(
+            '--playlist',
+            type=str,
+            default=None,
+            metavar='UUID',
+            help='Limit to videos in a specific playlist (by UUID)',
+        )
 
     def handle(self, *args, **options):
-        video_id = options['video_id']
-        dry_run  = options['dry_run']
-        run_sync = options['sync']
-        force    = options['force']
-        language = options['language']
+        video_id     = options['video_id']
+        dry_run      = options['dry_run']
+        run_sync     = options['sync']
+        force        = options['force']
+        language     = options['language']
+        channel_slug = options.get('channel')
+        playlist_id  = options.get('playlist')
 
         # ── Build queryset ────────────────────────────────────────────────────
         if video_id:
@@ -81,6 +97,10 @@ class Command(BaseCommand):
                 return
         else:
             qs = Video.objects.filter(status=Video.STATUS_READY).order_by('created_at')
+            if channel_slug:
+                qs = qs.filter(channel__slug=channel_slug)
+            if playlist_id:
+                qs = qs.filter(playlist_items__playlist_id=playlist_id)
 
         if not force:
             # Exclude videos that already have auto-generated captions for this language

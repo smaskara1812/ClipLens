@@ -1,0 +1,377 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Folder Upload — Events — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .fu-layout {
+    max-width: 640px; margin: 0 auto;
+    padding: 36px 24px 100px;
+  }
+  .fu-header { margin-bottom: 32px; }
+  .fu-header h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .fu-header p { font-size: 14px; color: var(--text-muted); }
+
+  .fu-form { display: flex; flex-direction: column; gap: 18px; }
+  .fu-field { display: flex; flex-direction: column; gap: 6px; }
+  .fu-label {
+    font-size: 13px; font-weight: 600; color: var(--text);
+  }
+  .fu-label span { font-weight: 400; color: var(--text-muted); }
+  .fu-input {
+    padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 14px; outline: none;
+    transition: border-color .15s;
+    width: 100%; box-sizing: border-box;
+  }
+  .fu-input:focus { border-color: var(--accent); }
+  .fu-select {
+    padding: 9px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 14px; outline: none;
+    width: 100%; box-sizing: border-box;
+  }
+
+  /* Folder drop zone */
+  .fu-dropzone {
+    border: 2px dashed var(--border-2);
+    border-radius: var(--radius-lg);
+    padding: 40px 24px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s;
+    background: var(--surface-2);
+    position: relative;
+  }
+  .fu-dropzone:hover,
+  .fu-dropzone.dragover { border-color: var(--accent); background: var(--accent-soft); }
+  .fu-dropzone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .fu-dropzone-icon { color: var(--text-subtle); margin-bottom: 12px; }
+  .fu-dropzone-title { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .fu-dropzone-sub { font-size: 13px; color: var(--text-muted); }
+  .fu-file-preview {
+    margin-top: 12px; font-size: 12px; color: var(--accent); font-weight: 600;
+    display: none;
+  }
+
+  /* Progress area */
+  .fu-progress-wrap {
+    display: none; flex-direction: column; gap: 10px;
+  }
+  .fu-progress-wrap.visible { display: flex; }
+  .fu-progress-bar-bg {
+    width: 100%; height: 8px; border-radius: 4px;
+    background: var(--surface-3); overflow: hidden;
+  }
+  .fu-progress-bar {
+    height: 100%; width: 0%; border-radius: 4px;
+    background: var(--accent); transition: width .2s;
+  }
+  .fu-progress-text {
+    font-size: 13px; color: var(--text-muted);
+    display: flex; justify-content: space-between;
+  }
+  .fu-progress-log {
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+    font-size: 11px; font-family: monospace;
+    color: var(--text-muted); max-height: 120px;
+    overflow-y: auto; line-height: 1.8;
+  }
+
+  .fu-submit-row {
+    display: flex; gap: 10px; align-items: center;
+  }
+  .fu-btn-primary {
+    padding: 10px 22px; font-size: 14px; font-weight: 700;
+    border-radius: var(--radius-sm); border: none;
+    background: var(--accent); color: #fff; cursor: pointer;
+    transition: background .15s;
+  }
+  .fu-btn-primary:hover { background: var(--accent-h); }
+  .fu-btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .fu-btn-ghost {
+    padding: 10px 16px; font-size: 14px; font-weight: 600;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-2);
+    background: none; color: var(--text-muted); cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center;
+    transition: border-color .15s, color .15s;
+  }
+  .fu-btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  .fu-file-types {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px;
+  }
+  .fu-chip {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: var(--surface-3); color: var(--text-muted);
+    border: 1px solid var(--border-2);
+  }
+  .fu-chip.photo { border-color: var(--green); color: var(--green); }
+  .fu-chip.video { border-color: var(--accent); color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fu-layout">
+  <div class="fu-header">
+    <h1>Folder Upload</h1>
+    <p>Select a folder to create an Event. Photos go into an Album, videos into a Playlist — all linked under one Event.</p>
+  </div>
+
+  <div class="fu-form" id="fu-form">
+
+    <!-- Event name -->
+    <div class="fu-field">
+      <label class="fu-label" for="fu-name">Event name <span>*</span></label>
+      <input class="fu-input" id="fu-name" type="text" placeholder="e.g. Founder's Day 2024" required />
+    </div>
+
+    <!-- Event date (optional) -->
+    <div class="fu-field">
+      <label class="fu-label" for="fu-date">Event date <span>(optional)</span></label>
+      <input class="fu-input" id="fu-date" type="date" />
+    </div>
+
+    <!-- Description (optional) -->
+    <div class="fu-field">
+      <label class="fu-label" for="fu-desc">Description <span>(optional)</span></label>
+      <input class="fu-input" id="fu-desc" type="text" placeholder="Short description of this event" />
+    </div>
+
+    <!-- Channel -->
+    {% if channels %}
+    <div class="fu-field">
+      <label class="fu-label" for="fu-channel">Channel <span>(optional — for videos)</span></label>
+      <select class="fu-select" id="fu-channel">
+        <option value="">— No channel —</option>
+        {% for ch in channels %}
+        <option value="{{ ch.id }}">{{ ch.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <!-- Folder picker -->
+    <div class="fu-field">
+      <label class="fu-label">Folder</label>
+      <div class="fu-file-types">
+        <span class="fu-chip photo">JPG / JPEG</span>
+        <span class="fu-chip photo">PNG</span>
+        <span class="fu-chip photo">HEIC</span>
+        <span class="fu-chip photo">WEBP</span>
+        <span class="fu-chip video">MP4</span>
+        <span class="fu-chip video">MOV</span>
+        <span class="fu-chip video">MKV</span>
+        <span class="fu-chip video">AVI</span>
+      </div>
+      <div class="fu-dropzone" id="fu-dropzone">
+        <input type="file" id="fu-file-input" webkitdirectory multiple accept="image/*,video/*" />
+        <div class="fu-dropzone-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <div class="fu-dropzone-title">Click to select a folder</div>
+        <div class="fu-dropzone-sub">Or drag & drop a folder here</div>
+        <div class="fu-file-preview" id="fu-file-preview"></div>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="fu-progress-wrap" id="fu-progress-wrap">
+      <div class="fu-progress-text">
+        <span id="fu-progress-label">Uploading…</span>
+        <span id="fu-progress-pct">0%</span>
+      </div>
+      <div class="fu-progress-bar-bg">
+        <div class="fu-progress-bar" id="fu-progress-bar"></div>
+      </div>
+      <div class="fu-progress-log" id="fu-progress-log"></div>
+    </div>
+
+    <!-- Actions -->
+    <div class="fu-submit-row">
+      <button class="fu-btn-primary" id="fu-submit-btn" onclick="startUpload()">
+        Create Event &amp; Upload
+      </button>
+      <a href="{% url 'events' %}" class="fu-btn-ghost">Cancel</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+let selectedFiles = [];
+let photoFiles = [];
+let videoFiles = [];
+
+const PHOTO_EXTS = new Set(['jpg','jpeg','png','heic','heif','webp','gif','bmp','tiff','tif']);
+const VIDEO_EXTS = new Set(['mp4','mov','mkv','avi','webm','m4v','mpg','mpeg','3gp','flv']);
+
+function getExt(name) {
+  return name.split('.').pop().toLowerCase();
+}
+
+// File input change
+document.getElementById('fu-file-input').addEventListener('change', function(e) {
+  const files = Array.from(e.target.files);
+  processFiles(files);
+});
+
+// Drag & drop
+const dropzone = document.getElementById('fu-dropzone');
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  const items = e.dataTransfer.items;
+  if (items) {
+    const files = [];
+    for (const item of items) {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+    processFiles(files);
+  }
+});
+
+function processFiles(files) {
+  selectedFiles = files;
+  photoFiles = files.filter(f => PHOTO_EXTS.has(getExt(f.name)));
+  videoFiles = files.filter(f => VIDEO_EXTS.has(getExt(f.name)));
+  const skipped = files.length - photoFiles.length - videoFiles.length;
+
+  const preview = document.getElementById('fu-file-preview');
+  let msg = `${files.length} file${files.length !== 1 ? 's' : ''} selected`;
+  if (photoFiles.length) msg += ` · ${photoFiles.length} photo${photoFiles.length !== 1 ? 's' : ''}`;
+  if (videoFiles.length) msg += ` · ${videoFiles.length} video${videoFiles.length !== 1 ? 's' : ''}`;
+  if (skipped) msg += ` · ${skipped} skipped`;
+  preview.textContent = msg;
+  preview.style.display = 'block';
+
+  // Auto-fill event name from folder path if blank
+  const nameInput = document.getElementById('fu-name');
+  if (!nameInput.value && files.length > 0) {
+    // webkitRelativePath gives "FolderName/file.jpg"
+    const rel = files[0].webkitRelativePath || '';
+    const parts = rel.split('/');
+    if (parts.length > 1) {
+      nameInput.value = parts[0].replace(/[_-]/g, ' ');
+    }
+  }
+}
+
+function logLine(msg, isError) {
+  const log = document.getElementById('fu-progress-log');
+  const line = document.createElement('div');
+  line.textContent = msg;
+  if (isError) line.style.color = 'var(--red)';
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setProgress(done, total) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  document.getElementById('fu-progress-bar').style.width = pct + '%';
+  document.getElementById('fu-progress-pct').textContent = pct + '%';
+  document.getElementById('fu-progress-label').textContent = `Uploading ${done} / ${total}`;
+}
+
+async function startUpload() {
+  const name = document.getElementById('fu-name').value.trim();
+  if (!name) { alert('Please enter an event name.'); return; }
+  if (photoFiles.length === 0 && videoFiles.length === 0) {
+    alert('Please select a folder containing photos or videos.'); return;
+  }
+
+  const btn = document.getElementById('fu-submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating event…';
+
+  // Step 1 — create event + album + playlist
+  const channelEl = document.getElementById('fu-channel');
+  const channelId = channelEl ? channelEl.value : '';
+  const eventDate = document.getElementById('fu-date').value;
+  const description = document.getElementById('fu-desc').value.trim();
+
+  let eventData;
+  try {
+    const res = await fetch('/api/events/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+      body: JSON.stringify({name, event_date: eventDate || null, description, channel_id: channelId}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert('Failed to create event: ' + (err.error || res.status));
+      btn.disabled = false; btn.textContent = 'Create Event & Upload';
+      return;
+    }
+    eventData = await res.json();
+  } catch(e) {
+    alert('Network error creating event.');
+    btn.disabled = false; btn.textContent = 'Create Event & Upload';
+    return;
+  }
+
+  const {slug, album_id, playlist_id} = eventData;
+  logLine(`Event created: "${name}" · album=${album_id} · playlist=${playlist_id}`);
+
+  // Step 2 — upload files
+  const allFiles = [...photoFiles, ...videoFiles];
+  const total = allFiles.length;
+  let done = 0; let errors = 0;
+
+  document.getElementById('fu-progress-wrap').classList.add('visible');
+  btn.textContent = 'Uploading…';
+
+  for (const file of allFiles) {
+    const isPhoto = PHOTO_EXTS.has(getExt(file.name));
+    const endpoint = isPhoto ? '/api/photos/upload/' : '/api/videos/upload/';
+
+    const fd = new FormData();
+    fd.append(isPhoto ? 'file' : 'video_file', file);
+    fd.append('title', file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '));
+    if (isPhoto && album_id) fd.append('album_id', album_id);
+    if (!isPhoto && playlist_id) fd.append('playlist_id', playlist_id);
+    if (channelId) fd.append('channel_id', channelId);
+    if (description) fd.append('description', description);
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'X-CSRFToken': CSRF_TOKEN},
+        body: fd,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        logLine(`✗ ${file.name}: ${err.error || res.status}`, true);
+        errors++;
+      } else {
+        logLine(`✓ ${file.name}`);
+      }
+    } catch(e) {
+      logLine(`✗ ${file.name}: network error`, true);
+      errors++;
+    }
+
+    done++;
+    setProgress(done, total);
+  }
+
+  // Done
+  const successCount = total - errors;
+  logLine(`\nDone! ${successCount} uploaded, ${errors} failed.`);
+  btn.textContent = 'Done!';
+
+  // Redirect to event page after 1.2s
+  setTimeout(() => { window.location.href = '/events/' + slug + '/'; }, 1200);
+}
+</script>
+{% endblock %}

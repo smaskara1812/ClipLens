@@ -1,0 +1,346 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Events — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .ev-layout {
+    max-width: 1100px; margin: 0 auto;
+    padding: 28px 24px 80px;
+  }
+  .ev-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .ev-header h1 { font-size: 22px; font-weight: 800; }
+  .ev-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+  }
+
+  /* Card wrapper — positions the action bar */
+  .ev-card-wrap { position: relative; }
+  .ev-card {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); overflow: hidden;
+    text-decoration: none; color: var(--text);
+    transition: border-color .15s, transform .15s;
+    display: flex; flex-direction: column;
+  }
+  .ev-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .ev-thumb {
+    width: 100%; aspect-ratio: 16/9;
+    background: var(--surface-3); position: relative;
+    overflow: hidden;
+  }
+  .ev-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .ev-card:hover .ev-thumb img { transform: scale(1.04); }
+  .ev-thumb-placeholder {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-subtle);
+  }
+  .ev-info { padding: 12px 14px 14px; flex: 1; }
+  .ev-name {
+    font-size: 14px; font-weight: 700;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-bottom: 4px;
+  }
+  .ev-meta {
+    font-size: 12px; color: var(--text-muted);
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  .ev-meta span { display: flex; align-items: center; gap: 4px; }
+
+  /* Editor action bar — sits below the card */
+  .ev-card-actions {
+    display: none;
+    border-top: 1px solid var(--border-2);
+    padding: 8px 12px;
+    gap: 6px;
+    background: var(--surface);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+  .ev-card-wrap:hover .ev-card-actions { display: flex; }
+  .ev-action-btn {
+    flex: 1; padding: 5px 0; font-size: 12px; font-weight: 600;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-2);
+    background: none; color: var(--text-muted); cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .ev-action-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+  .ev-action-btn.danger:hover { background: rgba(239,68,68,.1); color: #ef4444; border-color: rgba(239,68,68,.3); }
+
+  .ev-empty {
+    text-align: center; padding: 80px 0;
+    color: var(--text-muted); font-size: 14px;
+  }
+  .ev-empty svg { margin-bottom: 14px; opacity: .4; }
+
+  /* Edit modal */
+  .ev-modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,.5); align-items: center; justify-content: center;
+  }
+  .ev-modal-backdrop.open { display: flex; }
+  .ev-modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 28px 28px 24px;
+    width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto;
+  }
+  .ev-modal h2 { font-size: 17px; font-weight: 800; margin-bottom: 18px; }
+  .ev-modal-field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 5px; }
+  .ev-modal-field label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .ev-modal-field input, .ev-modal-field textarea {
+    padding: 8px 11px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; outline: none; width: 100%; box-sizing: border-box;
+  }
+  .ev-modal-field input:focus, .ev-modal-field textarea:focus { border-color: var(--accent); }
+  .ev-modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+  /* Thumbnail picker */
+  .ev-thumb-picker-label { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+  .ev-thumb-picker {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+    gap: 5px; max-height: 180px; overflow-y: auto;
+    padding: 4px; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+    background: var(--surface-2);
+  }
+  .ev-thumb-picker-item {
+    aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
+    cursor: pointer; border: 2px solid transparent; transition: border-color .12s; position: relative;
+  }
+  .ev-thumb-picker-item img { width: 100%; height: 100%; object-fit: cover; }
+  .ev-thumb-picker-item.selected { border-color: var(--accent); }
+  .ev-thumb-picker-item.selected::after {
+    content: '✓'; position: absolute; bottom: 3px; right: 4px;
+    font-size: 11px; font-weight: 800; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,.8);
+  }
+  .ev-thumb-none {
+    aspect-ratio: 1; border-radius: var(--radius-sm); cursor: pointer;
+    border: 2px solid transparent; transition: border-color .12s;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-3); color: var(--text-subtle); font-size: 10px;
+    text-align: center; font-weight: 600;
+  }
+  .ev-thumb-none.selected { border-color: var(--accent); color: var(--accent); }
+  .ev-thumb-loading { font-size: 12px; color: var(--text-muted); padding: 12px 0; text-align: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ev-layout">
+  <div class="ev-header">
+    <h1>Events</h1>
+    {% if is_editor %}
+    <a href="{% url 'events_upload' %}" style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;font-size:13px;font-weight:600;background:var(--accent);color:#fff;border-radius:var(--radius-sm);text-decoration:none;transition:background .15s;" onmouseover="this.style.background='var(--accent-h)'" onmouseout="this.style.background='var(--accent)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Folder Upload
+    </a>
+    {% endif %}
+  </div>
+
+  {% if events %}
+  <div class="ev-grid">
+    {% for event in events %}
+    <div class="ev-card-wrap">
+      <a href="{% url 'event_detail' event.slug %}" class="ev-card">
+        <div class="ev-thumb">
+          {% if event.cover_url %}
+          <img src="{{ event.cover_url }}" alt="{{ event.name }}" loading="lazy" />
+          {% else %}
+          <div class="ev-thumb-placeholder">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+          </div>
+          {% endif %}
+        </div>
+        <div class="ev-info">
+          <div class="ev-name">{{ event.name }}</div>
+          <div class="ev-meta">
+            {% if event.event_date %}
+            <span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              {{ event.event_date|date:"M j, Y" }}
+            </span>
+            {% endif %}
+            {% if event.album %}
+            <span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              {{ event.album_photo_count }} photo{{ event.album_photo_count|pluralize }}
+            </span>
+            {% endif %}
+            {% if event.playlist %}
+            <span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
+              {{ event.playlist_video_count }} video{{ event.playlist_video_count|pluralize }}
+            </span>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+      {% if is_editor %}
+      <div class="ev-card-actions">
+        <button class="ev-action-btn"
+          data-id="{{ event.id }}"
+          data-name="{{ event.name|escape }}"
+          data-date="{{ event.event_date|default:'' }}"
+          data-desc="{{ event.description|escape }}"
+          data-cover-id="{{ event.cover_photo_id|default:'' }}"
+          onclick="openEditModal(this)">Edit</button>
+        <button class="ev-action-btn danger"
+          data-id="{{ event.id }}"
+          data-slug="{{ event.slug }}"
+          data-name="{{ event.name|escape }}"
+          onclick="deleteEvent(this)">Delete</button>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="ev-empty">
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+    <div>No events yet.</div>
+    {% if is_editor %}
+    <div style="margin-top:10px;"><a href="{% url 'events_upload' %}" style="color:var(--accent)">Upload a folder</a> to create your first event.</div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if is_editor %}
+<!-- Edit Event Modal -->
+<div class="ev-modal-backdrop" id="editModal">
+  <div class="ev-modal">
+    <h2>Edit Event</h2>
+    <div class="ev-modal-field">
+      <label>Event name</label>
+      <input type="text" id="editName" />
+    </div>
+    <div class="ev-modal-field">
+      <label>Event date</label>
+      <input type="date" id="editDate" />
+    </div>
+    <div class="ev-modal-field">
+      <label>Description</label>
+      <textarea id="editDesc" rows="3"></textarea>
+    </div>
+    <div style="margin-bottom:14px;" id="thumbPickerWrap">
+      <div class="ev-thumb-picker-label">Cover thumbnail</div>
+      <div class="ev-thumb-picker" id="thumbPicker">
+        <div class="ev-thumb-loading">Loading photos…</div>
+      </div>
+    </div>
+    <div class="ev-modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeEditModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="editSaveBtn" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = '{{ csrf_token }}';
+let _editId = null;
+let _selectedCoverId = '';
+
+function selectThumb(el) {
+  document.querySelectorAll('#thumbPicker .ev-thumb-picker-item, #thumbPicker .ev-thumb-none')
+    .forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  _selectedCoverId = el.dataset.id || '';
+}
+
+async function openEditModal(btn) {
+  _editId = btn.dataset.id;
+  _selectedCoverId = btn.dataset.coverId || '';
+  document.getElementById('editName').value = btn.dataset.name || '';
+  document.getElementById('editDate').value = btn.dataset.date || '';
+  document.getElementById('editDesc').value = btn.dataset.desc || '';
+  document.getElementById('editModal').classList.add('open');
+  setTimeout(() => document.getElementById('editName').focus(), 50);
+
+  // Fetch photos for picker
+  const picker = document.getElementById('thumbPicker');
+  picker.innerHTML = '<div class="ev-thumb-loading">Loading…</div>';
+  try {
+    const res = await fetch(`/api/events/${_editId}/`, { headers: { 'X-CSRFToken': CSRF } });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    _selectedCoverId = _selectedCoverId || data.cover_photo_id || '';
+
+    let html = `<div class="ev-thumb-none ${!_selectedCoverId ? 'selected' : ''}" data-id="" onclick="selectThumb(this)">None</div>`;
+    (data.photos || []).forEach(p => {
+      if (!p.thumbnail_url) return;
+      const sel = p.id === _selectedCoverId ? 'selected' : '';
+      html += `<div class="ev-thumb-picker-item ${sel}" data-id="${p.id}" onclick="selectThumb(this)">
+        <img src="${p.thumbnail_url}" loading="lazy" />
+      </div>`;
+    });
+    picker.innerHTML = html || '<div class="ev-thumb-loading">No photos yet.</div>';
+  } catch {
+    picker.innerHTML = '<div class="ev-thumb-loading">Could not load photos.</div>';
+  }
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').classList.remove('open');
+  _editId = null;
+}
+
+document.getElementById('editModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeEditModal();
+});
+
+async function saveEdit() {
+  if (!_editId) return;
+  const name = document.getElementById('editName').value.trim();
+  if (!name) { showToast('error', 'Event name is required'); return; }
+  const btn = document.getElementById('editSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const res = await fetch(`/api/events/${_editId}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({
+      name,
+      event_date: document.getElementById('editDate').value || null,
+      description: document.getElementById('editDesc').value.trim(),
+      cover_photo_id: _selectedCoverId || null,
+    }),
+  });
+  btn.disabled = false; btn.textContent = 'Save';
+  if (res.ok) {
+    closeEditModal();
+    showToast('success', 'Event updated');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast('error', 'Failed to save');
+  }
+}
+
+async function deleteEvent(btn) {
+  const id = btn.dataset.id;
+  const name = btn.dataset.name;
+  if (!confirm(`Delete "${name}"?\n\nThis removes the event record only — photos and videos inside will remain in your library.`)) return;
+  const res = await fetch(`/api/events/${id}/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': CSRF },
+  });
+  if (res.ok) {
+    showToast('success', 'Event deleted');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast('error', 'Failed to delete event');
+  }
+}
+</script>
+{% endif %}
+{% endblock %}

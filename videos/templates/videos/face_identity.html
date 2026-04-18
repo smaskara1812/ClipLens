@@ -41,6 +41,55 @@
     display: flex; gap: 8px; align-items: center; flex-shrink: 0;
   }
 
+  /* ── Nicknames ── */
+  .fi-nicknames {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin-top: 9px;
+  }
+  .fi-nick-label {
+    font-size: 11px; font-weight: 600; color: var(--text-subtle);
+    text-transform: uppercase; letter-spacing: .04em; white-space: nowrap;
+  }
+  .fi-nick-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface-3); border: 1px solid var(--border-2);
+    border-radius: 20px; padding: 2px 9px 2px 10px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .fi-nick-chip button {
+    background: none; border: none; cursor: pointer; padding: 0 1px;
+    color: var(--text-subtle); line-height: 1; font-size: 13px;
+    transition: color .1s;
+  }
+  .fi-nick-chip button:hover { color: var(--danger, #e55); }
+  .fi-nick-add {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: none; border: 1px dashed var(--border-2);
+    border-radius: 20px; padding: 2px 10px;
+    font-size: 12px; color: var(--text-subtle);
+    cursor: pointer; transition: border-color .15s, color .15s;
+  }
+  .fi-nick-add:hover { border-color: var(--accent); color: var(--accent); }
+  .fi-nick-input-wrap {
+    display: none; align-items: center; gap: 5px;
+  }
+  .fi-nick-input-wrap.open { display: inline-flex; }
+  .fi-nick-input {
+    padding: 2px 8px; font-size: 12px; border-radius: 20px;
+    border: 1px solid var(--accent); background: var(--surface-2);
+    color: var(--text); outline: none; width: 130px;
+  }
+  .fi-nick-save {
+    padding: 2px 10px; font-size: 12px; font-weight: 600;
+    border-radius: 20px; border: none; background: var(--accent);
+    color: #fff; cursor: pointer; white-space: nowrap;
+  }
+  .fi-nick-cancel {
+    padding: 2px 8px; font-size: 12px;
+    border-radius: 20px; border: 1px solid var(--border-2);
+    background: none; color: var(--text-muted); cursor: pointer;
+  }
+
   /* ── Rename modal ── */
   .modal-overlay {
     display: none; position: fixed; inset: 0;
@@ -482,6 +531,35 @@
           {{ total_photo_count }} photo{{ total_photo_count|pluralize }}
         </span>
       </div>
+
+      <!-- Nicknames -->
+      {% if nicknames or can_edit %}
+      <div class="fi-nicknames" id="fi-nicknames-bar">
+        <span class="fi-nick-label">Also known as</span>
+        <div id="fi-nick-chips">
+          {% for nick in nicknames %}
+          <span class="fi-nick-chip" data-nick-id="{{ nick.id }}">
+            {{ nick.nickname }}
+            {% if can_edit %}
+            <button onclick="removeNickname({{ nick.id }}, this)" title="Remove nickname">×</button>
+            {% endif %}
+          </span>
+          {% endfor %}
+        </div>
+        {% if can_edit %}
+        <button class="fi-nick-add" id="fi-nick-add-btn" onclick="openNickInput()">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add nickname
+        </button>
+        <span class="fi-nick-input-wrap" id="fi-nick-input-wrap">
+          <input class="fi-nick-input" id="fi-nick-input" type="text" placeholder="e.g. Bobby" maxlength="100"
+                 onkeydown="if(event.key==='Enter')saveNickname();if(event.key==='Escape')closeNickInput();" />
+          <button class="fi-nick-save" onclick="saveNickname()">Add</button>
+          <button class="fi-nick-cancel" onclick="closeNickInput()">Cancel</button>
+        </span>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
     <div class="fi-header-actions">
       <a href="{{ back_url }}" class="btn btn-ghost">← All People</a>
@@ -509,11 +587,6 @@
     <button class="fi-confirm-all-btn" onclick="confirmAll()">✓ Confirm all unreviewed</button>
     {% endif %}
   </div>
-  {% if not can_edit and is_editor %}
-  <div style="background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-muted);margin-bottom:20px;">
-    You don't have a channel yet — <a href="{% url 'setup_channel' %}" style="color:var(--accent)">create one</a> to manage face identities.
-  </div>
-  {% endif %}
 
   <!-- Content tabs: Videos · Photos · Audio — only show tabs with content -->
   <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px;margin-top:8px;">
@@ -1167,6 +1240,62 @@ function showToast(msg, isError = false) {
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ── Nicknames ───────────────────────────────────────────────────────────────
+function openNickInput() {
+  document.getElementById('fi-nick-add-btn').style.display = 'none';
+  const wrap = document.getElementById('fi-nick-input-wrap');
+  wrap.classList.add('open');
+  wrap.querySelector('input').focus();
+}
+function closeNickInput() {
+  document.getElementById('fi-nick-add-btn').style.display = '';
+  const wrap = document.getElementById('fi-nick-input-wrap');
+  wrap.classList.remove('open');
+  wrap.querySelector('input').value = '';
+}
+async function saveNickname() {
+  const input = document.getElementById('fi-nick-input');
+  const nickname = input.value.trim();
+  if (!nickname) return;
+  const res = await fetch(`/api/faces/${IDENTITY_ID}/nicknames/`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN || getCookie('csrftoken')},
+    body: JSON.stringify({nickname}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    showToast(err.error || 'Could not add nickname.', true);
+    return;
+  }
+  const data = await res.json();
+  // Inject chip into DOM
+  const chips = document.getElementById('fi-nick-chips');
+  const chip = document.createElement('span');
+  chip.className = 'fi-nick-chip';
+  chip.dataset.nickId = data.id;
+  chip.innerHTML = `${data.nickname} <button onclick="removeNickname(${data.id}, this)" title="Remove nickname">×</button>`;
+  chips.appendChild(chip);
+  closeNickInput();
+  // Show bar if it was hidden (no prior nicknames)
+  const bar = document.getElementById('fi-nicknames-bar');
+  if (bar) bar.style.display = '';
+  showToast('Nickname added.');
+}
+async function removeNickname(nickId, btn) {
+  if (!confirm('Remove this nickname?')) return;
+  const res = await fetch(`/api/faces/${IDENTITY_ID}/nicknames/${nickId}/`, {
+    method: 'DELETE',
+    headers: {'X-CSRFToken': window.CSRF_TOKEN || getCookie('csrftoken')},
+  });
+  if (!res.ok) { showToast('Could not remove nickname.', true); return; }
+  btn.closest('.fi-nick-chip').remove();
+  showToast('Nickname removed.');
+}
+function getCookie(name) {
+  const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return v ? v.pop() : '';
 }
 </script>
 {% endblock %}

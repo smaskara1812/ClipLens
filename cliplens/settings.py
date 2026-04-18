@@ -70,6 +70,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Must come after AuthenticationMiddleware so request.user is populated
+    'videos.middleware.LoginRequiredMiddleware',
 ]
 
 # Allow the watch & embed pages to be iframed from anywhere.

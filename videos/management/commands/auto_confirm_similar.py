@@ -80,12 +80,20 @@ class Command(BaseCommand):
             default=False,
             help='Preview which crops would be confirmed without writing anything.',
         )
+        parser.add_argument(
+            '--channel',
+            type=str,
+            default=None,
+            metavar='SLUG',
+            help='Limit to faces from videos in a specific channel (by slug)',
+        )
 
     def handle(self, *args, **options):
-        threshold   = options['threshold'] if options['threshold'] is not None else getattr(settings, 'FACE_AUTO_CONFIRM_THRESHOLD', 0.75)
-        dry_run     = options['dry_run']
-        video_id    = options['video_id']
-        identity_id = options['identity_id']
+        threshold    = options['threshold'] if options['threshold'] is not None else getattr(settings, 'FACE_AUTO_CONFIRM_THRESHOLD', 0.75)
+        dry_run      = options['dry_run']
+        video_id     = options['video_id']
+        identity_id  = options['identity_id']
+        channel_slug = options.get('channel')
 
         self.stdout.write(
             f'\n[{"DRY RUN — " if dry_run else ""}auto_confirm_similar]  '
@@ -103,6 +111,8 @@ class Command(BaseCommand):
             qs = qs.filter(video_id=video_id)
         if identity_id:
             qs = qs.filter(identity_id=identity_id)
+        if channel_slug:
+            qs = qs.filter(video__channel__slug=channel_slug)
 
         total = qs.count()
         if total == 0:

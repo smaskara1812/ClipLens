@@ -149,20 +149,48 @@
 
   <div class="cmd-header">
     <h1>⚙️ Management Commands</h1>
-    <p>Run background operations and maintenance tasks. All commands are executed synchronously and output is shown inline. Use <strong>Dry Run</strong> to preview changes before applying.</p>
+    <p>Run background operations and maintenance tasks. Commands are grouped by purpose: users, vision AI, import/streaming, speech, then faces &amp; identity. Output is shown inline; use <strong>Dry Run</strong> where available to preview changes.</p>
   </div>
+
+  <!-- Section heading helper -->
+  <style>
+    .cmd-section-heading {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--text-subtle);
+      padding: 6px 0 10px; margin-top: 10px;
+      grid-column: 1 / -1;
+    }
+    .cmd-model-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px; margin-top: 5px;
+    }
+    .tag-yolo   { background: rgba(245,158,11,.12);  color: #f59e0b; }
+    .tag-blip   { background: rgba(16,185,129,.12);  color: #10b981; }
+    .tag-clip   { background: rgba(99,102,241,.12);  color: var(--accent); }
+    .tag-face   { background: rgba(236,72,153,.12);  color: #ec4899; }
+    .tag-diar   { background: rgba(6,182,212,.12);   color: #06b6d4; }
+    .tag-whis   { background: rgba(139,92,246,.12);  color: #8b5cf6; }
+    .tag-ffmpeg { background: rgba(34,197,94,.12);   color: var(--green); }
+    .tag-db     { background: rgba(14,165,233,.12);  color: #0ea5e9; }
+    .tag-scope  { background: var(--surface-3); color: var(--text-muted); }
+  </style>
 
   <div class="cmd-grid">
 
-    <!-- ── assign_role ──────────────────────────────────────────────────── -->
+    <!-- ═══ 1. Users & access ═══════════════════════════════════════════════ -->
+    <div class="cmd-section-heading">👥 Users &amp; access</div>
+
     <div class="cmd-card" id="card-assign_role">
       <div class="cmd-card-head">
         <div class="cmd-icon" style="background:rgba(99,102,241,.12);">👤</div>
-        <div>
-          <div class="cmd-title">Assign Role</div>
-          <div class="cmd-desc">Grant or change a user's role (viewer / editor / superadmin).</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Assign User Role</div>
+          <div class="cmd-desc"><strong>Viewer</strong>: read-only. <strong>Editor</strong>: upload + manage content. <strong>Super Admin</strong>: full access including this panel. Changes take effect on next sign-in.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-db">Viewer · Editor · Super Admin</span>
+          </div>
         </div>
-        <span class="cmd-badge custom">Custom</span>
       </div>
       <div class="cmd-fields">
         <div class="field-row">
@@ -196,52 +224,135 @@
       <pre class="cmd-output" id="out-assign_role"></pre>
     </div>
 
+    <!-- ═══ 2. Video AI — vision & frames ═════════════════════════════════════ -->
+    <div class="cmd-section-heading">🤖 Video AI — vision &amp; frames</div>
+
     <!-- ── reanalyse_videos ─────────────────────────────────────────────── -->
     <div class="cmd-card" id="card-reanalyse_videos">
       <div class="cmd-card-head">
         <div class="cmd-icon" style="background:rgba(245,158,11,.12);">🎬</div>
-        <div>
-          <div class="cmd-title">Re-analyse Videos</div>
-          <div class="cmd-desc">Re-queue YOLO + BLIP + CLIP + face analysis for all or a single video.</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Full Vision Re-analysis</div>
+          <div class="cmd-desc">Re-extract frames and run all vision AI passes on selected videos. Use when a new model is deployed, settings change, or initial analysis failed.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-yolo">YOLOv8n · Object Labels</span>
+            <span class="cmd-model-tag tag-blip">BLIP / Florence-2 · Scene Caption</span>
+            <span class="cmd-model-tag tag-clip">CLIP · Visual Embedding</span>
+            <span class="cmd-model-tag tag-face">InsightFace buffalo_l · Faces</span>
+          </div>
         </div>
-        <span class="cmd-badge custom">Custom</span>
       </div>
       <div class="cmd-fields">
         <div class="field-row">
-          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(UUID — leave blank for all)</span></label>
-          <input class="form-input" id="reanalyse_videos-video_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" />
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="rv-scope" onchange="rvScopeChange()">
+            <option value="all">All ready videos</option>
+            <option value="channel">Videos in a channel</option>
+            <option value="playlist">Videos in a playlist</option>
+            <option value="video">Single video (UUID)</option>
+          </select>
         </div>
-        <div class="field-row">
-          <label class="field-label">Include status</label>
-          <input class="form-input" id="reanalyse_videos-include_status" value="ready" placeholder="ready,processing" />
-          <span class="field-hint">Comma-separated statuses.</span>
+        <div class="field-row" id="rv-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="rv-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
         </div>
-        <label class="toggle-row">
-          <input type="checkbox" id="reanalyse_videos-dry_run" /> Dry Run (preview only)
-        </label>
+        <div class="field-row" id="rv-playlist-row" style="display:none;">
+          <label class="field-label">Playlist</label>
+          <select class="form-select" id="rv-playlist">
+            <option value="">— select playlist —</option>
+            {% for pl in playlists %}<option value="{{ pl.id }}">{{ pl.title }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="rv-video-row" style="display:none;">
+          <label class="field-label">Video UUID</label>
+          <input class="form-input" id="rv-video-id" placeholder="550e8400-e29b-41d4-a716-…" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="rv-dry-run" /> Dry Run (list videos, no queueing)</label>
       </div>
       <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('reanalyse_videos', {
-          video_id: document.getElementById('reanalyse_videos-video_id').value || undefined,
-          include_status: document.getElementById('reanalyse_videos-include_status').value,
-          dry_run: document.getElementById('reanalyse_videos-dry_run').checked
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope = document.getElementById('rv-scope').value;
+          const args = { dry_run: document.getElementById('rv-dry-run').checked };
+          if (scope === 'channel')  args.channel      = document.getElementById('rv-channel').value   || undefined;
+          if (scope === 'playlist') args.playlist      = document.getElementById('rv-playlist').value  || undefined;
+          if (scope === 'video')    args.video_id      = document.getElementById('rv-video-id').value  || undefined;
+          runCommand('reanalyse_videos', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Queue Analysis
+        </button>
+        <span class="cmd-dryrun-hint">Queues to Celery <code>processing</code> queue.</span>
+      </div>
+      <pre class="cmd-output" id="out-reanalyse_videos"></pre>
+    </div>
+    <script>
+    function rvScopeChange() {
+      const s = document.getElementById('rv-scope').value;
+      document.getElementById('rv-channel-row').style.display  = s==='channel'  ? '' : 'none';
+      document.getElementById('rv-playlist-row').style.display = s==='playlist' ? '' : 'none';
+      document.getElementById('rv-video-row').style.display    = s==='video'    ? '' : 'none';
+    }
+    </script>
+
+    <!-- ── fill_blip_descriptions ───────────────────────────────────────── -->
+    <div class="cmd-card" id="card-fill_blip_descriptions">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(16,185,129,.12);">🖼️</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Fill Missing Scene Descriptions</div>
+          <div class="cmd-desc">Finds videos with no BLIP/Florence-2 captions and re-queues full frame analysis. Use after model install or if initial analysis was interrupted.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-blip">BLIP / Florence-2 · Scene Caption</span>
+            <span class="cmd-model-tag tag-yolo">YOLOv8n · also re-runs</span>
+            <span class="cmd-model-tag tag-clip">CLIP · also re-runs</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope to channel <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="fill_blip-channel">
+            <option value="">— all channels —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Single video UUID <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <input class="form-input" id="fill_blip-video-id" placeholder="leave blank for all missing" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="fill_blip_descriptions-dry_run" /> Dry Run (show affected videos only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('fill_blip_descriptions', {
+          dry_run:  document.getElementById('fill_blip_descriptions-dry_run').checked,
+          channel:  document.getElementById('fill_blip-channel').value  || undefined,
+          video_id: document.getElementById('fill_blip-video-id').value || undefined,
         })">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           Run
         </button>
       </div>
-      <pre class="cmd-output" id="out-reanalyse_videos"></pre>
+      <pre class="cmd-output" id="out-fill_blip_descriptions"></pre>
     </div>
+
+    <!-- ═══ 3. Import & streaming ═══════════════════════════════════════════ -->
+    <div class="cmd-section-heading">📥 Import &amp; streaming</div>
 
     <!-- ── ingest_videos ────────────────────────────────────────────────── -->
     <div class="cmd-card" id="card-ingest_videos">
       <div class="cmd-card-head">
         <div class="cmd-icon" style="background:rgba(34,197,94,.12);">📥</div>
-        <div>
-          <div class="cmd-title">Ingest Videos</div>
-          <div class="cmd-desc">Scan <code>media/originals/</code> and create Video records for new files.</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Ingest Videos from Filesystem</div>
+          <div class="cmd-desc">Scans <code>media/originals/</code> for video files not yet in the database, creates Video records, and kicks off HLS encoding + full AI analysis. Use for batch server-side imports (no browser upload needed).</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-ffmpeg">FFmpeg · HLS Encoding</span>
+            <span class="cmd-model-tag tag-yolo">Full AI pipeline triggered</span>
+          </div>
         </div>
-        <span class="cmd-badge custom">Custom</span>
       </div>
       <div class="cmd-fields">
         <div class="field-row">
@@ -283,225 +394,17 @@
       <pre class="cmd-output" id="out-ingest_videos"></pre>
     </div>
 
-    <!-- ── regenerate_captions ──────────────────────────────────────────── -->
-    <div class="cmd-card" id="card-regenerate_captions">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(139,92,246,.12);">💬</div>
-        <div>
-          <div class="cmd-title">Regenerate Captions</div>
-          <div class="cmd-desc">Re-queue Whisper transcription for all or a single video.</div>
-        </div>
-        <span class="cmd-badge custom">Custom</span>
-      </div>
-      <div class="cmd-fields">
-        <div class="field-row">
-          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(leave blank for all)</span></label>
-          <input class="form-input" id="regenerate_captions-video_id" placeholder="UUID" />
-        </div>
-        <div class="field-row">
-          <label class="field-label">Language</label>
-          <input class="form-input" id="regenerate_captions-language" value="en" placeholder="en" style="max-width:80px;" />
-        </div>
-        <label class="toggle-row"><input type="checkbox" id="regenerate_captions-force" /> Force (delete &amp; re-generate existing)</label>
-        <label class="toggle-row"><input type="checkbox" id="regenerate_captions-dry_run" /> Dry Run</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('regenerate_captions', {
-          video_id: document.getElementById('regenerate_captions-video_id').value || undefined,
-          language: document.getElementById('regenerate_captions-language').value,
-          force:    document.getElementById('regenerate_captions-force').checked,
-          dry_run:  document.getElementById('regenerate_captions-dry_run').checked
-        })">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-      </div>
-      <pre class="cmd-output" id="out-regenerate_captions"></pre>
-    </div>
-
-    <!-- ── run_diarization ──────────────────────────────────────────────── -->
-    <div class="cmd-card" id="card-run_diarization">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(6,182,212,.12);">🎙️</div>
-        <div>
-          <div class="cmd-title">Run Diarization</div>
-          <div class="cmd-desc">Run pyannote speaker diarization and map transcript segments to speakers.</div>
-        </div>
-        <span class="cmd-badge custom">Custom</span>
-      </div>
-      <div class="cmd-fields">
-        <div class="field-row">
-          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional)</span></label>
-          <select class="form-select" id="run_diarization-video_id">
-            <option value="">— all non-diarized videos —</option>
-            {% for v in videos %}
-            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="field-row">
-          <label class="field-label">Include status</label>
-          <input class="form-input" id="run_diarization-include_status" value="ready" placeholder="ready,processing" />
-          <span class="field-hint">Command only processes videos that have segments and no diarization labels yet.</span>
-        </div>
-        <label class="toggle-row"><input type="checkbox" id="run_diarization-dry_run" /> Dry Run</label>
-        <label class="toggle-row"><input type="checkbox" id="run_diarization-force" /> Force re-run (include already diarized videos)</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('run_diarization', {
-          video_id: document.getElementById('run_diarization-video_id').value || undefined,
-          include_status: document.getElementById('run_diarization-include_status').value,
-          dry_run: document.getElementById('run_diarization-dry_run').checked,
-          force: document.getElementById('run_diarization-force').checked
-        })">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-      </div>
-      <pre class="cmd-output" id="out-run_diarization"></pre>
-    </div>
-
-    <!-- ── rebuild_speaker_face_suggestions ─────────────────────────────── -->
-    <div class="cmd-card" id="card-rebuild_speaker_face_suggestions">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(168,85,247,.12);">🔗</div>
-        <div>
-          <div class="cmd-title">Rebuild voice→face suggestions</div>
-          <div class="cmd-desc">
-            Recompute pending speaker↔face matches from existing segments and detected faces only.
-            No pyannote — use after restore, new faces, or heuristic tuning.
-          </div>
-        </div>
-        <span class="cmd-badge custom">Custom</span>
-      </div>
-      <div class="cmd-fields">
-        <div class="field-row">
-          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional)</span></label>
-          <select class="form-select" id="rebuild_speaker_face_suggestions-video_id">
-            <option value="">— all eligible ready videos —</option>
-            {% for v in videos %}
-            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="field-row">
-          <label class="field-label">Channel slug <span style="font-weight:400;text-transform:none;">(optional)</span></label>
-          <select class="form-select" id="rebuild_speaker_face_suggestions-channel">
-            <option value="">— any channel —</option>
-            {% for ch in channels %}
-            <option value="{{ ch.slug }}">{{ ch.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="field-row">
-          <label class="field-label">Max videos</label>
-          <input class="form-input" id="rebuild_speaker_face_suggestions-limit" type="number" min="1" placeholder="no limit" style="max-width:120px;" />
-        </div>
-        <label class="toggle-row"><input type="checkbox" id="rebuild_speaker_face_suggestions-dry_run" /> Dry run (list candidates only)</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="(function(){
-          const limRaw = document.getElementById('rebuild_speaker_face_suggestions-limit').value;
-          const lim = parseInt(limRaw, 10);
-          runCommand('rebuild_speaker_face_suggestions', {
-            video_id: document.getElementById('rebuild_speaker_face_suggestions-video_id').value || undefined,
-            channel: document.getElementById('rebuild_speaker_face_suggestions-channel').value || undefined,
-            limit: (Number.isFinite(lim) && lim > 0) ? lim : undefined,
-            dry_run: document.getElementById('rebuild_speaker_face_suggestions-dry_run').checked
-          });
-        })()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-        <span class="cmd-dryrun-hint">Large libraries may take a while — use channel, video, or limit to scope.</span>
-      </div>
-      <pre class="cmd-output" id="out-rebuild_speaker_face_suggestions"></pre>
-    </div>
-
-    <!-- ── propagate_identities ─────────────────────────────────────────── -->
-    <div class="cmd-card" id="card-propagate_identities">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(236,72,153,.12);">🧑‍🤝‍🧑</div>
-        <div>
-          <div class="cmd-title">Propagate Identities</div>
-          <div class="cmd-desc">Re-match auto-named faces against named identities across all videos.</div>
-        </div>
-        <span class="cmd-badge custom">Custom</span>
-      </div>
-      <div class="cmd-fields">
-        <div class="field-row">
-          <label class="field-label">Similarity threshold</label>
-          <div class="range-row">
-            <input type="range" min="0.3" max="0.9" step="0.05" value="0.45"
-                   id="propagate_identities-threshold"
-                   oninput="document.getElementById('prop-thresh-val').textContent=this.value" />
-            <span class="range-val" id="prop-thresh-val">0.45</span>
-          </div>
-          <span class="field-hint">Higher = stricter matching (fewer merges).</span>
-        </div>
-        <label class="toggle-row"><input type="checkbox" id="propagate_identities-dry_run" /> Dry Run</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('propagate_identities', {
-          threshold: parseFloat(document.getElementById('propagate_identities-threshold').value),
-          dry_run:   document.getElementById('propagate_identities-dry_run').checked
-        })">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-      </div>
-      <pre class="cmd-output" id="out-propagate_identities"></pre>
-    </div>
-
-    <!-- ── auto_confirm_similar ─────────────────────────────────────────── -->
-    <div class="cmd-card" id="card-auto_confirm_similar">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(20,184,166,.12);">✅</div>
-        <div>
-          <div class="cmd-title">Auto-confirm Faces</div>
-          <div class="cmd-desc">Automatically confirm high-confidence unreviewed face crops.</div>
-        </div>
-        <span class="cmd-badge custom">Custom</span>
-      </div>
-      <div class="cmd-fields">
-        <div class="field-row">
-          <label class="field-label">Confidence threshold</label>
-          <div class="range-row">
-            <input type="range" min="0.5" max="0.99" step="0.01" value="0.75"
-                   id="auto_confirm_similar-threshold"
-                   oninput="document.getElementById('auto-thresh-val').textContent=this.value" />
-            <span class="range-val" id="auto-thresh-val">0.75</span>
-          </div>
-          <span class="field-hint">Higher = only confirm very strong matches.</span>
-        </div>
-        <div class="field-row">
-          <label class="field-label">Video ID <span style="font-weight:400;text-transform:none;">(optional scope)</span></label>
-          <input class="form-input" id="auto_confirm_similar-video_id" placeholder="UUID or blank for all" />
-        </div>
-        <label class="toggle-row"><input type="checkbox" id="auto_confirm_similar-dry_run" /> Dry Run</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('auto_confirm_similar', {
-          threshold: parseFloat(document.getElementById('auto_confirm_similar-threshold').value),
-          video_id:  document.getElementById('auto_confirm_similar-video_id').value || undefined,
-          dry_run:   document.getElementById('auto_confirm_similar-dry_run').checked
-        })">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-      </div>
-      <pre class="cmd-output" id="out-auto_confirm_similar"></pre>
-    </div>
-
     <!-- ── patch_master_playlists ────────────────────────────────────────── -->
     <div class="cmd-card" id="card-patch_master_playlists">
       <div class="cmd-card-head">
         <div class="cmd-icon" style="background:rgba(99,102,241,.12);">🔧</div>
-        <div>
-          <div class="cmd-title">Patch Master Playlists</div>
-          <div class="cmd-desc">Add RESOLUTION attribute to all HLS master.m3u8 files. No re-encoding.</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Patch HLS Master Playlists</div>
+          <div class="cmd-desc">Rewrites master.m3u8 to include the RESOLUTION tag on each quality variant. Fixes hls.js level selector. No re-encoding — file edits only.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-ffmpeg">HLS · File edit only</span>
+          </div>
         </div>
-        <span class="cmd-badge simple">Simple</span>
       </div>
       <div class="cmd-fields">
         <div class="field-row">
@@ -520,63 +423,17 @@
       <pre class="cmd-output" id="out-patch_master_playlists"></pre>
     </div>
 
-    <!-- ── rename_auto_identities ────────────────────────────────────────── -->
-    <div class="cmd-card" id="card-rename_auto_identities">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(234,179,8,.12);">🏷️</div>
-        <div>
-          <div class="cmd-title">Rename Auto Identities</div>
-          <div class="cmd-desc">Rename "Person N" identities to globally unique "Person #&lt;pk&gt;" names.</div>
-        </div>
-        <span class="cmd-badge simple">Simple</span>
-      </div>
-      <div class="cmd-fields">
-        <label class="toggle-row"><input type="checkbox" id="rename_auto_identities-dry_run" /> Dry Run (preview only)</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('rename_auto_identities', {
-          dry_run: document.getElementById('rename_auto_identities-dry_run').checked
-        })">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-      </div>
-      <pre class="cmd-output" id="out-rename_auto_identities"></pre>
-    </div>
-
-    <!-- ── fill_blip_descriptions ────────────────────────────────────────── -->
-    <div class="cmd-card" id="card-fill_blip_descriptions">
-      <div class="cmd-card-head">
-        <div class="cmd-icon" style="background:rgba(16,185,129,.12);">🖼️</div>
-        <div>
-          <div class="cmd-title">Fill Scene Descriptions</div>
-          <div class="cmd-desc">Re-queue frame analysis for videos missing BLIP/Florence-2 scene descriptions.</div>
-        </div>
-        <span class="cmd-badge simple">Simple</span>
-      </div>
-      <div class="cmd-fields">
-        <label class="toggle-row"><input type="checkbox" id="fill_blip_descriptions-dry_run" /> Dry Run</label>
-      </div>
-      <div class="cmd-footer">
-        <button class="cmd-run-btn" onclick="runCommand('fill_blip_descriptions', {
-          dry_run: document.getElementById('fill_blip_descriptions-dry_run').checked
-        })">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          Run
-        </button>
-      </div>
-      <pre class="cmd-output" id="out-fill_blip_descriptions"></pre>
-    </div>
-
     <!-- ── generate_seek_sprites ────────────────────────────────────────── -->
     <div class="cmd-card" id="card-generate_seek_sprites">
       <div class="cmd-card-head">
         <div class="cmd-icon" style="background:rgba(14,165,233,.12);">🎞️</div>
-        <div>
-          <div class="cmd-title">Generate Seek Sprites</div>
-          <div class="cmd-desc">Backfill seek-bar thumbnail sprite sheets for existing videos. New videos get sprites automatically; use this for older uploads.</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Generate Seek-bar Sprite Sheets</div>
+          <div class="cmd-desc">Extracts one frame every 5 s and stitches them into a single JPEG sprite sheet per video. Powers the hover-preview on video thumbnails. New videos get sprites automatically; run this to backfill older uploads.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-ffmpeg">FFmpeg · Frame Extraction</span>
+          </div>
         </div>
-        <span class="cmd-badge custom">Custom</span>
       </div>
       <div class="cmd-fields">
         <div class="field-row">
@@ -630,6 +487,296 @@
         <span class="cmd-dryrun-hint">Queues FFmpeg jobs to Celery — worker must be running.</span>
       </div>
       <pre class="cmd-output" id="out-generate_seek_sprites"></pre>
+    </div>
+
+    <!-- ═══ 4. Speech & diarization ═══════════════════════════════════════════ -->
+    <div class="cmd-section-heading">🎙️ Speech &amp; diarization</div>
+
+    <!-- ── regenerate_captions ──────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-regenerate_captions">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(139,92,246,.12);">💬</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Generate / Regenerate Captions</div>
+          <div class="cmd-desc">Transcribe speech to SRT subtitles. Runs on videos missing auto-generated captions, or all videos with --force. Queues to the <code>captions</code> Celery queue.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-whis">faster-whisper · Speech-to-Text</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Scope</label>
+          <select class="form-select" id="rc-scope" onchange="rcScopeChange()">
+            <option value="all">All videos without captions</option>
+            <option value="channel">Videos in a channel</option>
+            <option value="playlist">Videos in a playlist</option>
+            <option value="video">Single video (UUID)</option>
+          </select>
+        </div>
+        <div class="field-row" id="rc-channel-row" style="display:none;">
+          <label class="field-label">Channel</label>
+          <select class="form-select" id="rc-channel">
+            <option value="">— select channel —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="rc-playlist-row" style="display:none;">
+          <label class="field-label">Playlist</label>
+          <select class="form-select" id="rc-playlist">
+            <option value="">— select playlist —</option>
+            {% for pl in playlists %}<option value="{{ pl.id }}">{{ pl.title }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row" id="rc-video-row" style="display:none;">
+          <label class="field-label">Video UUID</label>
+          <input class="form-input" id="rc-video-id" placeholder="550e8400-…" />
+        </div>
+        <div class="field-row">
+          <label class="field-label">Language code</label>
+          <input class="form-input" id="regenerate_captions-language" value="en" placeholder="en" style="max-width:90px;" />
+          <span class="field-hint">ISO 639-1 code (en, hi, fr, de, …)</span>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="regenerate_captions-force" /> Force (delete &amp; re-generate existing captions)</label>
+        <label class="toggle-row"><input type="checkbox" id="regenerate_captions-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const scope = document.getElementById('rc-scope').value;
+          const args = {
+            language: document.getElementById('regenerate_captions-language').value,
+            force:    document.getElementById('regenerate_captions-force').checked,
+            dry_run:  document.getElementById('regenerate_captions-dry_run').checked,
+          };
+          if (scope === 'channel')  args.channel  = document.getElementById('rc-channel').value  || undefined;
+          if (scope === 'playlist') args.playlist  = document.getElementById('rc-playlist').value || undefined;
+          if (scope === 'video')    args.video_id  = document.getElementById('rc-video-id').value || undefined;
+          runCommand('regenerate_captions', args);
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Queue Captions
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-regenerate_captions"></pre>
+    </div>
+    <script>
+    function rcScopeChange() {
+      const s = document.getElementById('rc-scope').value;
+      document.getElementById('rc-channel-row').style.display  = s==='channel'  ? '' : 'none';
+      document.getElementById('rc-playlist-row').style.display = s==='playlist' ? '' : 'none';
+      document.getElementById('rc-video-row').style.display    = s==='video'    ? '' : 'none';
+    }
+    </script>
+
+    <!-- ── run_diarization ──────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_diarization">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(6,182,212,.12);">🎙️</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Speaker Diarization</div>
+          <div class="cmd-desc">Who spoke when? Segments transcripts into per-speaker time ranges. Requires whisper captions to be run first. Requires HF_TOKEN + model acceptance.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-diar">pyannote/speaker-diarization-3.1 · Voice Segmentation</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional — blank = all pending)</span></label>
+          <select class="form-select" id="run_diarization-video_id">
+            <option value="">— all non-diarized videos —</option>
+            {% for v in videos %}
+            <option value="{{ v.id }}">{{ v.title|default:v.id }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_diarization-dry_run" /> Dry Run (list candidates, no processing)</label>
+        <label class="toggle-row"><input type="checkbox" id="run_diarization-force" /> Force (re-run even if already diarized)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('run_diarization', {
+          video_id: document.getElementById('run_diarization-video_id').value || undefined,
+          dry_run:  document.getElementById('run_diarization-dry_run').checked,
+          force:    document.getElementById('run_diarization-force').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run Diarization
+        </button>
+        <span class="cmd-dryrun-hint">Captions must exist first.</span>
+      </div>
+      <pre class="cmd-output" id="out-run_diarization"></pre>
+    </div>
+
+    <!-- ═══ 5. Faces, speakers & identity ═════════════════════════════════════ -->
+    <div class="cmd-section-heading">👤 Faces, speakers &amp; identity</div>
+
+    <!-- ── rebuild_speaker_face_suggestions ─────────────────────────────── -->
+    <div class="cmd-card" id="card-rebuild_speaker_face_suggestions">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(168,85,247,.12);">🔗</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Rebuild Speaker ↔ Face Suggestions</div>
+          <div class="cmd-desc">Recomputes who-appears-when-they-speak suggestions by cross-referencing diarization time ranges with face detection timestamps. No pyannote re-run — uses existing DB data only. Use after importing new faces or tuning overlap heuristics.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-db">DB-only · No inference</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="rebuild_speaker_face_suggestions-video_id">
+            <option value="">— all eligible ready videos —</option>
+            {% for v in videos %}
+            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Channel slug <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="rebuild_speaker_face_suggestions-channel">
+            <option value="">— any channel —</option>
+            {% for ch in channels %}
+            <option value="{{ ch.slug }}">{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Max videos</label>
+          <input class="form-input" id="rebuild_speaker_face_suggestions-limit" type="number" min="1" placeholder="no limit" style="max-width:120px;" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="rebuild_speaker_face_suggestions-dry_run" /> Dry run (list candidates only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="(function(){
+          const limRaw = document.getElementById('rebuild_speaker_face_suggestions-limit').value;
+          const lim = parseInt(limRaw, 10);
+          runCommand('rebuild_speaker_face_suggestions', {
+            video_id: document.getElementById('rebuild_speaker_face_suggestions-video_id').value || undefined,
+            channel: document.getElementById('rebuild_speaker_face_suggestions-channel').value || undefined,
+            limit: (Number.isFinite(lim) && lim > 0) ? lim : undefined,
+            dry_run: document.getElementById('rebuild_speaker_face_suggestions-dry_run').checked
+          });
+        })()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+        <span class="cmd-dryrun-hint">Large libraries may take a while — use channel, video, or limit to scope.</span>
+      </div>
+      <pre class="cmd-output" id="out-rebuild_speaker_face_suggestions"></pre>
+    </div>
+
+    <!-- ── propagate_identities ─────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-propagate_identities">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(236,72,153,.12);">🧑‍🤝‍🧑</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Propagate Identities</div>
+          <div class="cmd-desc">After you name a person on the /faces/ page, run this to find all other "Person #N" auto-detected faces that are actually the same person and merge them. Uses ArcFace cosine similarity.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-face">ArcFace · Embedding Comparison</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Similarity threshold</label>
+          <div class="range-row">
+            <input type="range" min="0.3" max="0.9" step="0.05" value="0.45"
+                   id="propagate_identities-threshold"
+                   oninput="document.getElementById('prop-thresh-val').textContent=this.value" />
+            <span class="range-val" id="prop-thresh-val">0.45</span>
+          </div>
+          <span class="field-hint">Higher = stricter matching (fewer merges).</span>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="propagate_identities-dry_run" /> Dry Run</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('propagate_identities', {
+          threshold: parseFloat(document.getElementById('propagate_identities-threshold').value),
+          dry_run:   document.getElementById('propagate_identities-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-propagate_identities"></pre>
+    </div>
+
+    <!-- ── auto_confirm_similar ─────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-auto_confirm_similar">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(20,184,166,.12);">✅</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Auto-confirm High-confidence Faces</div>
+          <div class="cmd-desc">Bulk-confirms unreviewed face crops whose ArcFace embedding is very close to their identity's reference. Saves review time when faces are clearly correct. Always dry-run first.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-face">ArcFace · Cosine Similarity</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Similarity threshold <span style="font-weight:400;text-transform:none;">(higher = stricter)</span></label>
+          <div class="range-row">
+            <input type="range" min="0.5" max="0.99" step="0.01" value="0.75"
+                   id="auto_confirm_similar-threshold"
+                   oninput="document.getElementById('auto-thresh-val').textContent=this.value" />
+            <span class="range-val" id="auto-thresh-val">0.75</span>
+          </div>
+          <span class="field-hint">0.75 = safe default. Lower values confirm more but risk false positives.</span>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Scope to channel <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <select class="form-select" id="acs-channel">
+            <option value="">— all channels —</option>
+            {% for ch in channels %}<option value="{{ ch.slug }}">{{ ch.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Scope to video UUID <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <input class="form-input" id="auto_confirm_similar-video_id" placeholder="blank = all" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="auto_confirm_similar-dry_run" /> Dry Run (count + list matches only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('auto_confirm_similar', {
+          threshold: parseFloat(document.getElementById('auto_confirm_similar-threshold').value),
+          video_id:  document.getElementById('auto_confirm_similar-video_id').value || undefined,
+          channel:   document.getElementById('acs-channel').value || undefined,
+          dry_run:   document.getElementById('auto_confirm_similar-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Confirm Faces
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-auto_confirm_similar"></pre>
+    </div>
+
+    <!-- ── rename_auto_identities ────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-rename_auto_identities">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(234,179,8,.12);">🏷️</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Rename Auto-detected Identities</div>
+          <div class="cmd-desc">One-time migration: renames legacy "Person 1", "Person 2" style names to globally unique "Person #&lt;id&gt;" format. Run once after migrating from an older version.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-db">DB-only · One-time migration</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <label class="toggle-row"><input type="checkbox" id="rename_auto_identities-dry_run" /> Dry Run (preview only)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('rename_auto_identities', {
+          dry_run: document.getElementById('rename_auto_identities-dry_run').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+      </div>
+      <pre class="cmd-output" id="out-rename_auto_identities"></pre>
     </div>
 
   </div><!-- /.cmd-grid -->

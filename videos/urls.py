@@ -104,6 +104,8 @@ urlpatterns = [
     path('api/faces/<int:identity_id>/tag/',                               views.face_identity_tag),
     path('api/faces/<int:identity_id>/merge/',                             views.face_identity_merge),
     path('api/faces/<int:identity_id>/rename/',                            views.face_identity_rename),
+    path('api/faces/<int:identity_id>/nicknames/',                         views.face_identity_nicknames),
+    path('api/faces/<int:identity_id>/nicknames/<int:nickname_id>/',       views.face_identity_nickname_delete),
     path('api/faces/<int:identity_id>/delete/',                            views.face_identity_delete),
     path('api/faces/crops/<int:face_id>/status/',                          views.face_set_status),
     path('api/faces/crops/<int:face_id>/set-thumbnail/',                   views.face_set_thumbnail),
@@ -171,4 +173,13 @@ urlpatterns = [
     path('api/albums/',                              views.album_list),
     path('api/albums/<uuid:album_id>/',              views.album_detail),
     path('api/albums/<uuid:album_id>/photos/',       views.album_photos),
+
+    # ── Events — pages ──
+    path('events/',                views.events_page,         name='events'),
+    path('events/upload/',         views.events_upload_page,  name='events_upload'),
+    path('events/<slug:slug>/',    views.event_detail_page,   name='event_detail'),
+
+    # ── Events — API ──
+    path('api/events/',                views.event_list_create),
+    path('api/events/<int:event_id>/', views.event_detail_api),
 ]

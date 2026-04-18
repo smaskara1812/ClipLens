@@ -1,0 +1,449 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}{{ event.name }} — Events — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  .ev-detail-layout {
+    max-width: 1200px; margin: 0 auto;
+    padding: 28px 24px 80px;
+  }
+
+  /* Header */
+  .ev-detail-header {
+    display: flex; align-items: flex-start; gap: 24px;
+    margin-bottom: 32px;
+  }
+  .ev-detail-cover {
+    width: 130px; height: 90px; flex-shrink: 0;
+    border-radius: var(--radius); overflow: hidden;
+    background: var(--surface-3);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-subtle);
+  }
+  .ev-detail-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .ev-detail-info { flex: 1; min-width: 0; }
+  .ev-detail-name {
+    font-size: 26px; font-weight: 800; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ev-detail-meta {
+    font-size: 13px; color: var(--text-muted);
+    display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px;
+  }
+  .ev-detail-meta span { display: flex; align-items: center; gap: 5px; }
+  .ev-detail-desc {
+    font-size: 13px; color: var(--text-muted); margin-top: 8px;
+    max-width: 600px; line-height: 1.6;
+  }
+  .ev-detail-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: flex-start; }
+
+  /* Tabs */
+  .ev-tabs {
+    display: flex; gap: 0; border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .ev-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); background: none; border: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .ev-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ev-tab:hover  { color: var(--text); }
+  .ev-tab-count {
+    display: inline-block; background: var(--surface-3);
+    border-radius: 10px; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; color: var(--text-muted);
+  }
+  .ev-tab.active .ev-tab-count { background: var(--accent-soft); color: var(--accent); }
+
+  /* Tab panes */
+  .ev-pane { display: none; }
+  .ev-pane.active { display: block; }
+
+  /* Video grid */
+  .ev-video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .ev-vcard {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius); overflow: hidden;
+    text-decoration: none; color: var(--text);
+    transition: border-color .15s;
+  }
+  .ev-vcard:hover { border-color: var(--accent); }
+  .ev-vthumb {
+    width: 100%; aspect-ratio: 16/9;
+    background: var(--surface-3); overflow: hidden; position: relative;
+  }
+  .ev-vthumb img { width: 100%; height: 100%; object-fit: cover; }
+  .ev-vthumb-ph {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-subtle);
+  }
+  .ev-vinfo { padding: 10px 12px 12px; }
+  .ev-vtitle {
+    font-size: 13px; font-weight: 600; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .ev-vstatus {
+    font-size: 11px; color: var(--text-muted); margin-top: 4px;
+  }
+
+  /* Photo grid */
+  .ev-photo-grid {
+    columns: 4 160px; gap: 8px;
+  }
+  .ev-photo-item {
+    break-inside: avoid; margin-bottom: 8px;
+    border-radius: var(--radius-sm); overflow: hidden;
+    position: relative; display: block;
+    background: var(--surface-3);
+  }
+  .ev-photo-item img {
+    width: 100%; display: block;
+    border-radius: var(--radius-sm);
+    transition: transform .2s;
+  }
+  .ev-photo-item:hover img { transform: scale(1.03); }
+
+  .ev-empty-pane {
+    color: var(--text-muted); font-size: 13px;
+    padding: 48px 0; text-align: center;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ev-detail-layout">
+
+  <!-- Header -->
+  <div class="ev-detail-header">
+    <div class="ev-detail-cover">
+      {% if event.cover_url %}
+      <img src="{{ event.cover_url }}" alt="{{ event.name }}" />
+      {% else %}
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+        <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+      </svg>
+      {% endif %}
+    </div>
+    <div class="ev-detail-info">
+      <div class="ev-detail-name">{{ event.name }}</div>
+      <div class="ev-detail-meta">
+        {% if event.event_date %}
+        <span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          {{ event.event_date|date:"F j, Y" }}
+        </span>
+        {% endif %}
+        <span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          {{ photos|length }} photo{{ photos|length|pluralize }}
+        </span>
+        <span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
+          {{ videos|length }} video{{ videos|length|pluralize }}
+        </span>
+      </div>
+      {% if event.description %}
+      <div class="ev-detail-desc">{{ event.description }}</div>
+      {% endif %}
+    </div>
+    <div class="ev-detail-actions">
+      <a href="{% url 'events' %}" class="btn btn-ghost" style="font-size:13px;padding:7px 14px;">← All Events</a>
+      {% if event.album %}
+      <a href="{% url 'album_detail' event.album.id %}" class="btn btn-ghost" style="font-size:13px;padding:7px 14px;">
+        View Album
+      </a>
+      {% endif %}
+      {% if event.playlist %}
+      <a href="{% url 'playlist_detail' event.playlist.id %}" class="btn btn-ghost" style="font-size:13px;padding:7px 14px;">
+        View Playlist
+      </a>
+      {% endif %}
+      {% if is_editor %}
+      <button class="btn btn-ghost" style="font-size:13px;padding:7px 14px;"
+        onclick="openEditModal()"
+        data-id="{{ event.id }}"
+        data-name="{{ event.name|escape }}"
+        data-date="{{ event.event_date|default:'' }}"
+        data-desc="{{ event.description|escape }}">
+        Edit
+      </button>
+      <button class="btn btn-ghost" style="font-size:13px;padding:7px 14px;color:#ef4444;border-color:rgba(239,68,68,.3);"
+        data-id="{{ event.id }}"
+        data-name="{{ event.name|escape }}"
+        onclick="deleteEvent(this)">
+        Delete
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="ev-tabs">
+    {% if videos %}
+    <button class="ev-tab {% if not photos or videos %}active{% endif %}" id="tab-videos" onclick="switchTab('videos')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
+      Videos <span class="ev-tab-count">{{ videos|length }}</span>
+    </button>
+    {% endif %}
+    {% if photos %}
+    <button class="ev-tab {% if not videos %}active{% endif %}" id="tab-photos" onclick="switchTab('photos')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      Photos <span class="ev-tab-count">{{ photos|length }}</span>
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- Videos pane -->
+  {% if videos %}
+  <div class="ev-pane {% if videos %}active{% endif %}" id="pane-videos">
+    <div class="ev-video-grid">
+      {% for v in videos %}
+      <a href="{% url 'watch' v.id %}" class="ev-vcard">
+        <div class="ev-vthumb">
+          {% if v.thumbnail %}
+          <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
+          {% else %}
+          <div class="ev-vthumb-ph">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/></svg>
+          </div>
+          {% endif %}
+        </div>
+        <div class="ev-vinfo">
+          <div class="ev-vtitle">{{ v.title }}</div>
+          {% if v.status != 'ready' %}
+          <div class="ev-vstatus">{{ v.status|capfirst }}</div>
+          {% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Photos pane -->
+  {% if photos %}
+  <div class="ev-pane {% if not videos %}active{% endif %}" id="pane-photos">
+    <div class="ev-photo-grid">
+      {% for p in photos %}
+      <a href="{% url 'photo_detail' p.id %}" class="ev-photo-item">
+        {% if p.thumbnail %}
+        <img src="{{ p.thumbnail_url }}" alt="{{ p.title }}" loading="lazy" />
+        {% else %}
+        <div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;color:var(--text-subtle);">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </div>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not videos and not photos %}
+  <div class="ev-empty-pane">
+    No content yet. Upload photos and videos to this event using the folder upload.
+  </div>
+  {% endif %}
+
+</div>
+<script>
+function switchTab(tab) {
+  document.querySelectorAll('.ev-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.ev-pane').forEach(p => p.classList.remove('active'));
+  const btn = document.getElementById('tab-' + tab);
+  const pane = document.getElementById('pane-' + tab);
+  if (btn) btn.classList.add('active');
+  if (pane) pane.classList.add('active');
+}
+</script>
+
+{% if is_editor %}
+<style>
+  .ev-edit-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,.5); align-items: center; justify-content: center;
+  }
+  .ev-edit-backdrop.open { display: flex; }
+  .ev-edit-modal {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 28px 28px 24px;
+    width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto;
+  }
+  .ev-edit-modal h2 { font-size: 17px; font-weight: 800; margin-bottom: 18px; }
+  .ev-edit-field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 5px; }
+  .ev-edit-field label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .ev-edit-field input, .ev-edit-field textarea {
+    padding: 8px 11px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--surface-2);
+    color: var(--text); font-size: 13px; outline: none; width: 100%; box-sizing: border-box;
+  }
+  .ev-edit-field input:focus, .ev-edit-field textarea:focus { border-color: var(--accent); }
+  .ev-edit-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+  /* Thumbnail picker */
+  .ev-thumb-picker-label {
+    font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .ev-thumb-picker {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px; max-height: 200px; overflow-y: auto;
+    padding: 4px; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+    background: var(--surface-2);
+  }
+  .ev-thumb-picker-item {
+    aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
+    cursor: pointer; border: 2px solid transparent;
+    transition: border-color .12s; position: relative;
+  }
+  .ev-thumb-picker-item img { width: 100%; height: 100%; object-fit: cover; }
+  .ev-thumb-picker-item.selected { border-color: var(--accent); }
+  .ev-thumb-picker-item.selected::after {
+    content: '✓'; position: absolute; bottom: 3px; right: 4px;
+    font-size: 11px; font-weight: 800; color: #fff;
+    text-shadow: 0 0 4px rgba(0,0,0,.8);
+  }
+  .ev-thumb-none {
+    aspect-ratio: 1; border-radius: var(--radius-sm);
+    cursor: pointer; border: 2px solid transparent;
+    transition: border-color .12s;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-3); color: var(--text-subtle); font-size: 10px;
+    text-align: center; font-weight: 600;
+  }
+  .ev-thumb-none.selected { border-color: var(--accent); color: var(--accent); }
+</style>
+
+<div class="ev-edit-backdrop" id="editBackdrop">
+  <div class="ev-edit-modal">
+    <h2>Edit Event</h2>
+    <div class="ev-edit-field">
+      <label>Event name</label>
+      <input type="text" id="editName" />
+    </div>
+    <div class="ev-edit-field">
+      <label>Event date</label>
+      <input type="date" id="editDate" />
+    </div>
+    <div class="ev-edit-field">
+      <label>Description</label>
+      <textarea id="editDesc" rows="3"></textarea>
+    </div>
+
+    {% if photos or videos %}
+    <div style="margin-bottom:14px;">
+      <div class="ev-thumb-picker-label">Cover thumbnail</div>
+      <div class="ev-thumb-picker" id="thumbPicker">
+        <!-- "None" option -->
+        <div class="ev-thumb-none {% if not event.cover_photo %}selected{% endif %}"
+             data-id="" onclick="selectThumb(this)">None</div>
+        {% for p in photos %}
+        {% if p.thumbnail %}
+        <div class="ev-thumb-picker-item {% if event.cover_photo_id == p.id %}selected{% endif %}"
+             data-id="{{ p.id }}" onclick="selectThumb(this)">
+          <img src="{{ p.thumbnail_url }}" alt="{{ p.title }}" loading="lazy" />
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% for v in videos %}
+        {% if v.thumbnail %}
+        <div class="ev-thumb-picker-item" data-video-thumb="{{ v.thumbnail_url }}"
+             data-id="" onclick="selectThumb(this)" style="opacity:.7;cursor:not-allowed;" title="Video thumbnails coming soon">
+          <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="ev-edit-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeEditModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="editSaveBtn" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = '{{ csrf_token }}';
+const EVENT_ID = {{ event.id }};
+let _selectedCoverId = '{{ event.cover_photo_id|default:"" }}';
+
+function selectThumb(el) {
+  document.querySelectorAll('#thumbPicker .ev-thumb-picker-item, #thumbPicker .ev-thumb-none')
+    .forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  _selectedCoverId = el.dataset.id || '';
+}
+
+function openEditModal() {
+  const btn = document.querySelector('[data-id="{{ event.id }}"][data-name]');
+  document.getElementById('editName').value = btn ? btn.dataset.name : '';
+  document.getElementById('editDate').value = btn ? btn.dataset.date : '';
+  document.getElementById('editDesc').value = btn ? btn.dataset.desc : '';
+  document.getElementById('editBackdrop').classList.add('open');
+  setTimeout(() => document.getElementById('editName').focus(), 50);
+}
+
+function closeEditModal() {
+  document.getElementById('editBackdrop').classList.remove('open');
+}
+
+document.getElementById('editBackdrop').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeEditModal();
+});
+
+async function saveEdit() {
+  const name = document.getElementById('editName').value.trim();
+  if (!name) { showToast('error', 'Event name is required'); return; }
+  const btn = document.getElementById('editSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const payload = {
+    name,
+    event_date: document.getElementById('editDate').value || null,
+    description: document.getElementById('editDesc').value.trim(),
+    cover_photo_id: _selectedCoverId || null,
+  };
+  const res = await fetch(`/api/events/${EVENT_ID}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify(payload),
+  });
+  btn.disabled = false; btn.textContent = 'Save';
+  if (res.ok) {
+    closeEditModal();
+    showToast('success', 'Event updated');
+    setTimeout(() => location.reload(), 700);
+  } else {
+    showToast('error', 'Failed to save changes');
+  }
+}
+
+async function deleteEvent(btn) {
+  const name = btn.dataset.name;
+  if (!confirm(`Delete "${name}"?\n\nThis removes the event record only — photos and videos inside will remain in your library.`)) return;
+  const res = await fetch(`/api/events/${EVENT_ID}/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': CSRF },
+  });
+  if (res.ok) {
+    showToast('success', 'Event deleted');
+    setTimeout(() => { window.location.href = '{% url "events" %}'; }, 700);
+  } else {
+    showToast('error', 'Failed to delete event');
+  }
+}
+</script>
+{% endif %}
+{% endblock %}

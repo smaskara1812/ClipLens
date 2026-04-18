@@ -417,6 +417,41 @@
     }
   </style>
   {% block extra_head %}{% endblock %}
+  <style>
+    /* Sprite preview overlay — sits on top of the thumbnail, fades in on hover */
+    .vcard-thumb .sprite-overlay {
+      position: absolute;
+      inset: 0;
+      background-repeat: no-repeat;
+      opacity: 0;
+      transition: opacity 0.18s ease;
+      pointer-events: none;
+      will-change: background-position;
+    }
+    /* Hide the scale-on-hover effect while preview is running */
+    .vcard-thumb.sprite-active img {
+      transform: none !important;
+    }
+    /* Progress dots — bottom centre of the thumb while animating */
+    .sprite-progress {
+      position: absolute;
+      bottom: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 3px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.18s;
+    }
+    .vcard-thumb.sprite-active .sprite-progress { opacity: 1; }
+    .sprite-progress span {
+      width: 4px; height: 4px; border-radius: 50%;
+      background: rgba(255,255,255,0.5);
+      transition: background 0.15s;
+    }
+    .sprite-progress span.active { background: #fff; }
+  </style>
 </head>
 <body>
 
@@ -645,5 +680,120 @@
   })();
 </script>
 {% block extra_scripts %}{% endblock %}
+<script>
+/* ── Sprite hover preview ───────────────────────────────────────────────────
+   Cycles through seek-sprite frames when hovering a .vcard-thumb[data-sprite].
+   Works on player, channel, trending, category pages — all use the same markup.
+──────────────────────────────────────────────────────────────────────────── */
+(function () {
+  var SPRITE_INTERVAL = 5;   // seconds per frame  (SEEK_THUMBNAIL_INTERVAL)
+  var SPRITE_COLS     = 25;  // tiles per row       (SEEK_THUMBNAIL_COLS)
+  var SPRITE_TW       = 160; // tile width px       (SEEK_THUMBNAIL_WIDTH)
+  var SPRITE_TH       = 90;  // tile height px      (SEEK_THUMBNAIL_HEIGHT)
+  var FRAME_MS        = 650; // ms between frames
+  var HOVER_DELAY_MS  = 400; // ms before preview starts
+  var MAX_FRAMES      = 18;  // max frames to cycle through per preview
+
+  var _delayTimer  = null;
+  var _frameTimer  = null;
+  var _activeThumb = null;
+  var _overlay     = null;
+  var _dots        = null;
+  var _frameIdx    = 0;
+  var _totalFrames = 0;
+
+  function _getOverlay(thumb) {
+    var ov = thumb.querySelector('.sprite-overlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'sprite-overlay';
+      ov.style.backgroundSize = (SPRITE_COLS * SPRITE_TW) + 'px auto';
+      thumb.appendChild(ov);
+    }
+    return ov;
+  }
+
+  function _getDots(thumb, total) {
+    var d = thumb.querySelector('.sprite-progress');
+    if (!d) {
+      d = document.createElement('div');
+      d.className = 'sprite-progress';
+      var n = Math.min(total, 8); // max 8 dots shown
+      for (var i = 0; i < n; i++) {
+        var s = document.createElement('span');
+        d.appendChild(s);
+      }
+      thumb.appendChild(d);
+    }
+    return d;
+  }
+
+  function _showFrame(spriteUrl, idx) {
+    var col = idx % SPRITE_COLS;
+    var row = Math.floor(idx / SPRITE_COLS);
+    _overlay.style.backgroundImage  = 'url(' + spriteUrl + ')';
+    _overlay.style.backgroundPosition = (-col * SPRITE_TW) + 'px ' + (-row * SPRITE_TH) + 'px';
+    _overlay.style.opacity = '1';
+
+    // Update dots
+    if (_dots) {
+      var dotCount = _dots.children.length;
+      var dotIdx   = Math.floor((idx / _totalFrames) * dotCount);
+      for (var i = 0; i < dotCount; i++) {
+        _dots.children[i].classList.toggle('active', i === dotIdx);
+      }
+    }
+  }
+
+  function _start(thumb) {
+    var spriteUrl  = thumb.dataset.sprite;
+    var duration   = parseFloat(thumb.dataset.duration) || 0;
+    _totalFrames   = duration > 0
+      ? Math.min(Math.ceil(duration / SPRITE_INTERVAL), MAX_FRAMES)
+      : MAX_FRAMES;
+
+    _activeThumb = thumb;
+    _frameIdx    = 0;
+    _overlay     = _getOverlay(thumb);
+    _dots        = _getDots(thumb, _totalFrames);
+
+    thumb.classList.add('sprite-active');
+    _showFrame(spriteUrl, _frameIdx);
+
+    _frameTimer = setInterval(function () {
+      _frameIdx = (_frameIdx + 1) % _totalFrames;
+      _showFrame(spriteUrl, _frameIdx);
+    }, FRAME_MS);
+  }
+
+  function _stop() {
+    if (_frameTimer)  { clearInterval(_frameTimer);  _frameTimer  = null; }
+    if (_delayTimer)  { clearTimeout(_delayTimer);   _delayTimer  = null; }
+    if (_overlay)     { _overlay.style.opacity = '0'; }
+    if (_activeThumb) { _activeThumb.classList.remove('sprite-active'); }
+    _activeThumb = null;
+    _overlay     = null;
+    _dots        = null;
+    _frameIdx    = 0;
+  }
+
+  // Use event delegation so dynamically rendered cards (search results) also work
+  document.addEventListener('mouseover', function (e) {
+    var thumb = e.target.closest('.vcard-thumb[data-sprite]');
+    if (!thumb || thumb === _activeThumb) return;
+    _stop();
+    _delayTimer = setTimeout(function () { _start(thumb); }, HOVER_DELAY_MS);
+  }, false);
+
+  document.addEventListener('mouseout', function (e) {
+    var thumb = e.target.closest('.vcard-thumb[data-sprite]');
+    if (!thumb) return;
+    // Only stop if leaving the thumb entirely (not moving to a child)
+    var related = e.relatedTarget;
+    if (related && thumb.contains(related)) return;
+    _stop();
+  }, false);
+})();
+</script>
 </body>
 </html>

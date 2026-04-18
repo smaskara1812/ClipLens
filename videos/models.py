@@ -990,3 +990,83 @@ class AlbumPhoto(models.Model):
         indexes = [
             models.Index(fields=['album', 'order'], name='albphoto_album_order'),
         ]
+
+
+# ── Face Identity Nicknames ───────────────────────────────────────────────────
+
+class FaceIdentityNickname(models.Model):
+    """
+    Alternative names / aliases for a FaceIdentity.
+    Multiple editors can add nicknames; all are searchable as equivalents of the primary name.
+    """
+    identity   = models.ForeignKey(FaceIdentity, on_delete=models.CASCADE, related_name='nicknames')
+    nickname   = models.CharField(max_length=100)
+    added_by   = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('identity', 'nickname')
+        ordering        = ['nickname']
+        indexes = [
+            models.Index(fields=['nickname'], name='facenick_nickname_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.nickname} → {self.identity.name}'
+
+
+# ── Events (combined photo + video folders) ───────────────────────────────────
+
+class Event(models.Model):
+    """
+    A named collection grouping both photos and videos — typically imported from
+    a single folder (e.g. 'Founded_Day_2015'). Links to an Album for photos and
+    a Playlist for videos so each sub-collection is also browsable independently.
+    """
+    name        = models.CharField(max_length=255)
+    slug        = models.SlugField(max_length=255, unique=True, blank=True)
+    description = models.TextField(blank=True)
+    event_date  = models.DateField(null=True, blank=True)
+    tags        = models.TextField(blank=True, help_text='Comma-separated tags (includes folder name)')
+    cover_photo = models.ForeignKey(
+        Photo, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    # Sub-containers — either or both may be null if the folder had only one type
+    album       = models.OneToOneField(
+        Album, null=True, blank=True, on_delete=models.SET_NULL, related_name='event'
+    )
+    playlist    = models.OneToOneField(
+        Playlist, null=True, blank=True, on_delete=models.SET_NULL, related_name='event'
+    )
+    created_by  = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='events'
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-event_date', '-created_at']
+        indexes  = [
+            models.Index(fields=['slug'],       name='event_slug_idx'),
+            models.Index(fields=['event_date'], name='event_date_idx'),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def photo_count(self):
+        return self.album.photo_count if self.album_id else 0
+
+    @property
+    def video_count(self):
+        return self.playlist.items.count() if self.playlist_id else 0
+
+    @property
+    def cover_url(self):
+        if self.cover_photo:
+            return self.cover_photo.thumbnail_url
+        if self.album and self.album.cover_photo:
+            return self.album.cover_photo.thumbnail_url
+        return None
