@@ -30,12 +30,12 @@
     </svg>
     Photos
   </a>
-  <a href="{% url 'photo_map' %}" class="sidebar-item {% if url_name == 'photo_map' %}active{% endif %}">
+  <a href="{% url 'media_map' %}" class="sidebar-item {% if url_name == 'media_map' or url_name == 'photo_map' or url_name == 'place_detail' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
       <circle cx="12" cy="10" r="3"/>
     </svg>
-    Photo Map
+    Media Map
   </a>
   <a href="{% url 'albums' %}" class="sidebar-item {% if url_name == 'albums' or url_name == 'album_detail' or url_name == 'album_shared' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -125,7 +125,7 @@
 
 <!-- Intelligence — visible to all authenticated users -->
 <div class="sidebar-section">
-  <div class="sidebar-heading">Intelligence</div>
+  <div class="sidebar-heading">Identity</div>
   <a href="{% url 'faces' %}" class="sidebar-item {% if url_name == 'faces' or url_name == 'face_identity' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.418 4.03-8 9-8s9 3.582 9 8"/>

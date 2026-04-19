@@ -509,12 +509,14 @@ def player_page(request):
             _fuzzy_qs = _postgres_fuzzy_filter(videos, q, ('title', 'description', 'tags'))
             videos = videos.filter(
                 Q(pk__in=_fts_qs.values('pk')) | Q(pk__in=_fuzzy_qs.values('pk'))
+                | Q(named_place__name__icontains=q)
             ).distinct()
         else:
             videos = videos.filter(
                 _q_icontains_all_terms('title', q)
                 | _q_icontains_all_terms('description', q)
                 | _q_icontains_all_terms('tags', q)
+                | Q(named_place__name__icontains=q)
             ).distinct()
 
     # Search filters
@@ -1128,6 +1130,19 @@ def player_page(request):
                 .order_by('-event_date', '-created_at')[:12]
             )
 
+    # ── Named-place search ───────────────────────────────────────────────────
+    # Lets users disambiguate places that share a name (e.g. two "Wankhade" in
+    # Mumbai and Nagpur). Each match links to /places/<slug>/.
+    place_matches = []
+    if q:
+        _np_qs = NamedPlace.objects.filter(
+            Q(name__icontains=q) | Q(description__icontains=q)
+        ).annotate(
+            np_photo_count=Count('photos', distinct=True),
+            np_video_count=Count('videos', distinct=True),
+        ).order_by('name')[:20]
+        place_matches = list(_np_qs)
+
     # ── Photo search ─────────────────────────────────────────────────────────
     photo_matches = []
     if q and request.user.is_authenticated:
@@ -1285,6 +1300,7 @@ def player_page(request):
         'channel_matches':     channel_matches,
         'playlist_matches':    playlist_matches,
         'event_matches':       event_matches,
+        'place_matches':       place_matches,
         'photo_matches':       photo_matches,
         'moment_matches':      moment_matches,
         'frame_matches':       scene_matches,   # keep for any legacy template refs
@@ -1303,7 +1319,7 @@ def player_page(request):
 
 def watch_page(request, video_id):
     try:
-        video = Video.objects.select_related('channel').get(id=video_id)
+        video = Video.objects.select_related('channel', 'named_place').get(id=video_id)
     except Video.DoesNotExist:
         raise Http404
 
@@ -1407,6 +1423,7 @@ def watch_page(request, video_id):
         'all_categories':  Category.objects.all().order_by('name'),
         'frame_interval':  getattr(settings, 'FRAME_INTERVAL_SECONDS', 5),
         'can_tag_team':    _is_editor(request.user),
+        'all_named_places': list(NamedPlace.objects.values('id', 'name', 'slug', 'latitude', 'longitude').order_by('name')),
         # Seek thumbnail sprite (only if feature enabled and sprite exists)
         'seek_sprite_url':    (settings.MEDIA_URL + video.seek_sprite) if (getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True) and video.seek_sprite) else None,
         'seek_thumb_interval': getattr(settings, 'SEEK_THUMBNAIL_INTERVAL', 5),
@@ -1861,6 +1878,35 @@ def named_places_page(request):
     return render(request, 'videos/named_places.html', {'places': places})
 
 
+@login_required
+def place_detail_page(request, slug):
+    """Public place page showing all media (photos + videos) tagged at this place."""
+    place = get_object_or_404(NamedPlace, slug=slug)
+
+    photos = (
+        Photo.objects.filter(named_place=place, status=Photo.STATUS_READY, is_archived=False)
+        .select_related('channel')
+        .order_by('-created_at')
+    )
+    if not _is_editor(request.user):
+        photos = photos.filter(visibility=Photo.VISIBILITY_PUBLIC)
+
+    videos = (
+        Video.objects.filter(named_place=place, status=Video.STATUS_READY)
+        .select_related('channel')
+        .order_by('-created_at')
+    )
+    if not _is_editor(request.user):
+        videos = videos.filter(visibility=Video.VISIBILITY_PUBLIC)
+
+    return render(request, 'videos/place_detail.html', {
+        'place': place,
+        'photos': photos[:100],
+        'videos': videos[:100],
+        'photo_count': photos.count(),
+        'video_count': videos.count(),
+    })
+
 
 
 # ─── Storage Dashboard ────────────────────────────────────────────────────────
@@ -2307,8 +2353,8 @@ def category_detail(request, category_id):
 
 def _bulk_assign_named_place(place) -> None:
     """
-    After creating/updating a NamedPlace, scan all photos with coordinates
-    and assign/update their named_place if they fall within the radius.
+    After creating/updating a NamedPlace, scan all photos AND videos with
+    coordinates and assign/update their named_place if they fall within the radius.
     Uses Python-level haversine (no PostGIS required).
     """
     from .models import Photo
@@ -2325,6 +2371,19 @@ def _bulk_assign_named_place(place) -> None:
     if updated:
         Photo.objects.bulk_update(updated, ['named_place'])
 
+    videos = Video.objects.filter(
+        latitude__isnull=False, longitude__isnull=False
+    ).select_related('named_place')
+    updated_v = []
+    for v in videos:
+        d = _haversine_m(v.latitude, v.longitude, place.latitude, place.longitude)
+        if d <= place.radius_meters:
+            if v.named_place_id != place.id:
+                v.named_place = place
+                updated_v.append(v)
+    if updated_v:
+        Video.objects.bulk_update(updated_v, ['named_place'])
+
 
 @api_view(['GET', 'POST'])
 def named_place_list(request):
@@ -2334,12 +2393,17 @@ def named_place_list(request):
          body: { name, latitude, longitude, radius_meters?, color?, description? }
     """
     if request.method == 'GET':
-        places = NamedPlace.objects.annotate(photo_count=Count('photos'))
+        places = NamedPlace.objects.annotate(
+            photo_count=Count('photos', distinct=True),
+            video_count=Count('videos', distinct=True),
+        )
         return Response([{
             'id': p.id, 'name': p.name, 'slug': p.slug,
             'latitude': p.latitude, 'longitude': p.longitude,
             'radius_meters': p.radius_meters, 'color': p.color,
-            'description': p.description, 'photo_count': p.photo_count,
+            'description': p.description,
+            'photo_count': p.photo_count,
+            'video_count': p.video_count,
         } for p in places])
 
     if not request.user.is_authenticated or not _is_editor(request.user):
@@ -2373,7 +2437,8 @@ def named_place_list(request):
         'id': place.id, 'name': place.name, 'slug': place.slug,
         'latitude': place.latitude, 'longitude': place.longitude,
         'radius_meters': place.radius_meters, 'color': place.color,
-        'description': place.description, 'photo_count': 0,
+        'description': place.description,
+        'photo_count': 0, 'video_count': 0,
     }, status=201)
 
 
@@ -2690,12 +2755,18 @@ def video_detail(request, video_id):
         return Response({'error': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'GET':
+        video = Video.objects.select_related('named_place').get(id=video_id)
         data = VideoDetailSerializer(video, context={'request': request}).data
         data['embed_url'] = f"{settings.SITE_URL}/embed/{video_id}/"
         data['iframe_code'] = (
             f'<iframe src="{settings.SITE_URL}/embed/{video_id}/" '
             f'width="100%" style="aspect-ratio:16/9;border:none;" allowfullscreen></iframe>'
         )
+        data['latitude']         = video.latitude
+        data['longitude']        = video.longitude
+        data['named_place_id']   = video.named_place_id
+        data['named_place_name'] = video.named_place.name if video.named_place_id else None
+        data['named_place_slug'] = video.named_place.slug if video.named_place_id else None
         return Response(data)
 
     if not request.user.is_authenticated:
@@ -2705,10 +2776,33 @@ def video_detail(request, video_id):
         return Response({'error': 'You do not own this video.'}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == 'PATCH':
+        # Handle location fields separately (not in serializer)
+        extra_fields = []
+        if 'named_place_id' in request.data:
+            pid = request.data['named_place_id']
+            video.named_place_id = int(pid) if pid else None
+            extra_fields.append('named_place')
+        if 'latitude' in request.data:
+            val = request.data['latitude']
+            video.latitude = float(val) if val not in (None, '') else None
+            extra_fields.append('latitude')
+        if 'longitude' in request.data:
+            val = request.data['longitude']
+            video.longitude = float(val) if val not in (None, '') else None
+            extra_fields.append('longitude')
+        if extra_fields:
+            video.save(update_fields=extra_fields)
+
         serializer = VideoDetailSerializer(video, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data)
+            data = serializer.data
+            data['latitude']         = video.latitude
+            data['longitude']        = video.longitude
+            data['named_place_id']   = video.named_place_id
+            data['named_place_name'] = video.named_place.name if video.named_place_id else None
+            data['named_place_slug'] = video.named_place.slug if video.named_place_id else None
+            return Response(data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     # DELETE
@@ -5585,9 +5679,13 @@ def photo_library_page(request):
 @login_required
 def photo_map_page(request):
     """Interactive map view of all geotagged photos using Leaflet + MarkerCluster."""
-    # owned_channels is already injected by sidebar_context context processor —
-    # no need to re-query here. Template uses {{ owned_channels }} directly.
     return render(request, 'videos/photo_map.html', {})
+
+
+@login_required
+def media_map_page(request):
+    """Interactive map view of all geotagged photos AND videos using Leaflet + MarkerCluster."""
+    return render(request, 'videos/media_map.html', {})
 
 
 @api_view(['GET'])
@@ -5669,6 +5767,113 @@ def photo_map_markers(request):
     return Response({'markers': markers, 'total': len(markers), 'places': places})
 
 
+@api_view(['GET'])
+@login_required
+def media_map_markers(request):
+    """
+    Returns both photos and videos that have lat/lng as map markers.
+    DB-friendly: uses .only(), indexed columns, select_related.
+    Supports ?channel=<slug>, ?place=<slug>, ?type=photo|video
+    """
+    ch_slug    = request.GET.get('channel', '').strip()
+    place_slug = request.GET.get('place',   '').strip()
+    media_type = request.GET.get('type',    '').strip()  # '' = both
+
+    markers = []
+
+    # ── Photos ──────────────────────────────────────────────────────────────
+    if media_type in ('', 'photo'):
+        photo_qs = Photo.objects.filter(
+            status=Photo.STATUS_READY,
+            is_archived=False,
+            latitude__isnull=False,
+            longitude__isnull=False,
+        ).select_related('named_place')
+
+        if not _is_editor(request.user):
+            photo_qs = photo_qs.filter(visibility=Photo.VISIBILITY_PUBLIC)
+        if ch_slug:
+            photo_qs = photo_qs.filter(channel__slug=ch_slug)
+        if place_slug:
+            photo_qs = photo_qs.filter(named_place__slug=place_slug)
+
+        for p in photo_qs.only(
+            'id', 'title', 'thumbnail', 'latitude', 'longitude',
+            'taken_at', 'named_place_id',
+        ):
+            markers.append({
+                'type':       'photo',
+                'id':         str(p.id),
+                'title':      p.title or 'Untitled',
+                'lat':        p.latitude,
+                'lng':        p.longitude,
+                'thumb':      p.thumbnail_url,
+                'date':       p.taken_at.isoformat() if p.taken_at else None,
+                'url':        f'/photos/{p.id}/',
+                'place_slug': p.named_place.slug if p.named_place_id else None,
+                'place_name': p.named_place.name if p.named_place_id else None,
+            })
+
+    # ── Videos ──────────────────────────────────────────────────────────────
+    if media_type in ('', 'video'):
+        video_qs = Video.objects.filter(
+            status=Video.STATUS_READY,
+            latitude__isnull=False,
+            longitude__isnull=False,
+        ).select_related('named_place')
+
+        if not _is_editor(request.user):
+            video_qs = video_qs.filter(visibility=Video.VISIBILITY_PUBLIC)
+        if ch_slug:
+            video_qs = video_qs.filter(channel__slug=ch_slug)
+        if place_slug:
+            video_qs = video_qs.filter(named_place__slug=place_slug)
+
+        for v in video_qs.only(
+            'id', 'title', 'thumbnail', 'latitude', 'longitude',
+            'created_at', 'named_place_id',
+        ):
+            markers.append({
+                'type':       'video',
+                'id':         str(v.id),
+                'title':      v.title or 'Untitled',
+                'lat':        v.latitude,
+                'lng':        v.longitude,
+                'thumb':      v.thumbnail_url,
+                'date':       v.created_at.isoformat() if v.created_at else None,
+                'url':        f'/watch/{v.id}/',
+                'place_slug': v.named_place.slug if v.named_place_id else None,
+                'place_name': v.named_place.name if v.named_place_id else None,
+            })
+
+    # ── Named places (circles overlay) ──────────────────────────────────────
+    places = [
+        {
+            'id':     pl.id,
+            'name':   pl.name,
+            'slug':   pl.slug,
+            'lat':    pl.latitude,
+            'lng':    pl.longitude,
+            'radius': pl.radius_meters,
+            'color':  pl.color,
+        }
+        for pl in NamedPlace.objects.filter(
+            latitude__isnull=False, longitude__isnull=False
+        )
+    ]
+
+    photo_count = sum(1 for m in markers if m['type'] == 'photo')
+    video_count = len(markers) - photo_count
+
+    return Response({
+        'markers':     markers,
+        'total':       len(markers),
+        'photo_count': photo_count,
+        'video_count': video_count,
+        'places':      places,
+    })
+
+
 @editor_required
 def photo_upload_page(request):
     """Upload form page for photos."""
@@ -5707,11 +5912,16 @@ def photo_detail_page(request, photo_id):
     photo_tags = [t.strip() for t in (photo.tags or '').split(',') if t.strip()]
 
     is_photo_owner = _is_photo_owner(request.user, photo)
+    can_edit_location = is_photo_owner or _is_editor(request.user)
+
+    all_named_places = list(NamedPlace.objects.values('id', 'name', 'slug', 'latitude', 'longitude').order_by('name'))
 
     return render(request, 'videos/photo_detail.html', {
         'photo': photo,
         'photo_tags': photo_tags,
         'is_photo_owner': is_photo_owner,
+        'can_edit_location': can_edit_location,
+        'all_named_places': all_named_places,
     })
 
 
@@ -6046,7 +6256,7 @@ def search_suggest(request):
     Fast typeahead suggestions for the search bar.
     Returns up to 10 items drawn from video titles, channel names, face names, labels,
     and named places.  Place items carry a `url` field so the frontend can navigate
-    directly to /photos/?place=<slug> instead of running a generic search.
+    directly to /places/<slug>/ instead of running a generic search.
     """
     q = request.GET.get('q', '').strip()
     if len(q) < 2:
@@ -6089,13 +6299,28 @@ def search_suggest(request):
         ):
             _add(nick_row['identity__name'], 'person')
 
-        # Named places — navigate directly to the filtered photo library
+        # Named places — navigate directly to the place detail page.
+        # Use slug as the dedup key (not name) so duplicate names both appear,
+        # and append a short description/coords so they can be distinguished.
         for place in (
             NamedPlace.objects
-            .filter(name__icontains=q)
-            .values('name', 'slug')[:3]
+            .filter(Q(name__icontains=q) | Q(description__icontains=q))
+            .values('name', 'slug', 'description', 'latitude', 'longitude')[:4]
         ):
-            _add(place['name'], 'place', url=f"/photos/?place={place['slug']}")
+            label = place['name']
+            extra = (place.get('description') or '').strip()
+            if not extra and place.get('latitude') is not None and place.get('longitude') is not None:
+                extra = f"{place['latitude']:.3f}, {place['longitude']:.3f}"
+            if extra:
+                label = f"{place['name']} — {extra[:40]}"
+            place_key = 'place:' + place['slug']
+            if place_key not in seen:
+                seen.add(place_key)
+                suggestions.append({
+                    'text': label,
+                    'type': 'place',
+                    'url':  f"/places/{place['slug']}/",
+                })
 
     # Photo titles (if under limit)
     if len(suggestions) < 10:

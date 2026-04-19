@@ -155,6 +155,38 @@
     border: 1px solid var(--border-2, rgba(255,255,255,.13));
   }
 </style>
+{% if can_edit_location %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  /* Location picker modal */
+  #locPickerModal {
+    display: none; position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,.6); align-items: center; justify-content: center;
+  }
+  #locPickerBox {
+    background: var(--surface-1); border-radius: var(--radius-lg);
+    width: min(680px, 96vw); max-height: 90vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #locPickerHeader {
+    padding: 14px 18px; display: flex; align-items: center;
+    justify-content: space-between; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 14px;
+  }
+  #locPickerSearch { flex: 1; display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  #locPickerSearch input {
+    flex: 1; background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); color: var(--text); font-size: 13px;
+    padding: 6px 10px; outline: none; font-family: inherit;
+  }
+  #locPickerMapDiv { flex: 1; min-height: 320px; }
+  #locPickerFooter {
+    padding: 10px 14px; display: flex; align-items: center;
+    gap: 10px; border-top: 1px solid var(--border); font-size: 12px;
+  }
+  #locPickerCoords { flex: 1; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+</style>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -431,57 +463,34 @@
 
     <div class="divider"></div>
 
-    {% if photo.named_place %}
     <div class="info-section">
-      <div class="info-label">Location</div>
-      <div class="info-text">
+      <div class="info-label" style="display:flex;align-items:center;justify-content:space-between;">
+        Location
+        {% if can_edit_location %}
+        <button class="btn btn-ghost btn-sm" onclick="openLocModal()"
+                style="font-size:11px;padding:2px 8px;">Edit</button>
+        {% endif %}
+      </div>
+      {% if photo.named_place %}
+      <div class="info-text" style="margin-top:4px;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;color:var(--accent);">
+             style="width:12px;height:12px;vertical-align:-2px;margin-right:3px;color:var(--accent);">
           <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
         </svg>
-        <a href="{% url 'photo_library' %}?place={{ photo.named_place.slug }}"
+        <a href="{% url 'place_detail' photo.named_place.slug %}"
            style="color:var(--accent);text-decoration:none;font-weight:600;">{{ photo.named_place.name }}</a>
+        {% if photo.latitude %}<span style="font-size:11px;color:var(--text-subtle);margin-left:6px;">{{ photo.latitude|floatformat:5 }}, {{ photo.longitude|floatformat:5 }}</span>{% endif %}
       </div>
+      {% elif photo.latitude %}
+      <div class="info-text" style="margin-top:4px;font-size:12px;color:var(--text-muted);">
+        {{ photo.latitude|floatformat:5 }}, {{ photo.longitude|floatformat:5 }}
+      </div>
+      {% elif not can_edit_location %}
+      <div style="font-size:12px;color:var(--text-subtle);margin-top:4px;">Not set</div>
+      {% else %}
+      <div style="font-size:12px;color:var(--text-subtle);margin-top:4px;">Not set — click Edit to add</div>
+      {% endif %}
     </div>
-    {% endif %}
-
-    {% if is_photo_owner %}
-    <div class="info-section" id="locationEditSection">
-      <div class="info-label" style="display:flex;align-items:center;justify-content:space-between;">
-        Named Place
-        <span style="font-size:10px;color:var(--text-subtle);">assign or override</span>
-      </div>
-      <select id="namedPlaceSelect"
-              style="width:100%;margin-top:6px;background:var(--surface-2);border:1px solid var(--border-2);
-                     border-radius:var(--radius-sm);color:var(--text);font-size:13px;padding:6px 10px;
-                     outline:none;font-family:inherit;"
-              onchange="setNamedPlace(this.value)">
-        <option value="">— None —</option>
-        <!-- populated by JS -->
-      </select>
-
-      <div style="margin-top:12px;">
-        <div class="info-label">Manual Location</div>
-        <div style="display:flex;gap:6px;margin-top:4px;">
-          <input type="number" id="manualLat" placeholder="Latitude" step="0.000001"
-                 style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
-                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;
-                        outline:none;font-family:inherit;"
-                 value="{{ photo.latitude|default:'' }}" />
-          <input type="number" id="manualLng" placeholder="Longitude" step="0.000001"
-                 style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
-                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;
-                        outline:none;font-family:inherit;"
-                 value="{{ photo.longitude|default:'' }}" />
-          <button class="btn btn-ghost btn-sm" onclick="saveManualLocation()"
-                  style="white-space:nowrap;font-size:12px;">Set</button>
-        </div>
-        <div style="font-size:11px;color:var(--text-subtle);margin-top:4px;">
-          Set GPS coordinates manually — named place will be auto-assigned if within radius.
-        </div>
-      </div>
-    </div>
-    {% endif %}
 
     <div class="divider"></div>
 
@@ -745,53 +754,164 @@ async function toggleDetailArchive() {
 })();
 {% endif %}
 
-// ── Named Places ────────────────────────────────────────────────────────────
-{% if is_photo_owner %}
-(async function loadNamedPlaces() {
-  const sel = document.getElementById('namedPlaceSelect');
+// ── Location edit modal ───────────────────────────────────────────────────────
+{% if can_edit_location %}
+let _locMap = null, _locMarker = null, _lastGeocodeName = '';
+
+// Named places lookup for auto-fill when place is selected from dropdown
+const _namedPlacesById = {};
+{% for p in all_named_places %}{% if p.latitude %}
+_namedPlacesById[{{ p.id }}] = { lat: {{ p.latitude }}, lng: {{ p.longitude }} };
+{% endif %}{% endfor %}
+
+// When named place dropdown changes, auto-fill coordinates & move map pin
+(function() {
+  const sel = document.getElementById('locPlaceSelect');
   if (!sel) return;
-  try {
-    const r = await fetch('/api/named-places/');
-    if (!r.ok) return;
-    const places = await r.json();
-    places.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = p.name + (p.photo_count ? ` (${p.photo_count} photos)` : '');
-      if (p.id === CURRENT_PLACE_ID) opt.selected = true;
-      sel.appendChild(opt);
-    });
-  } catch (e) { /* ignore */ }
+  sel.addEventListener('change', function() {
+    const pid = parseInt(this.value);
+    const place = _namedPlacesById[pid];
+    if (place) {
+      document.getElementById('locLat').value = place.lat.toFixed(6);
+      document.getElementById('locLng').value = place.lng.toFixed(6);
+      if (_locMap) {
+        _locMap.setView([place.lat, place.lng], 14);
+        if (!_locMarker) {
+          _locMarker = L.marker([place.lat, place.lng], { draggable: true }).addTo(_locMap);
+          _locMarker.on('dragend', e => _updateLocCoords(e.target.getLatLng()));
+        } else {
+          _locMarker.setLatLng([place.lat, place.lng]);
+        }
+      }
+    }
+  });
 })();
 
-window.setNamedPlace = async function(placeId) {
-  const r = await fetch(`/api/photos/${_photoId}/`, {
-    method: 'PATCH', credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-    body: JSON.stringify({ named_place_id: placeId ? parseInt(placeId) : null }),
-  });
-  if (r.ok) {
-    if (window.fsTost) fsTost('success', placeId ? 'Place assigned' : 'Place removed');
-  }
+window.openLocModal = function() {
+  document.getElementById('locEditModal').style.display = 'flex';
+  // Pre-fill coords from existing data
+  const lat = {{ photo.latitude|default:'null' }};
+  const lng = {{ photo.longitude|default:'null' }};
+  if (lat) document.getElementById('locLat').value = lat;
+  if (lng) document.getElementById('locLng').value = lng;
+  document.getElementById('locSaveAsSection').style.display = 'none';
+  document.getElementById('locSaveAsName').value = '';
+  setTimeout(() => _initLocMap(lat || 20, lng || 78, lat !== null), 80);
 };
 
-window.saveManualLocation = async function() {
-  const lat = parseFloat(document.getElementById('manualLat').value);
-  const lng = parseFloat(document.getElementById('manualLng').value);
-  if (isNaN(lat) || isNaN(lng)) {
-    if (window.fsTost) fsTost('error', 'Enter valid latitude and longitude');
-    return;
+window.closeLocModal = function() {
+  document.getElementById('locEditModal').style.display = 'none';
+};
+
+function _initLocMap(lat, lng, hasPin) {
+  if (!_locMap) {
+    _locMap = L.map('locMapDiv').setView([lat, lng], hasPin ? 13 : 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors', maxZoom: 19,
+    }).addTo(_locMap);
+    if (hasPin) {
+      _locMarker = L.marker([lat, lng], { draggable: true }).addTo(_locMap);
+      _locMarker.on('dragend', e => _updateLocCoords(e.target.getLatLng()));
+    }
+    _locMap.on('click', function(e) {
+      if (!_locMarker) {
+        _locMarker = L.marker(e.latlng, { draggable: true }).addTo(_locMap);
+        _locMarker.on('dragend', ev => _updateLocCoords(ev.target.getLatLng()));
+      } else {
+        _locMarker.setLatLng(e.latlng);
+      }
+      _updateLocCoords(e.latlng);
+    });
+  } else {
+    _locMap.setView([lat, lng], hasPin ? 13 : 5);
+    if (_locMarker && hasPin) _locMarker.setLatLng([lat, lng]);
+    _locMap.invalidateSize();
   }
+  if (hasPin) _updateLocCoords({ lat, lng });
+}
+
+function _updateLocCoords(ll) {
+  document.getElementById('locLat').value  = (+ll.lat).toFixed(6);
+  document.getElementById('locLng').value  = (+ll.lng).toFixed(6);
+  // Show "save as named place" helper
+  document.getElementById('locSaveAsSection').style.display = '';
+  if (_lastGeocodeName && !document.getElementById('locSaveAsName').value)
+    document.getElementById('locSaveAsName').value = _lastGeocodeName;
+}
+
+window.geocodeLocSearch = async function() {
+  const q = document.getElementById('locSearchInput').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('locSearchBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`, { headers: { 'Accept-Language': 'en' } });
+    const data = await res.json();
+    if (data.length) {
+      const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
+      _lastGeocodeName = data[0].display_name.split(',')[0].trim();
+      _locMap.setView([lat, lng], 15);
+      if (!_locMarker) {
+        _locMarker = L.marker([lat, lng], { draggable: true }).addTo(_locMap);
+        _locMarker.on('dragend', e => _updateLocCoords(e.target.getLatLng()));
+      } else { _locMarker.setLatLng([lat, lng]); }
+      _updateLocCoords({ lat, lng });
+    } else { if (window.fsTost) fsTost('error', 'Location not found'); }
+  } catch { if (window.fsTost) fsTost('error', 'Search failed'); }
+  finally { btn.disabled = false; }
+};
+
+window.saveLocCoords = async function() {
+  const lat = parseFloat(document.getElementById('locLat').value);
+  const lng = parseFloat(document.getElementById('locLng').value);
+  if (isNaN(lat) || isNaN(lng)) { if (window.fsTost) fsTost('error', 'Enter valid coordinates'); return; }
   const r = await fetch(`/api/photos/${_photoId}/`, {
     method: 'PATCH', credentials: 'include',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
     body: JSON.stringify({ latitude: lat, longitude: lng }),
   });
-  if (r.ok) {
-    if (window.fsTost) fsTost('success', 'Location saved — place auto-assigned if within radius');
-    // Reload to show updated named place
-    setTimeout(() => location.reload(), 1200);
-  }
+  if (r.ok) { if (window.fsTost) fsTost('success', 'Location saved'); setTimeout(() => location.reload(), 900); }
+  else { if (window.fsTost) fsTost('error', 'Failed to save'); }
+};
+
+window.saveLocNamedPlace = async function() {
+  const sel = document.getElementById('locPlaceSelect');
+  const pid = sel.value;
+  const r = await fetch(`/api/photos/${_photoId}/`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ named_place_id: pid ? parseInt(pid) : null }),
+  });
+  if (r.ok) { if (window.fsTost) fsTost('success', pid ? 'Place assigned' : 'Place removed'); setTimeout(() => location.reload(), 700); }
+};
+
+window.saveAsNamedPlace = async function() {
+  const name = document.getElementById('locSaveAsName').value.trim();
+  const lat  = parseFloat(document.getElementById('locLat').value);
+  const lng  = parseFloat(document.getElementById('locLng').value);
+  const radius = parseInt(document.getElementById('locSaveAsRadius').value) || 500;
+  if (!name) { if (window.fsTost) fsTost('error', 'Enter a name for the place'); return; }
+  if (isNaN(lat) || isNaN(lng)) { if (window.fsTost) fsTost('error', 'Drop a pin first'); return; }
+  const r = await fetch('/api/named-places/', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ name, latitude: lat, longitude: lng, radius_meters: radius }),
+  });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); if (window.fsTost) fsTost('error', d.error || 'Failed'); return; }
+  const newPlace = await r.json();
+  // Add to select, choose it, and assign
+  const opt = document.createElement('option');
+  opt.value = newPlace.id; opt.textContent = newPlace.name; opt.selected = true;
+  document.getElementById('locPlaceSelect').appendChild(opt);
+  if (window.fsTost) fsTost('success', `"${newPlace.name}" created`);
+  // Auto-assign this new place to the photo
+  await fetch(`/api/photos/${_photoId}/`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ named_place_id: newPlace.id }),
+  });
+  document.getElementById('locSaveAsSection').style.display = 'none';
+  setTimeout(() => location.reload(), 900);
 };
 {% endif %}
 
@@ -835,6 +955,95 @@ function openMap(ev) {
 {% endif %}
 {% endif %}
 </script>
+
+{% if can_edit_location %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Location edit modal -->
+<div id="locEditModal" onclick="closeLocModal()"
+     style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);
+            align-items:center;justify-content:center;">
+  <div onclick="event.stopPropagation()"
+       style="background:var(--surface-1);border-radius:var(--radius-lg);
+              width:min(700px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
+
+    <!-- Header -->
+    <div style="padding:13px 18px;display:flex;align-items:center;justify-content:space-between;
+                border-bottom:1px solid var(--border);font-weight:600;font-size:14px;flex-shrink:0;">
+      Edit Location
+      <button class="btn btn-ghost btn-sm" onclick="closeLocModal()" style="padding:4px 8px;">✕</button>
+    </div>
+
+    <!-- Search bar -->
+    <div style="padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <input id="locSearchInput" type="text" placeholder="Search address or place name…"
+             onkeydown="if(event.key==='Enter')geocodeLocSearch()"
+             style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:13px;
+                    padding:6px 10px;outline:none;font-family:inherit;" />
+      <button id="locSearchBtn" class="btn btn-ghost btn-sm" onclick="geocodeLocSearch()">Search</button>
+    </div>
+
+    <!-- Map -->
+    <div id="locMapDiv" style="flex:1;min-height:260px;"></div>
+
+    <!-- Coords + save coords -->
+    <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;
+                border-top:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">
+      <input type="number" id="locLat" placeholder="Latitude" step="0.000001"
+             style="width:130px;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;outline:none;font-family:inherit;" />
+      <input type="number" id="locLng" placeholder="Longitude" step="0.000001"
+             style="width:130px;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;outline:none;font-family:inherit;" />
+      <button class="btn btn-primary btn-sm" onclick="saveLocCoords()">Save GPS</button>
+      <span style="font-size:11px;color:var(--text-subtle);">Click map or drag pin · auto-assigns named place</span>
+    </div>
+
+    <!-- Named place assign -->
+    <div style="padding:0 14px 10px;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;">Named Place</span>
+      <select id="locPlaceSelect"
+              style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                     border-radius:var(--radius-sm);color:var(--text);font-size:13px;
+                     padding:5px 8px;outline:none;font-family:inherit;">
+        <option value="">— None —</option>
+        {% for p in all_named_places %}
+        <option value="{{ p.id }}"{% if photo.named_place_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="saveLocNamedPlace()">Assign</button>
+    </div>
+
+    <!-- Save as Named Place -->
+    <div id="locSaveAsSection" style="display:none;padding:0 14px 14px;flex-shrink:0;
+         border-top:1px solid var(--border);padding-top:10px;">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                  color:var(--text-subtle);margin-bottom:8px;">Save pin as new Named Place</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input id="locSaveAsName" type="text" placeholder="Place name (e.g. Essar House)"
+               style="flex:1;min-width:160px;background:var(--surface-2);border:1px solid var(--border-2);
+                      border-radius:var(--radius-sm);color:var(--text);font-size:13px;
+                      padding:6px 10px;outline:none;font-family:inherit;" />
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span style="font-size:12px;color:var(--text-muted);">Radius</span>
+          <input id="locSaveAsRadius" type="number" value="500" min="50" max="50000"
+                 style="width:70px;background:var(--surface-2);border:1px solid var(--border-2);
+                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;
+                        padding:5px 6px;outline:none;font-family:inherit;" />
+          <span style="font-size:12px;color:var(--text-muted);">m</span>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveAsNamedPlace()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+          </svg>
+          Create &amp; Assign
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endif %}
 
 {% if photo.status == 'processing' or photo.status == 'pending' %}
 <script>

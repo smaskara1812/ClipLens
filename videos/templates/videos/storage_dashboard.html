@@ -5,29 +5,7 @@
 
 {% block extra_head %}
 <style>
-  .sd-wrap { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
-
-  /* Admin nav */
-  .admin-nav {
-    display: flex; gap: 4px; margin-bottom: 28px; flex-wrap: wrap;
-    border-bottom: 1px solid var(--border); padding-bottom: 2px;
-  }
-  .admin-nav a {
-    padding: 7px 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    font-size: 13px; font-weight: 600; text-decoration: none;
-    color: var(--text-muted); border: 1px solid transparent;
-    transition: all var(--transition);
-  }
-  .admin-nav a:hover { color: var(--text); background: var(--surface-2); }
-  .admin-nav a.active {
-    color: var(--accent); border-color: var(--border) var(--border) var(--surface);
-    background: var(--surface); margin-bottom: -1px;
-  }
-
-  /* Page header */
-  .sd-header { margin-bottom: 28px; }
-  .sd-header h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
-  .sd-header p  { font-size: 13px; color: var(--text-muted); }
+  /* .admin-layout, .admin-nav and .admin-hero are provided by base.html */
 
   /* Summary cards */
   .sd-cards {
@@ -145,18 +123,21 @@
 {% endblock %}
 
 {% block content %}
-<div class="sd-wrap">
+<div class="admin-layout" style="max-width:1100px;">
 
-  <nav class="admin-nav">
-    <a href="{% url 'user_management' %}">Users</a>
-    <a href="{% url 'categories_manage' %}">Categories</a>
-    <a href="{% url 'admin_commands' %}">Commands</a>
-    <a href="{% url 'storage_dashboard' %}" class="active">Storage</a>
-  </nav>
+  {% include 'videos/_admin_nav.html' with admin_current='storage_dashboard' %}
 
-  <div class="sd-header">
-    <h1>💾 Storage Dashboard</h1>
-    <p>Real-time on-disk usage across all media assets. Sizes are read directly from the filesystem.</p>
+  <div class="admin-hero">
+    <div class="admin-hero-info">
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>
+        </svg>
+        Storage
+      </h1>
+      <p>Real-time on-disk usage across all media assets. Sizes are read directly from the filesystem.</p>
+    </div>
   </div>
 
   <!-- ── Combined summary cards ───────────────────────────────────────── -->

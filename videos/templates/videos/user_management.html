@@ -5,12 +5,7 @@
 
 {% block extra_head %}
 <style>
-  .admin-layout { max-width: 1200px; margin: 0 auto; padding: 28px 24px; }
-  .page-hero { margin-bottom: 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .page-hero h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
-  .page-hero h1 svg { width: 24px; height: 24px; color: var(--accent); }
-  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
-
+  /* .admin-layout, .admin-nav and .admin-hero are provided by base.html */
   .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
   .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
   .stat-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-subtle); margin-bottom: 6px; }
@@ -43,13 +38,15 @@
 {% block content %}
 <div class="admin-layout">
 
-  <div class="page-hero">
-    <div>
+  {% include 'videos/_admin_nav.html' with admin_current='user_management' %}
+
+  <div class="admin-hero">
+    <div class="admin-hero-info">
       <h1>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        User Management
+        Users
       </h1>
-      <p>Superuser panel — manage all accounts</p>
+      <p>Manage all accounts, roles and channels.</p>
     </div>
   </div>
 

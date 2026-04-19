@@ -8,34 +8,106 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
-  .np-page { padding: 24px 28px 60px; max-width: 1100px; margin: 0 auto; }
-
-  /* Breadcrumb */
-  .np-breadcrumb {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 13px; color: var(--text-muted); margin-bottom: 20px;
-  }
-  .np-breadcrumb a { color: var(--text-muted); text-decoration: none; }
-  .np-breadcrumb a:hover { color: var(--accent); }
-  .np-breadcrumb svg { width: 12px; height: 12px; opacity: .5; }
-
-  /* Header */
-  .np-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 20px; gap: 12px; flex-wrap: wrap;
-  }
-  .np-header h1 {
-    font-size: 22px; font-weight: 800; display: flex; align-items: center; gap: 8px;
-  }
-  .np-header h1 svg { width: 22px; height: 22px; color: var(--accent); }
+  /* .admin-layout, .admin-nav and .admin-hero are provided by base.html */
 
   /* Map */
   #np-map-wrap {
     border-radius: var(--radius-lg); overflow: hidden;
     border: 1px solid var(--border); margin-bottom: 28px;
     position: relative;
+    /* New stacking context: children (incl. Leaflet panes at z:1000) stay
+       under the sticky header (z:100) when scrolled. */
+    isolation: isolate;
+    z-index: 0;
   }
-  #np-map { height: 420px; width: 100%; }
+  #np-map { height: 460px; width: 100%; }
+
+  /* Push Leaflet zoom buttons below the search bar so they don't overlap. */
+  #np-map-wrap .leaflet-top.leaflet-left { top: 68px; }
+
+  /* Map-only theme toggle (independent of site theme) */
+  .np-map-theme-toggle {
+    position: absolute; top: 14px; right: 14px; z-index: 600;
+    display: flex; background: var(--surface);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 8px; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  }
+  .np-map-theme-toggle button {
+    background: none; border: none; cursor: pointer;
+    padding: 6px 8px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 600; font-family: inherit;
+  }
+  .np-map-theme-toggle button + button { border-left: 1px solid var(--border-2); }
+  .np-map-theme-toggle button.active { color: var(--accent); background: var(--surface-2); }
+  .np-map-theme-toggle svg { width: 13px; height: 13px; }
+
+  /* Google-Maps style search overlay */
+  .np-map-search {
+    position: absolute; top: 14px; left: 14px; z-index: 1000;
+    width: min(360px, calc(100% - 28px));
+    background: var(--surface);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 999px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.4);
+    display: flex; align-items: center; overflow: hidden;
+    transition: box-shadow .15s, border-color .15s;
+  }
+  .np-map-search:focus-within { border-color: var(--accent); box-shadow: 0 4px 24px rgba(0,0,0,.5); }
+  .np-map-search svg {
+    width: 16px; height: 16px; margin-left: 14px; flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .np-map-search input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: var(--text); font-size: 13px; font-family: inherit;
+    padding: 10px 12px;
+  }
+  .np-map-search input::placeholder { color: var(--text-subtle); }
+  .np-map-search button {
+    background: none; border: none; cursor: pointer;
+    padding: 8px 12px; color: var(--text-muted);
+    font-size: 12px; font-weight: 600; font-family: inherit;
+    white-space: nowrap;
+  }
+  .np-map-search button:hover { color: var(--accent); }
+  .np-map-search .np-search-divider { width: 1px; height: 20px; background: var(--border); }
+
+  /* Search results dropdown under bar */
+  .np-map-search-results {
+    position: absolute; top: 56px; left: 14px; z-index: 1001;
+    width: min(360px, calc(100% - 28px));
+    background: var(--surface);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    max-height: 280px; overflow-y: auto;
+    display: none;
+  }
+  .np-map-search-results.open { display: block; }
+  .np-map-search-result {
+    padding: 10px 14px; cursor: pointer;
+    font-size: 13px; color: var(--text);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .np-map-search-result:last-child { border-bottom: none; }
+  .np-map-search-result:hover { background: var(--surface-2); }
+  .np-map-search-result svg { width: 14px; height: 14px; margin-top: 2px; color: var(--accent); flex-shrink: 0; }
+  .np-map-search-result-main { font-weight: 600; }
+  .np-map-search-result-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Search marker (different from pin-for-create marker) */
+  .np-search-hint {
+    position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+    z-index: 900; background: var(--accent); color: #fff;
+    padding: 6px 14px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+    display: none;
+  }
+  .np-search-hint.visible { display: flex; align-items: center; gap: 6px; }
 
   /* Create form (floating, appears on map click) */
   #createFormPanel {
@@ -158,34 +230,66 @@
 {% endblock %}
 
 {% block content %}
-<div class="np-page">
+<div class="admin-layout" style="max-width:1100px;">
 
-  <!-- Breadcrumb -->
-  <div class="np-breadcrumb">
-    <a href="{% url 'user_management' %}">Admin</a>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="9 18 15 12 9 6"/>
-    </svg>
-    Named Places
-  </div>
+  {% include 'videos/_admin_nav.html' with admin_current='named_places' %}
 
-  <!-- Header -->
-  <div class="np-header">
-    <h1>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
-      </svg>
-      Named Places
-    </h1>
-    <p style="font-size:13px;color:var(--text-muted);max-width:420px;margin:0;">
-      Click anywhere on the map to create a named place. Photos with GPS coordinates inside
-      the radius will be automatically assigned.
-    </p>
+  <div class="admin-hero">
+    <div class="admin-hero-info">
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        Named Places
+      </h1>
+      <p>
+        Search an address or click anywhere on the map to create a named place.
+        Photos and videos with GPS coordinates inside the radius will be auto-assigned.
+      </p>
+    </div>
   </div>
 
   <!-- Map -->
   <div id="np-map-wrap">
     <div id="np-map"></div>
+
+    <!-- Google-Maps style search overlay on top of the map -->
+    <div class="np-map-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input id="mapSearchInput" type="text" placeholder="Search an address or place…"
+             onkeydown="handleMapSearchKey(event)"
+             oninput="handleMapSearchInput(event)" autocomplete="off" />
+      <button onclick="runMapSearch()">Search</button>
+    </div>
+    <div class="np-map-search-results" id="mapSearchResults"></div>
+
+    <!-- Map-only theme toggle (doesn't change the site theme) -->
+    <div class="np-map-theme-toggle" role="group" aria-label="Map theme">
+      <button type="button" data-map-theme="light" onclick="setMapTheme('light')" title="Light map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        Light
+      </button>
+      <button type="button" data-map-theme="dark" onclick="setMapTheme('dark')" title="Dark map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        Dark
+      </button>
+    </div>
+    <div class="np-search-hint" id="mapSearchHint">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+      </svg>
+      <span>Click the pin or the map to create a place here</span>
+    </div>
 
     <!-- Create form (shown on map click) -->
     <div id="createFormPanel">
@@ -220,7 +324,20 @@
   <div class="np-table-wrap">
     <div class="np-table-head">
       <h2>All Named Places</h2>
-      <span id="np-total-badge" style="font-size:12px;color:var(--text-muted);"></span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="position:relative;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               style="position:absolute;left:8px;top:50%;transform:translateY(-50%);width:13px;height:13px;color:var(--text-muted);pointer-events:none;">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input id="npSearchInput" type="text" placeholder="Search places…"
+                 oninput="filterPlaces(this.value)"
+                 style="background:var(--surface-2);border:1px solid var(--border-2);
+                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;
+                        padding:5px 10px 5px 28px;outline:none;font-family:inherit;width:180px;" />
+        </div>
+        <span id="np-total-badge" style="font-size:12px;color:var(--text-muted);white-space:nowrap;"></span>
+      </div>
     </div>
 
     <div id="np-table-body">
@@ -276,17 +393,42 @@
       attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
     },
   };
-  const themeKey = () => document.documentElement.getAttribute('data-theme') || 'dark';
-  const tileOpt  = () => TILES[themeKey()] || TILES.dark;
+  // Map theme is independent of the site theme. It's persisted per-user in
+  // localStorage under 'npMapTheme'. Default: follow current site theme.
+  const MAP_THEME_KEY = 'npMapTheme';
+  function getMapTheme() {
+    const saved = localStorage.getItem(MAP_THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+    return document.documentElement.getAttribute('data-theme') || 'dark';
+  }
+  const tileOpt  = () => TILES[getMapTheme()] || TILES.dark;
 
   const map = L.map('np-map', { center: [20, 0], zoom: 2 });
   let tileLayer = L.tileLayer(tileOpt().url, { attribution: tileOpt().attr, maxZoom: 19 }).addTo(map);
 
-  // Swap tile on theme toggle
+  function syncMapThemeButtons() {
+    const cur = getMapTheme();
+    document.querySelectorAll('.np-map-theme-toggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mapTheme === cur);
+    });
+  }
+  syncMapThemeButtons();
+
+  window.setMapTheme = function (theme) {
+    if (theme !== 'light' && theme !== 'dark') return;
+    localStorage.setItem(MAP_THEME_KEY, theme);
+    tileLayer.setUrl(tileOpt().url);
+    syncMapThemeButtons();
+  };
+
+  // If the user hasn't set an explicit map theme, keep it synced with the
+  // site theme toggle; otherwise respect their explicit choice.
   const origToggle = window.toggleTheme;
   window.toggleTheme = function () {
     if (origToggle) origToggle();
-    setTimeout(() => { tileLayer.setUrl(tileOpt().url); }, 50);
+    if (!localStorage.getItem(MAP_THEME_KEY)) {
+      setTimeout(() => { tileLayer.setUrl(tileOpt().url); syncMapThemeButtons(); }, 50);
+    }
   };
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -322,8 +464,8 @@
       const pin = L.circleMarker([p.latitude, p.longitude], {
         radius: 7, color: p.color, fillColor: p.color, fillOpacity: 0.9, weight: 2,
       }).addTo(map).bindPopup(`
-        <b style="font-size:13px;">${p.name}</b><br>
-        <span style="font-size:11px;color:#888;">${p.photo_count || 0} photo${p.photo_count === 1 ? '' : 's'} · radius ${p.radius_meters}m</span>
+        <b style="font-size:13px;"><a href="/places/${encodeURIComponent(p.slug)}/" style="color:inherit;text-decoration:none;">${escHtml(p.name)}</a></b><br>
+        <span style="font-size:11px;color:#888;">${p.photo_count || 0} photo${p.photo_count === 1 ? '' : 's'} · ${p.video_count || 0} video${p.video_count === 1 ? '' : 's'} · radius ${p.radius_meters}m</span>
       `);
 
       circleMap[p.id] = circle;
@@ -362,28 +504,40 @@
             <th>Location</th>
             <th>Radius</th>
             <th>Photos</th>
+            <th>Videos</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="np-tbody"></tbody>
       </table>`;
 
+    // Re-apply search filter after re-render
+    const currentSearch = document.getElementById('npSearchInput')?.value || '';
+
     const tbody = document.getElementById('np-tbody');
     placesData.forEach(p => {
       // Data row
       const tr = document.createElement('tr');
       tr.id = `np-row-${p.id}`;
+      tr.dataset.name = p.name.toLowerCase();
       tr.innerHTML = `
         <td>
           <span class="np-color-dot" style="background:${p.color};"></span>
-          <span style="font-weight:600;">${escHtml(p.name)}</span>
+          <a href="/places/${encodeURIComponent(p.slug)}/" style="font-weight:600;color:var(--text);text-decoration:none;">
+            ${escHtml(p.name)}
+          </a>
           ${p.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(p.description)}</div>` : ''}
         </td>
         <td style="font-size:12px;color:var(--text-muted);">${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</td>
         <td>${p.radius_meters} m</td>
         <td>
-          <a href="/photos/?place=${encodeURIComponent(p.slug)}" style="color:var(--accent);font-size:12px;">
+          <a href="/places/${encodeURIComponent(p.slug)}/" style="color:var(--accent);font-size:12px;">
             ${p.photo_count || 0}
+          </a>
+        </td>
+        <td>
+          <a href="/places/${encodeURIComponent(p.slug)}/" style="color:var(--accent);font-size:12px;">
+            ${p.video_count || 0}
           </a>
         </td>
         <td>
@@ -399,25 +553,34 @@
       editRow.id = `np-edit-${p.id}`;
       editRow.className = 'np-edit-row';
       editRow.innerHTML = `
-        <td colspan="5">
+        <td colspan="6">
           <div class="np-edit-inner">
             <div class="np-field">
               <label>Name</label>
-              <input type="text" id="ep-name-${p.id}" value="${escHtml(p.name)}" style="width:180px;" />
+              <input type="text" id="ep-name-${p.id}" value="${escHtml(p.name)}" style="width:160px;" />
+            </div>
+            <div class="np-field">
+              <label>Latitude</label>
+              <input type="number" id="ep-lat-${p.id}" value="${p.latitude}" step="0.000001" style="width:110px;" />
+            </div>
+            <div class="np-field">
+              <label>Longitude</label>
+              <input type="number" id="ep-lng-${p.id}" value="${p.longitude}" step="0.000001" style="width:110px;" />
             </div>
             <div class="np-field">
               <label>Radius (m)</label>
-              <input type="number" id="ep-radius-${p.id}" value="${p.radius_meters}" style="width:90px;" />
+              <input type="number" id="ep-radius-${p.id}" value="${p.radius_meters}" style="width:80px;" />
             </div>
             <div class="np-field">
               <label>Color</label>
-              <input type="color" id="ep-color-${p.id}" value="${p.color}" style="height:32px;padding:2px 4px;width:60px;" />
+              <input type="color" id="ep-color-${p.id}" value="${p.color}" style="height:32px;padding:2px 4px;width:54px;" />
             </div>
             <div class="np-field">
               <label>Description</label>
-              <input type="text" id="ep-desc-${p.id}" value="${escHtml(p.description || '')}" style="width:200px;" />
+              <input type="text" id="ep-desc-${p.id}" value="${escHtml(p.description || '')}" style="width:160px;" />
             </div>
             <div style="display:flex;gap:6px;align-items:flex-end;">
+              <button class="btn btn-ghost btn-sm" onclick="pickEditLocation(${p.id},${p.latitude},${p.longitude})" title="Pick on map">📍 Map</button>
               <button class="btn btn-primary btn-sm" onclick="saveEdit(${p.id})">Save</button>
               <button class="btn btn-ghost btn-sm"   onclick="cancelEdit(${p.id})">Cancel</button>
             </div>
@@ -425,7 +588,35 @@
         </td>`;
       tbody.appendChild(editRow);
     });
+
+    // Re-apply search after table re-render
+    if (currentSearch) filterPlaces(currentSearch);
   }
+
+  // ── Search / filter ───────────────────────────────────────────────────────
+  window.filterPlaces = function(q) {
+    const term = (q || '').toLowerCase().trim();
+    const tbody = document.getElementById('np-tbody');
+    if (!tbody) return;
+    let visibleCount = 0;
+    tbody.querySelectorAll('tr[data-name]').forEach(tr => {
+      const match = !term || tr.dataset.name.includes(term);
+      tr.style.display = match ? '' : 'none';
+      // Also hide the associated edit row
+      const editRow = document.getElementById('np-edit-' + tr.id.replace('np-row-', ''));
+      if (editRow) editRow.style.display = (!match ? 'none' : editRow.classList.contains('active') ? 'table-row' : 'none');
+      if (match) visibleCount++;
+    });
+    // Update badge
+    const badge = document.getElementById('np-total-badge');
+    if (badge) {
+      if (term) {
+        badge.textContent = `${visibleCount} of ${placesData.length}`;
+      } else {
+        badge.textContent = placesData.length ? `${placesData.length} place${placesData.length === 1 ? '' : 's'}` : '';
+      }
+    }
+  };
 
   // ── Map click → show create form ──────────────────────────────────────────
   map.on('click', function (e) {
@@ -501,11 +692,15 @@
   };
 
   window.saveEdit = async function (id) {
+    const lat = parseFloat(document.getElementById(`ep-lat-${id}`).value);
+    const lng = parseFloat(document.getElementById(`ep-lng-${id}`).value);
     const body = {
-      name:         document.getElementById(`ep-name-${id}`).value.trim(),
+      name:          document.getElementById(`ep-name-${id}`).value.trim(),
+      latitude:      isNaN(lat) ? undefined : lat,
+      longitude:     isNaN(lng) ? undefined : lng,
       radius_meters: parseInt(document.getElementById(`ep-radius-${id}`).value) || 500,
-      color:        document.getElementById(`ep-color-${id}`).value,
-      description:  document.getElementById(`ep-desc-${id}`).value.trim(),
+      color:         document.getElementById(`ep-color-${id}`).value,
+      description:   document.getElementById(`ep-desc-${id}`).value.trim(),
     };
     const r = await fetch(`/api/named-places/${id}/`, {
       method: 'PATCH', credentials: 'include',
@@ -520,6 +715,166 @@
     toast('success', 'Place updated');
     await loadPlaces();
   };
+
+  // ── Pick location for edit ────────────────────────────────────────────────
+  let _editPickMap = null, _editPickMarker = null, _editPickId = null;
+
+  window.pickEditLocation = function(id, lat, lng) {
+    _editPickId = id;
+    document.getElementById('npEditPickModal').style.display = 'flex';
+    setTimeout(() => {
+      if (!_editPickMap) {
+        _editPickMap = L.map('npEditPickMapDiv').setView([lat, lng], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors', maxZoom: 19,
+        }).addTo(_editPickMap);
+        _editPickMarker = L.marker([lat, lng], { draggable: true }).addTo(_editPickMap);
+        _editPickMarker.on('dragend', e => _updateEditPickCoords(e.target.getLatLng()));
+        _editPickMap.on('click', e => { _editPickMarker.setLatLng(e.latlng); _updateEditPickCoords(e.latlng); });
+      } else {
+        _editPickMap.setView([lat, lng], 14);
+        _editPickMarker.setLatLng([lat, lng]);
+        _updateEditPickCoords({ lat, lng });
+        _editPickMap.invalidateSize();
+      }
+      _updateEditPickCoords({ lat, lng });
+    }, 80);
+  };
+
+  function _updateEditPickCoords(ll) {
+    document.getElementById('npEditPickLat').textContent = (+ll.lat).toFixed(6);
+    document.getElementById('npEditPickLng').textContent = (+ll.lng).toFixed(6);
+  }
+
+  window.closeEditPick = function() {
+    document.getElementById('npEditPickModal').style.display = 'none';
+  };
+
+  window.confirmEditPick = function() {
+    const ll = _editPickMarker.getLatLng();
+    document.getElementById(`ep-lat-${_editPickId}`).value = ll.lat.toFixed(6);
+    document.getElementById(`ep-lng-${_editPickId}`).value = ll.lng.toFixed(6);
+    closeEditPick();
+  };
+
+  window.geocodeEditPick = async function() {
+    const q = document.getElementById('npEditPickSearch').value.trim();
+    if (!q) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`, { headers: { 'Accept-Language': 'en' } });
+      const data = await res.json();
+      if (data.length) {
+        const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
+        _editPickMap.setView([lat, lng], 15);
+        _editPickMarker.setLatLng([lat, lng]);
+        _updateEditPickCoords({ lat, lng });
+      } else { toast('error', 'Location not found'); }
+    } catch { toast('error', 'Search failed'); }
+  };
+
+  // ── Inline map search (Google-Maps-style) ─────────────────────────────────
+  let _mapSearchDebounce = null;
+  let _mapSearchLastResults = [];
+
+  function closeMapSearchResults() {
+    document.getElementById('mapSearchResults').classList.remove('open');
+  }
+
+  function renderMapSearchResults(items) {
+    const box = document.getElementById('mapSearchResults');
+    if (!items || !items.length) { box.classList.remove('open'); return; }
+    box.innerHTML = items.map((item, i) => `
+      <div class="np-map-search-result" onclick="pickMapSearchResult(${i})">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        <div style="flex:1;min-width:0;">
+          <div class="np-map-search-result-main" style="overflow:hidden;text-overflow:ellipsis;">
+            ${escHtml(item.display_name.split(',')[0])}
+          </div>
+          <div class="np-map-search-result-sub" style="overflow:hidden;text-overflow:ellipsis;">
+            ${escHtml(item.display_name.split(',').slice(1).join(',').trim())}
+          </div>
+        </div>
+      </div>
+    `).join('');
+    box.classList.add('open');
+  }
+
+  async function fetchMapSearchSuggestions(q) {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`, { headers: { 'Accept-Language': 'en' } });
+      const data = await res.json();
+      _mapSearchLastResults = data;
+      renderMapSearchResults(data);
+    } catch { closeMapSearchResults(); }
+  }
+
+  async function runMapSearch() {
+    const q = document.getElementById('mapSearchInput').value.trim();
+    if (!q) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`, { headers: { 'Accept-Language': 'en' } });
+      const data = await res.json();
+      if (!data.length) { toast('error', 'Location not found'); return; }
+      const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
+      const name = data[0].display_name.split(',')[0].trim();
+      _showSearchLandingPin(lat, lng, name);
+      closeMapSearchResults();
+    } catch { toast('error', 'Search failed'); }
+  }
+
+  function pickMapSearchResult(idx) {
+    const item = _mapSearchLastResults[idx];
+    if (!item) return;
+    const lat = parseFloat(item.lat), lng = parseFloat(item.lon);
+    const name = item.display_name.split(',')[0].trim();
+    _showSearchLandingPin(lat, lng, name);
+    closeMapSearchResults();
+  }
+
+  // Expose to inline onclick/onkeydown handlers
+  window.runMapSearch = runMapSearch;
+  window.pickMapSearchResult = pickMapSearchResult;
+  window.handleMapSearchKey = function(e) {
+    if (e.key === 'Enter')  { e.preventDefault(); runMapSearch(); }
+    if (e.key === 'Escape') { closeMapSearchResults(); }
+  };
+  window.handleMapSearchInput = function() {
+    clearTimeout(_mapSearchDebounce);
+    const q = document.getElementById('mapSearchInput').value.trim();
+    if (q.length < 3) { closeMapSearchResults(); return; }
+    _mapSearchDebounce = setTimeout(() => fetchMapSearchSuggestions(q), 400);
+  };
+
+  function _showSearchLandingPin(lat, lng, displayName) {
+    map.flyTo([lat, lng], 15, { duration: 0.8 });
+    if (createMarker) createMarker.remove();
+    const colorVal = document.getElementById('cf-color').value;
+    createMarker = L.circleMarker([lat, lng], {
+      radius: 9, color: colorVal, fillColor: colorVal, fillOpacity: 0.9, weight: 3,
+    }).addTo(map);
+    createLatLng = { lat, lng };
+    // Pre-populate the create form with the found name
+    document.getElementById('cf-name').value = displayName;
+    document.getElementById('cf-coords').textContent =
+      `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`;
+    document.getElementById('createFormPanel').style.display = 'block';
+    // Briefly show the hint
+    const hint = document.getElementById('mapSearchHint');
+    hint.classList.add('visible');
+    clearTimeout(_showSearchLandingPin._t);
+    _showSearchLandingPin._t = setTimeout(() => hint.classList.remove('visible'), 3500);
+  }
+
+  // Close search dropdown when clicking outside
+  document.addEventListener('click', function(e) {
+    const box = document.getElementById('mapSearchResults');
+    const bar = document.querySelector('.np-map-search');
+    if (box && bar && !bar.contains(e.target) && !box.contains(e.target)) {
+      box.classList.remove('open');
+    }
+  });
 
   // ── Delete ────────────────────────────────────────────────────────────────
   window.deletePlace = async function (id, name) {
@@ -548,4 +903,34 @@
 
 })();
 </script>
+
+<!-- Named-place reposition modal -->
+<div id="npEditPickModal" onclick="closeEditPick()"
+     style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.6);align-items:center;justify-content:center;">
+  <div onclick="event.stopPropagation()"
+       style="background:var(--surface-1);border-radius:var(--radius-lg);width:min(620px,96vw);
+              max-height:90vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;
+                border-bottom:1px solid var(--border);font-weight:600;font-size:14px;">
+      Reposition Place
+      <button class="btn btn-ghost btn-sm" onclick="closeEditPick()" style="padding:4px 8px;">✕</button>
+    </div>
+    <div style="padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid var(--border);">
+      <input id="npEditPickSearch" type="text" placeholder="Search location…"
+             onkeydown="if(event.key==='Enter')geocodeEditPick()"
+             style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:13px;padding:6px 10px;outline:none;font-family:inherit;" />
+      <button class="btn btn-ghost btn-sm" onclick="geocodeEditPick()">Search</button>
+    </div>
+    <div id="npEditPickMapDiv" style="flex:1;min-height:300px;"></div>
+    <div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-top:1px solid var(--border);font-size:12px;">
+      <span style="flex:1;color:var(--text-muted);font-variant-numeric:tabular-nums;">
+        Lat: <span id="npEditPickLat">—</span> &nbsp; Lng: <span id="npEditPickLng">—</span>
+      </span>
+      <span style="font-size:11px;color:var(--text-subtle);">Click map or drag pin</span>
+      <button class="btn btn-primary btn-sm" onclick="confirmEditPick()">Use This Location</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeEditPick()">Cancel</button>
+    </div>
+  </div>
+</div>
 {% endblock %}

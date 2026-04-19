@@ -1,0 +1,388 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}{{ place.name }} — Places — ClipLens{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+  .place-page { padding: 24px 28px 60px; max-width: 1200px; margin: 0 auto; }
+
+  .place-header {
+    display: flex; align-items: flex-start; gap: 24px;
+    margin-bottom: 24px; flex-wrap: wrap;
+  }
+  .place-header-info { flex: 1; min-width: 240px; }
+  .place-header-title {
+    font-size: 26px; font-weight: 800; letter-spacing: -0.4px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .place-header-title svg { width: 24px; height: 24px; color: var(--accent); flex-shrink: 0; }
+  .place-header-meta {
+    font-size: 13px; color: var(--text-muted);
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  }
+  .place-header-meta .place-stat {
+    display: flex; align-items: center; gap: 4px;
+  }
+  .place-header-meta .place-stat strong { color: var(--text); font-weight: 700; }
+  .place-header-actions { display: flex; gap: 8px; align-items: flex-start; flex-shrink: 0; }
+
+  .place-mini-map {
+    width: 100%; height: 200px; border-radius: var(--radius-lg);
+    border: 1px solid var(--border); margin-bottom: 28px; overflow: hidden;
+  }
+
+  /* Tab bar */
+  .place-tabs {
+    display: flex; gap: 0; margin-bottom: 20px;
+    border-bottom: 2px solid var(--border);
+  }
+  .place-tab {
+    padding: 10px 20px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer; border: none; background: none;
+    border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: color .15s, border-color .15s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .place-tab:hover { color: var(--text); }
+  .place-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .place-tab .tab-count {
+    background: var(--surface-2); border-radius: 999px;
+    padding: 1px 8px; font-size: 11px; font-weight: 700; color: var(--text-muted);
+  }
+  .place-tab.active .tab-count { background: var(--accent-soft, rgba(99,102,241,.15)); color: var(--accent); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Photo grid */
+  .media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 640px) { .media-grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+
+  .mcard {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; display: block;
+    text-decoration: none; color: inherit;
+    transition: transform .18s, box-shadow .18s, border-color .18s;
+    position: relative;
+  }
+  .mcard:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color: var(--border-2); }
+  .mcard-thumb { aspect-ratio: 16/9; background: var(--surface-3); overflow: hidden; position: relative; }
+  .mcard-thumb.square { aspect-ratio: 1/1; }
+  .mcard-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .mcard:hover .mcard-thumb img { transform: scale(1.06); }
+  .mcard-thumb-ph {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-subtle);
+  }
+  .mcard-thumb-ph svg { width: 36px; height: 36px; }
+  .mcard-body { padding: 8px 10px 10px; }
+  .mcard-title {
+    font-size: 12px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mcard-type {
+    position: absolute; top: 6px; left: 6px;
+    background: rgba(0,0,0,.65); border-radius: 4px;
+    padding: 2px 6px; font-size: 10px; font-weight: 700;
+    color: #fff; letter-spacing: .3px;
+  }
+  .mcard-dur {
+    position: absolute; bottom: 6px; right: 6px;
+    background: rgba(0,0,0,.75); border-radius: 4px;
+    padding: 1px 5px; font-size: 11px; font-weight: 600; color: #fff;
+  }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+  .empty-state svg { width: 48px; height: 48px; margin: 0 auto 12px; display: block; opacity: .35; }
+  .empty-state h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: var(--text); }
+
+  [data-theme="dark"] .leaflet-bar a,
+  [data-theme="dark"] .leaflet-control-zoom a {
+    background: #1c1c24; color: #f0f0f8; border-color: rgba(255,255,255,.15);
+  }
+  [data-theme="dark"] .leaflet-bar a:hover { background: #26263a; }
+  [data-theme="dark"] .leaflet-control-attribution { background: rgba(0,0,0,.5); color: #888; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="place-page">
+
+  <!-- Back link (uses browser history when possible, falls back to Media Map) -->
+  <div style="margin-bottom:16px;">
+    <a id="placeBackLink" href="{% url 'media_map' %}"
+       onclick="placeGoBack(event)"
+       style="font-size:12px;color:var(--text-muted);text-decoration:none;">← Back</a>
+  </div>
+  <script>
+    (function () {
+      const link = document.getElementById('placeBackLink');
+      const ref  = document.referrer || '';
+      let refHost = '';
+      try { refHost = new URL(ref).host; } catch (_) {}
+      // Only treat same-origin non-self referrers as a real "back" target.
+      const canGoBack = ref && refHost === window.location.host
+                         && ref !== window.location.href;
+      if (canGoBack) {
+        let label = '← Back';
+        try {
+          const path = new URL(ref).pathname;
+          if      (path.startsWith('/media/map'))          label = '← Media Map';
+          else if (path.startsWith('/places/'))            label = '← Back';
+          else if (path === '/' || path.startsWith('/player')) label = '← Search';
+          else if (path.startsWith('/photos'))             label = '← Photo Library';
+          else if (path.startsWith('/watch/'))             label = '← Video';
+          else if (path.startsWith('/named-places'))       label = '← Named Places';
+        } catch (_) {}
+        link.textContent = label;
+        link.href = ref;
+      }
+      window.placeGoBack = function (e) {
+        if (canGoBack && history.length > 1) {
+          e.preventDefault();
+          history.back();
+        }
+      };
+    })();
+  </script>
+
+  <!-- Header -->
+  <div class="place-header">
+    <div class="place-header-info">
+      <div class="place-header-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        {{ place.name }}
+      </div>
+      <div class="place-header-meta">
+        <span class="place-stat">
+          <strong>{{ photo_count }}</strong> photo{{ photo_count|pluralize }}
+        </span>
+        <span class="place-stat">
+          <strong>{{ video_count }}</strong> video{{ video_count|pluralize }}
+        </span>
+        <span style="color:var(--text-subtle);">
+          {{ place.latitude|floatformat:5 }}, {{ place.longitude|floatformat:5 }}
+          · {{ place.radius_meters }}m radius
+        </span>
+        {% if place.description %}
+        <span>{{ place.description }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="place-header-actions">
+      <a href="{% url 'media_map' %}?place={{ place.slug }}" class="btn btn-ghost btn-sm"
+         style="display:flex;align-items:center;gap:5px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        View on Map
+      </a>
+    </div>
+  </div>
+
+  <!-- Mini map -->
+  <div class="place-mini-map" id="placeMap"></div>
+
+  <!-- Tabs -->
+  <div class="place-tabs" id="placeTabs">
+    <button class="place-tab active" data-tab="all" onclick="switchTab('all')">
+      All
+      <span class="tab-count">{{ photo_count|add:video_count }}</span>
+    </button>
+    <button class="place-tab" data-tab="photos" onclick="switchTab('photos')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      Photos
+      <span class="tab-count">{{ photo_count }}</span>
+    </button>
+    <button class="place-tab" data-tab="videos" onclick="switchTab('videos')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 8 16 11 10 14 10 8"/>
+      </svg>
+      Videos
+      <span class="tab-count">{{ video_count }}</span>
+    </button>
+  </div>
+
+  <!-- All tab -->
+  <div class="tab-panel active" id="tab-all">
+    {% if photos or videos %}
+    <div class="media-grid">
+      {% for photo in photos %}
+      <a class="mcard" href="{% url 'photo_detail' photo.id %}" data-type="photo">
+        <div class="mcard-thumb square">
+          {% if photo.thumbnail_url %}
+            <img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />
+          {% else %}
+            <div class="mcard-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          {% endif %}
+          <span class="mcard-type">Photo</span>
+        </div>
+        <div class="mcard-body">
+          <div class="mcard-title" title="{{ photo.title }}">{{ photo.title }}</div>
+        </div>
+      </a>
+      {% endfor %}
+      {% for v in videos %}
+      <a class="mcard" href="{% url 'watch' v.id %}" data-type="video">
+        <div class="mcard-thumb">
+          {% if v.thumbnail_url %}
+            <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
+          {% else %}
+            <div class="mcard-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+                <polygon points="10 8 16 12 10 16 10 8"/>
+              </svg>
+            </div>
+          {% endif %}
+          <span class="mcard-type">Video</span>
+          {% if v.duration %}<span class="mcard-dur">{{ v.duration|floatformat:0 }}s</span>{% endif %}
+        </div>
+        <div class="mcard-body">
+          <div class="mcard-title" title="{{ v.title }}">{{ v.title }}</div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+      </svg>
+      <h3>No media at this place yet</h3>
+      <p>Photos and videos tagged with "{{ place.name }}" will appear here.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Photos tab -->
+  <div class="tab-panel" id="tab-photos">
+    {% if photos %}
+    <div class="media-grid">
+      {% for photo in photos %}
+      <a class="mcard" href="{% url 'photo_detail' photo.id %}">
+        <div class="mcard-thumb square">
+          {% if photo.thumbnail_url %}
+            <img src="{{ photo.thumbnail_url }}" alt="{{ photo.title }}" loading="lazy" />
+          {% else %}
+            <div class="mcard-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          {% endif %}
+        </div>
+        <div class="mcard-body">
+          <div class="mcard-title" title="{{ photo.title }}">{{ photo.title }}</div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      <h3>No photos at this place</h3>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Videos tab -->
+  <div class="tab-panel" id="tab-videos">
+    {% if videos %}
+    <div class="media-grid">
+      {% for v in videos %}
+      <a class="mcard" href="{% url 'watch' v.id %}">
+        <div class="mcard-thumb">
+          {% if v.thumbnail_url %}
+            <img src="{{ v.thumbnail_url }}" alt="{{ v.title }}" loading="lazy" />
+          {% else %}
+            <div class="mcard-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+                <polygon points="10 8 16 12 10 16 10 8"/>
+              </svg>
+            </div>
+          {% endif %}
+          {% if v.duration %}<span class="mcard-dur">{{ v.duration|floatformat:0 }}s</span>{% endif %}
+        </div>
+        <div class="mcard-body">
+          <div class="mcard-title" title="{{ v.title }}">{{ v.title }}</div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+        <polygon points="10 8 16 12 10 16 10 8"/>
+      </svg>
+      <h3>No videos at this place</h3>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(function() {
+  'use strict';
+
+  // Tab switching
+  window.switchTab = function(tab) {
+    document.querySelectorAll('.place-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+  };
+
+  // Mini map
+  if (typeof L !== 'undefined') {
+    const lat = {{ place.latitude }};
+    const lng = {{ place.longitude }};
+    const radius = {{ place.radius_meters }};
+    const color = '{{ place.color }}';
+    const isDark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
+    const tileUrl = isDark
+      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+      : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+    const map = L.map('placeMap', { zoomControl: true, scrollWheelZoom: false });
+    L.tileLayer(tileUrl, { maxZoom: 19 }).addTo(map);
+
+    L.circle([lat, lng], {
+      radius: radius, color: color, fillColor: color,
+      fillOpacity: 0.12, weight: 2, dashArray: '6,4',
+    }).addTo(map);
+
+    L.circleMarker([lat, lng], {
+      radius: 7, color: color, fillColor: color, fillOpacity: 0.9, weight: 2,
+    }).addTo(map);
+
+    map.setView([lat, lng], 14);
+  }
+})();
+</script>
+{% endblock %}

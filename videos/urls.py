@@ -57,6 +57,7 @@ urlpatterns = [
 
     # ── Named Places ──
     path('named-places/',                    views.named_places_page, name='named_places'),
+    path('places/<slug:slug>/',              views.place_detail_page, name='place_detail'),
     path('api/named-places/',                views.named_place_list),
     path('api/named-places/<int:place_id>/', views.named_place_detail),
 
@@ -160,6 +161,9 @@ urlpatterns = [
     path('api/admin/users/',           views.user_management_api),
     path('api/admin/users/<int:user_id>/', views.user_management_toggle),
 
+    # ── Media map (photos + videos with location) ──
+    path('media/map/',                       views.media_map_page,       name='media_map'),
+
     # ── Photos (DAM) — pages ──
     path('photos/',                          views.photo_library_page,   name='photo_library'),
     path('photos/map/',                      views.photo_map_page,       name='photo_map'),
@@ -169,6 +173,7 @@ urlpatterns = [
 
     # ── Photos (DAM) — API ──
     path('api/photos/',                             views.photo_list),
+    path('api/media/map-markers/',                  views.media_map_markers),
     path('api/photos/map-markers/',                 views.photo_map_markers),
     path('api/photos/upload/',                      views.photo_upload),
     path('api/photos/bulk/',                        views.photo_bulk),

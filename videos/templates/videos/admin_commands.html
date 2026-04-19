@@ -5,29 +5,7 @@
 
 {% block extra_head %}
 <style>
-  .cmd-wrap { max-width: 960px; margin: 0 auto; padding: 24px 24px 80px; }
-
-  /* Admin nav tabs */
-  .admin-nav {
-    display: flex; gap: 4px; margin-bottom: 28px; flex-wrap: wrap;
-    border-bottom: 1px solid var(--border); padding-bottom: 2px;
-  }
-  .admin-nav a {
-    padding: 7px 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    font-size: 13px; font-weight: 600; text-decoration: none;
-    color: var(--text-muted); border: 1px solid transparent;
-    transition: all var(--transition);
-  }
-  .admin-nav a:hover { color: var(--text); background: var(--surface-2); }
-  .admin-nav a.active {
-    color: var(--accent); border-color: var(--border) var(--border) var(--surface);
-    background: var(--surface); margin-bottom: -1px;
-  }
-
-  /* Page header */
-  .cmd-header { margin-bottom: 24px; }
-  .cmd-header h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
-  .cmd-header p  { font-size: 13px; color: var(--text-muted); }
+  /* .admin-layout, .admin-nav and .admin-hero are provided by base.html */
 
   /* Command cards grid */
   .cmd-grid {
@@ -138,18 +116,21 @@
 {% endblock %}
 
 {% block content %}
-<div class="cmd-wrap">
+<div class="admin-layout" style="max-width:960px;">
 
-  <nav class="admin-nav">
-    <a href="{% url 'user_management' %}">Users</a>
-    <a href="{% url 'categories_manage' %}">Categories</a>
-    <a href="{% url 'admin_commands' %}" class="active">Commands</a>
-    <a href="{% url 'storage_dashboard' %}">Storage</a>
-  </nav>
+  {% include 'videos/_admin_nav.html' with admin_current='admin_commands' %}
 
-  <div class="cmd-header">
-    <h1>⚙️ Management Commands</h1>
-    <p>Run background operations and maintenance tasks. Commands are grouped by purpose: users, vision AI, import/streaming, speech, then faces &amp; identity. Output is shown inline; use <strong>Dry Run</strong> where available to preview changes.</p>
+  <div class="admin-hero">
+    <div class="admin-hero-info">
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        Management Commands
+      </h1>
+      <p>Run background operations and maintenance tasks. Use <strong>Dry Run</strong> where available to preview changes.</p>
+    </div>
   </div>
 
   <!-- Section heading helper -->

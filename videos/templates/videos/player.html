@@ -748,6 +748,11 @@
         Events <span class="tab-count">{{ event_matches|length }}</span>
       </button>
       {% endif %}
+      {% if place_matches %}
+      <button class="search-tab" onclick="switchTab('places', this)">
+        Places <span class="tab-count">{{ place_matches|length }}</span>
+      </button>
+      {% endif %}
       {% if photo_matches %}
       <button class="search-tab" onclick="switchTab('photos', this)">
         Photos <span class="tab-count">{{ photo_matches|length }}</span>
@@ -1125,6 +1130,43 @@
           <div style="margin-left:auto;flex-shrink:0;">
             <span style="font-size:11px;padding:4px 10px;border-radius:20px;background:var(--accent-soft);color:var(--accent);font-weight:600;">
               Browse →
+            </span>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Places tab -->
+    {% if place_matches %}
+    <div class="search-section active" id="tab-places">
+      <div class="playlist-matches">
+        {% for pl in place_matches %}
+        <a href="{% url 'place_detail' pl.slug %}" class="playlist-result-row" style="align-items:center;">
+          <div class="playlist-result-thumb"
+               style="background:{{ pl.color|default:'#3b82f6' }}22;display:flex;align-items:center;justify-content:center;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                 stroke="{{ pl.color|default:'#3b82f6' }}" stroke-width="2">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+          </div>
+          <div class="playlist-result-info">
+            <div class="playlist-result-name">{{ pl.name }}</div>
+            <div class="playlist-result-meta">
+              Place
+              {% if pl.latitude and pl.longitude %}
+                · {{ pl.latitude|floatformat:4 }}, {{ pl.longitude|floatformat:4 }}
+              {% endif %}
+              {% if pl.np_photo_count %} · {{ pl.np_photo_count }} photo{{ pl.np_photo_count|pluralize }}{% endif %}
+              {% if pl.np_video_count %} · {{ pl.np_video_count }} video{{ pl.np_video_count|pluralize }}{% endif %}
+              {% if pl.description %} · {{ pl.description|truncatechars:60 }}{% endif %}
+            </div>
+          </div>
+          <div style="margin-left:auto;flex-shrink:0;">
+            <span style="font-size:11px;padding:4px 10px;border-radius:20px;background:var(--accent-soft);color:var(--accent);font-weight:600;">
+              Open →
             </span>
           </div>
         </a>

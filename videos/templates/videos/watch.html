@@ -986,6 +986,27 @@
       </div>
       {% endif %}
 
+      <!-- Location -->
+      {% if video.named_place or video.latitude %}
+      <div style="margin-top:14px;display:flex;align-items:center;gap:6px;">
+        {% if video.named_place %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             style="width:13px;height:13px;flex-shrink:0;color:var(--accent);">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        <a href="{% url 'place_detail' video.named_place.slug %}"
+           style="color:var(--accent);text-decoration:none;font-weight:600;font-size:13px;">{{ video.named_place.name }}</a>
+        {% if video.latitude %}<span style="font-size:11px;color:var(--text-subtle);">{{ video.latitude|floatformat:5 }}, {{ video.longitude|floatformat:5 }}</span>{% endif %}
+        {% elif video.latitude %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             style="width:13px;height:13px;flex-shrink:0;color:var(--text-subtle);">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        <span style="font-size:12px;color:var(--text-muted);">{{ video.latitude|floatformat:5 }}, {{ video.longitude|floatformat:5 }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <!-- Chapters -->
       {% if chapters %}
       <div style="margin-top:18px;">
@@ -1450,7 +1471,7 @@
 <!-- ── Edit Video Modal ── -->
 {% if request.user.is_authenticated %}
 <div class="modal-backdrop" id="editModal" onclick="closeEditBackdrop(event)">
-  <div class="modal" style="max-width:520px;">
+  <div class="modal" style="max-width:740px;width:96vw;">
     <div class="modal-header">
       <div class="modal-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1465,7 +1486,12 @@
     </div>
 
     <div class="modal-body" style="display:block;padding:20px 24px;">
-      <div style="display:flex;flex-direction:column;gap:16px;">
+      <!-- Two-column grid: left = metadata, right = advanced sections.
+           auto-fit collapses to 1 column on narrow viewports automatically. -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:0 28px;align-items:start;">
+
+      <!-- ── LEFT COLUMN ── -->
+      <div style="display:flex;flex-direction:column;gap:16px;border-right:1px solid var(--border);padding-right:24px;">
 
         <div>
           <label class="w-label">Title</label>
@@ -1564,7 +1590,13 @@
         </div>
         {% endif %}
 
-        <div id="editStatus" style="font-size:12px;min-height:18px;"></div>
+        <!-- Status message lives at the bottom of the left column -->
+        <div id="editStatus" style="font-size:12px;min-height:18px;margin-top:4px;"></div>
+
+      </div><!-- /left column -->
+
+      <!-- ── RIGHT COLUMN ── -->
+      <div style="display:flex;flex-direction:column;gap:0;padding-left:4px;">
 
         {% if is_owner %}
         <!-- ── End Screens section ── -->
@@ -1786,7 +1818,56 @@
         </div>
         {% endif %}
 
-      </div>
+        {% if is_owner %}
+        <!-- ── Location section ── -->
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <label class="w-label" style="margin:0;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;color:var(--accent);">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+              Location
+            </label>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="openVidLocModal()"
+                    style="font-size:11px;">
+              📍 Pick on Map
+            </button>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <!-- Named place -->
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:12px;color:var(--text-muted);min-width:80px;flex-shrink:0;">Named Place</span>
+              <select id="editLocPlace" class="w-input" style="flex:1;font-size:13px;">
+                <option value="">— None —</option>
+                {% for p in all_named_places %}
+                <option value="{{ p.id }}"{% if video.named_place_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <!-- Raw GPS coordinates -->
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:12px;color:var(--text-muted);min-width:80px;flex-shrink:0;">Coordinates</span>
+              <input type="number" id="editLocLat" class="w-input" placeholder="Latitude" step="0.000001"
+                     value="{{ video.latitude|default:'' }}" style="flex:1;font-size:12px;" />
+              <input type="number" id="editLocLng" class="w-input" placeholder="Longitude" step="0.000001"
+                     value="{{ video.longitude|default:'' }}" style="flex:1;font-size:12px;" />
+            </div>
+            {% if video.named_place or video.latitude %}
+            <div style="font-size:11px;color:var(--text-subtle);">
+              Currently:
+              {% if video.named_place %}<strong>{{ video.named_place.name }}</strong>{% endif %}
+              {% if video.latitude %}({{ video.latitude|floatformat:5 }}, {{ video.longitude|floatformat:5 }}){% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+      </div><!-- /right column -->
+
+      </div><!-- /two-column grid -->
     </div>
 
     <div class="modal-footer">
@@ -2878,6 +2959,47 @@
   {% if request.user.is_authenticated %}
   const VIDEO_API = '{{ SITE_URL }}/api/videos/{{ video.id }}/';
 
+  // Named places lookup (id → {latitude, longitude}) for auto-fill
+  const _namedPlacesById = {};
+  {% for p in all_named_places %}{% if p.latitude %}
+  _namedPlacesById[{{ p.id }}] = { lat: {{ p.latitude }}, lng: {{ p.longitude }} };
+  {% endif %}{% endfor %}
+
+  // When a named place is chosen in the edit modal, auto-fill its coordinates
+  (function() {
+    const sel = document.getElementById('editLocPlace');
+    if (!sel) return;
+    sel.addEventListener('change', function() {
+      const pid = parseInt(this.value);
+      const place = _namedPlacesById[pid];
+      if (place) {
+        document.getElementById('editLocLat').value = place.lat.toFixed(6);
+        document.getElementById('editLocLng').value = place.lng.toFixed(6);
+      }
+    });
+  })();
+
+  // Also auto-fill when place is changed in the map picker's dropdown
+  (function() {
+    const sel = document.getElementById('vidLocPlaceSelect');
+    if (!sel) return;
+    sel.addEventListener('change', function() {
+      const pid = parseInt(this.value);
+      const place = _namedPlacesById[pid];
+      if (place && _vLocMap) {
+        // Move the map and pin to the place's centre
+        _vLocMap.setView([place.lat, place.lng], 14);
+        if (!_vLocMarker) {
+          _vLocMarker = L.marker([place.lat, place.lng], { draggable: true }).addTo(_vLocMap);
+          _vLocMarker.on('dragend', ev => _updateVidLocCoords(ev.target.getLatLng()));
+        } else {
+          _vLocMarker.setLatLng([place.lat, place.lng]);
+        }
+        _updateVidLocCoords({ lat: place.lat, lng: place.lng });
+      }
+    });
+  })();
+
   function openEditModal() {
     document.getElementById('editModal').classList.add('open');
     document.getElementById('editStatus').textContent = '';
@@ -2993,18 +3115,27 @@
     status.textContent = '';
 
     try {
+      // Build patch payload — include location if fields exist
+      const patchBody = {
+        title,
+        description: document.getElementById('editDesc').value,
+        tags:        document.getElementById('editTags').value,
+        is_public:        document.getElementById('editPublic').checked,
+        comments_enabled: document.getElementById('editCommentsEnabled').checked,
+        category:    document.getElementById('editCategory').value || null,
+      };
+      const locPlaceEl = document.getElementById('editLocPlace');
+      const locLatEl   = document.getElementById('editLocLat');
+      const locLngEl   = document.getElementById('editLocLng');
+      if (locPlaceEl) patchBody.named_place_id = locPlaceEl.value ? parseInt(locPlaceEl.value) : null;
+      if (locLatEl)   patchBody.latitude   = locLatEl.value  !== '' ? parseFloat(locLatEl.value)  : null;
+      if (locLngEl)   patchBody.longitude  = locLngEl.value  !== '' ? parseFloat(locLngEl.value)  : null;
+
       const res = await fetch(VIDEO_API, {
         method: 'PATCH',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          description: document.getElementById('editDesc').value,
-          tags:        document.getElementById('editTags').value,
-          is_public:        document.getElementById('editPublic').checked,
-          comments_enabled: document.getElementById('editCommentsEnabled').checked,
-          category:    document.getElementById('editCategory').value || null,
-        }),
+        body: JSON.stringify(patchBody),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(Object.values(data).flat().join(' ') || 'Save failed.');
@@ -4181,5 +4312,244 @@
     }
   }
   {% endif %}
+
+  {% if is_owner %}
+  // ── Video Location Edit ───────────────────────────────────────────────────
+  const _videoId = '{{ video.id }}';
+  let _vLocMap = null, _vLocMarker = null, _vLastGeocodeName = '';
+
+  window.openVidLocModal = function() {
+    document.getElementById('vidLocEditModal').style.display = 'flex';
+    // Prefer values currently in the edit modal (user may have typed new ones)
+    const editLatEl = document.getElementById('editLocLat');
+    const editLngEl = document.getElementById('editLocLng');
+    const lat = (editLatEl && editLatEl.value !== '') ? parseFloat(editLatEl.value)
+              : {{ video.latitude|default:'null' }};
+    const lng = (editLngEl && editLngEl.value !== '') ? parseFloat(editLngEl.value)
+              : {{ video.longitude|default:'null' }};
+    if (lat) document.getElementById('vidLocLat').value = lat;
+    if (lng) document.getElementById('vidLocLng').value = lng;
+    document.getElementById('vidLocSaveAsSection').style.display = 'none';
+    document.getElementById('vidLocSaveAsName').value = '';
+    setTimeout(() => _initVidLocMap(lat || 20, lng || 78, lat !== null), 80);
+  };
+
+  window.closeVidLocModal = function() {
+    document.getElementById('vidLocEditModal').style.display = 'none';
+  };
+
+  function _initVidLocMap(lat, lng, hasPin) {
+    if (!_vLocMap) {
+      _vLocMap = L.map('vidLocMapDiv').setView([lat, lng], hasPin ? 13 : 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors', maxZoom: 19,
+      }).addTo(_vLocMap);
+      if (hasPin) {
+        _vLocMarker = L.marker([lat, lng], { draggable: true }).addTo(_vLocMap);
+        _vLocMarker.on('dragend', e => _updateVidLocCoords(e.target.getLatLng()));
+      }
+      _vLocMap.on('click', function(e) {
+        if (!_vLocMarker) {
+          _vLocMarker = L.marker(e.latlng, { draggable: true }).addTo(_vLocMap);
+          _vLocMarker.on('dragend', ev => _updateVidLocCoords(ev.target.getLatLng()));
+        } else {
+          _vLocMarker.setLatLng(e.latlng);
+        }
+        _updateVidLocCoords(e.latlng);
+      });
+    } else {
+      _vLocMap.setView([lat, lng], hasPin ? 13 : 5);
+      if (_vLocMarker && hasPin) _vLocMarker.setLatLng([lat, lng]);
+      _vLocMap.invalidateSize();
+    }
+    if (hasPin) _updateVidLocCoords({ lat, lng });
+  }
+
+  function _updateVidLocCoords(ll) {
+    const latStr = (+ll.lat).toFixed(6);
+    const lngStr = (+ll.lng).toFixed(6);
+    document.getElementById('vidLocLat').value = latStr;
+    document.getElementById('vidLocLng').value = lngStr;
+    // Keep edit modal in sync so "Save Changes" picks up the new coordinates
+    const el = document.getElementById('editLocLat');
+    const el2 = document.getElementById('editLocLng');
+    if (el)  el.value  = latStr;
+    if (el2) el2.value = lngStr;
+    document.getElementById('vidLocSaveAsSection').style.display = '';
+    if (_vLastGeocodeName && !document.getElementById('vidLocSaveAsName').value)
+      document.getElementById('vidLocSaveAsName').value = _vLastGeocodeName;
+  }
+
+  window.geocodeVidLocSearch = async function() {
+    const q = document.getElementById('vidLocSearchInput').value.trim();
+    if (!q) return;
+    const btn = document.getElementById('vidLocSearchBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`, { headers: { 'Accept-Language': 'en' } });
+      const data = await res.json();
+      if (data.length) {
+        const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
+        _vLastGeocodeName = data[0].display_name.split(',')[0].trim();
+        _vLocMap.setView([lat, lng], 15);
+        if (!_vLocMarker) {
+          _vLocMarker = L.marker([lat, lng], { draggable: true }).addTo(_vLocMap);
+          _vLocMarker.on('dragend', e => _updateVidLocCoords(e.target.getLatLng()));
+        } else { _vLocMarker.setLatLng([lat, lng]); }
+        _updateVidLocCoords({ lat, lng });
+      } else { showToast('error', 'Location not found'); }
+    } catch { showToast('error', 'Search failed'); }
+    finally { btn.disabled = false; }
+  };
+
+  window.saveVidLocCoords = async function() {
+    const lat = parseFloat(document.getElementById('vidLocLat').value);
+    const lng = parseFloat(document.getElementById('vidLocLng').value);
+    if (isNaN(lat) || isNaN(lng)) { showToast('error', 'Enter valid coordinates'); return; }
+    const r = await fetch(`/api/videos/${_videoId}/`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ latitude: lat, longitude: lng }),
+    });
+    if (r.ok) { showToast('success', 'Location saved'); setTimeout(() => location.reload(), 900); }
+    else { showToast('error', 'Failed to save'); }
+  };
+
+  window.saveVidLocNamedPlace = async function() {
+    const sel = document.getElementById('vidLocPlaceSelect');
+    const pid = sel.value;
+    const r = await fetch(`/api/videos/${_videoId}/`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ named_place_id: pid ? parseInt(pid) : null }),
+    });
+    if (r.ok) { showToast('success', pid ? 'Place assigned' : 'Place removed'); setTimeout(() => location.reload(), 700); }
+    else { showToast('error', 'Failed to assign place'); }
+  };
+
+  window.saveVidAsNamedPlace = async function() {
+    const name   = document.getElementById('vidLocSaveAsName').value.trim();
+    const lat    = parseFloat(document.getElementById('vidLocLat').value);
+    const lng    = parseFloat(document.getElementById('vidLocLng').value);
+    const radius = parseInt(document.getElementById('vidLocSaveAsRadius').value) || 500;
+    if (!name) { showToast('error', 'Enter a name for the place'); return; }
+    if (isNaN(lat) || isNaN(lng)) { showToast('error', 'Drop a pin first'); return; }
+    const r = await fetch('/api/named-places/', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ name, latitude: lat, longitude: lng, radius_meters: radius }),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); showToast('error', d.error || 'Failed'); return; }
+    const newPlace = await r.json();
+    const opt = document.createElement('option');
+    opt.value = newPlace.id; opt.textContent = newPlace.name; opt.selected = true;
+    document.getElementById('vidLocPlaceSelect').appendChild(opt);
+    // Also add to edit modal's dropdown and select it
+    const editSel = document.getElementById('editLocPlace');
+    if (editSel) {
+      const opt2 = document.createElement('option');
+      opt2.value = newPlace.id; opt2.textContent = newPlace.name; opt2.selected = true;
+      editSel.appendChild(opt2);
+    }
+    showToast('success', `"${newPlace.name}" created`);
+    await fetch(`/api/videos/${_videoId}/`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ named_place_id: newPlace.id }),
+    });
+    document.getElementById('vidLocSaveAsSection').style.display = 'none';
+    setTimeout(() => location.reload(), 900);
+  };
+  {% endif %}
 </script>
+
+{% if is_owner %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Video location edit modal -->
+<div id="vidLocEditModal" onclick="closeVidLocModal()"
+     style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.88);
+            align-items:center;justify-content:center;">
+  <div onclick="event.stopPropagation()"
+       style="background:var(--surface-1);border-radius:var(--radius-lg);
+              width:min(700px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
+
+    <!-- Header -->
+    <div style="padding:13px 18px;display:flex;align-items:center;justify-content:space-between;
+                border-bottom:1px solid var(--border);font-weight:600;font-size:14px;flex-shrink:0;">
+      Edit Location
+      <button class="btn btn-ghost btn-sm" onclick="closeVidLocModal()" style="padding:4px 8px;">✕</button>
+    </div>
+
+    <!-- Search bar -->
+    <div style="padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <input id="vidLocSearchInput" type="text" placeholder="Search address or place name…"
+             onkeydown="if(event.key==='Enter')geocodeVidLocSearch()"
+             style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:13px;
+                    padding:6px 10px;outline:none;font-family:inherit;" />
+      <button id="vidLocSearchBtn" class="btn btn-ghost btn-sm" onclick="geocodeVidLocSearch()">Search</button>
+    </div>
+
+    <!-- Map -->
+    <div id="vidLocMapDiv" style="flex:1;min-height:260px;"></div>
+
+    <!-- Coords + save GPS -->
+    <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;
+                border-top:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">
+      <input type="number" id="vidLocLat" placeholder="Latitude" step="0.000001"
+             style="width:130px;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;outline:none;font-family:inherit;" />
+      <input type="number" id="vidLocLng" placeholder="Longitude" step="0.000001"
+             style="width:130px;background:var(--surface-2);border:1px solid var(--border-2);
+                    border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;outline:none;font-family:inherit;" />
+      <button class="btn btn-primary btn-sm" onclick="saveVidLocCoords()">Save GPS</button>
+      <span style="font-size:11px;color:var(--text-subtle);">Click map or drag pin to place</span>
+    </div>
+
+    <!-- Named place assign -->
+    <div style="padding:0 14px 10px;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;">Named Place</span>
+      <select id="vidLocPlaceSelect"
+              style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                     border-radius:var(--radius-sm);color:var(--text);font-size:13px;
+                     padding:5px 8px;outline:none;font-family:inherit;">
+        <option value="">— None —</option>
+        {% for p in all_named_places %}
+        <option value="{{ p.id }}"{% if video.named_place_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="saveVidLocNamedPlace()">Assign</button>
+    </div>
+
+    <!-- Save as Named Place -->
+    <div id="vidLocSaveAsSection" style="display:none;padding:0 14px 14px;flex-shrink:0;
+         border-top:1px solid var(--border);padding-top:10px;">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                  color:var(--text-subtle);margin-bottom:8px;">Save pin as new Named Place</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input id="vidLocSaveAsName" type="text" placeholder="Place name (e.g. Essar House)"
+               style="flex:1;min-width:160px;background:var(--surface-2);border:1px solid var(--border-2);
+                      border-radius:var(--radius-sm);color:var(--text);font-size:13px;
+                      padding:6px 10px;outline:none;font-family:inherit;" />
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span style="font-size:12px;color:var(--text-muted);">Radius</span>
+          <input id="vidLocSaveAsRadius" type="number" value="500" min="50" max="50000"
+                 style="width:70px;background:var(--surface-2);border:1px solid var(--border-2);
+                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;
+                        padding:5px 6px;outline:none;font-family:inherit;" />
+          <span style="font-size:12px;color:var(--text-muted);">m</span>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveVidAsNamedPlace()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+          </svg>
+          Create &amp; Assign
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endif %}
 {% endblock %}

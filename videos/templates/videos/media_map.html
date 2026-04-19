@@ -1,0 +1,915 @@
+{% extends "videos/base.html" %}
+{% load static %}
+
+{% block title %}Media Map — ClipLens{% endblock %}
+
+{% block extra_head %}
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<!-- Leaflet.MarkerCluster CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin=""/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin=""/>
+<style>
+  /* ── Layout ── */
+  .map-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--header-h, 60px));
+    overflow: hidden;
+  }
+
+  /* ── Toolbar ── */
+  .map-toolbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .map-toolbar h1 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .map-toolbar .spacer { flex: 1; }
+
+  .map-stat {
+    font-size: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .map-stat span {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .map-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .map-filter-row select {
+    background: var(--surface-alt, var(--surface-2, #1c1c24));
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    outline: none;
+  }
+  .map-filter-row select:focus { border-color: var(--accent); }
+
+  .map-nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    text-decoration: none;
+    transition: border-color .15s, color .15s;
+  }
+  .map-nav-btn:hover { border-color: var(--accent); color: var(--text); }
+  .map-nav-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  /* ── Type toggle pills ── */
+  .type-toggle {
+    display: flex;
+    background: var(--surface-2, #1c1c24);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+  .type-toggle label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: background .12s, color .12s;
+  }
+  .type-toggle input[type=radio] { display: none; }
+  .type-toggle input[type=radio]:checked + span { color: var(--accent); font-weight: 600; }
+  .type-toggle label:has(input:checked) {
+    background: var(--surface-3, #26263a);
+    color: var(--text);
+  }
+  .type-toggle label + label { border-left: 1px solid var(--border-2, rgba(255,255,255,.13)); }
+
+  /* ── Map container ── */
+  .map-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+  #map {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* ── Empty state overlay ── */
+  #map-empty {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 500;
+    background: var(--bg);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    text-align: center;
+    padding: 40px;
+  }
+  #map-empty.visible { display: flex; }
+  #map-empty svg { width: 52px; height: 52px; color: var(--text-muted); opacity: .4; }
+  #map-empty h2 { font-size: 18px; font-weight: 700; margin: 0; }
+  #map-empty p  { font-size: 14px; color: var(--text-muted); margin: 0; max-width: 340px; line-height: 1.6; }
+
+  /* ── Loading indicator ── */
+  #map-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 600;
+    background: var(--surface);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 10px;
+    padding: 16px 24px;
+    font-size: 14px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    transition: opacity .2s;
+  }
+  #map-loading.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border-2, rgba(255,255,255,.13));
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Custom Leaflet cluster colours (match accent) ── */
+  .marker-cluster-small  div,
+  .marker-cluster-medium div,
+  .marker-cluster-large  div {
+    background-color: rgba(99, 102, 241, 0.8);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .marker-cluster-small,
+  .marker-cluster-medium,
+  .marker-cluster-large  {
+    background-color: rgba(99, 102, 241, 0.25);
+  }
+
+  /* ── Popup ── */
+  .map-popup {
+    font-family: 'Inter', system-ui, sans-serif;
+    min-width: 160px;
+    max-width: 210px;
+  }
+  .map-popup .thumb-wrap {
+    position: relative;
+    width: 100%;
+    height: 110px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 8px;
+    background: var(--surface-2, #1c1c24);
+  }
+  .map-popup .thumb-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .map-popup .thumb-type {
+    position: absolute;
+    bottom: 4px;
+    left: 4px;
+    background: rgba(0,0,0,.65);
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: .3px;
+  }
+  .map-popup a {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent, #6366f1);
+    text-decoration: none;
+    display: block;
+    line-height: 1.4;
+  }
+  .map-popup a:hover { text-decoration: underline; }
+  .map-popup .popup-date {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+  }
+
+  /* Override Leaflet popup styles to match dark theme */
+  [data-theme="dark"] .leaflet-popup-content-wrapper,
+  [data-theme="dark"] .leaflet-popup-tip {
+    background: #1c1c24;
+    color: #f0f0f8;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  [data-theme="dark"] .leaflet-popup-content-wrapper {
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px;
+  }
+  [data-theme="dark"] .leaflet-bar a,
+  [data-theme="dark"] .leaflet-control-zoom a {
+    background: #1c1c24;
+    color: #f0f0f8;
+    border-color: rgba(255,255,255,.15);
+  }
+  [data-theme="dark"] .leaflet-bar a:hover { background: #26263a; }
+  [data-theme="dark"] .leaflet-control-attribution {
+    background: rgba(0,0,0,.5);
+    color: #888;
+  }
+  [data-theme="dark"] .leaflet-control-attribution a { color: #aaa; }
+
+  /* Named place label on map */
+  .place-label {
+    background: transparent !important; border: none !important; box-shadow: none !important;
+    font-size: 11px; font-weight: 700; color: rgba(255,255,255,.85);
+    white-space: nowrap; pointer-events: none;
+  }
+
+  /* Map-only theme toggle (independent of site theme) */
+  .map-theme-toggle {
+    position: absolute; top: 14px; right: 14px; z-index: 600;
+    display: flex; background: var(--surface);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 8px; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  }
+  .map-theme-toggle button {
+    background: none; border: none; cursor: pointer;
+    padding: 6px 8px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 600; font-family: inherit;
+  }
+  .map-theme-toggle button + button { border-left: 1px solid var(--border-2); }
+  .map-theme-toggle button.active { color: var(--accent); background: var(--surface-2); }
+  .map-theme-toggle svg { width: 13px; height: 13px; }
+
+  /* ── View toggle (Map / Grouped) ── */
+  .view-toggle {
+    display: inline-flex;
+    background: var(--surface-2, #1c1c24);
+    border: 1px solid var(--border-2, rgba(255,255,255,.13));
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+  .view-toggle button {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-muted); font-size: 12px; font-weight: 600;
+    padding: 5px 12px; font-family: inherit;
+    display: flex; align-items: center; gap: 5px;
+    transition: background .12s, color .12s;
+  }
+  .view-toggle button:hover { color: var(--text); }
+  .view-toggle button.active {
+    background: var(--surface-3, #26263a); color: var(--accent);
+  }
+  .view-toggle button + button { border-left: 1px solid var(--border-2, rgba(255,255,255,.13)); }
+  .view-toggle svg { width: 13px; height: 13px; }
+
+  /* ── Grouped view (Apple Photos style) ── */
+  .grouped-wrap {
+    display: none;
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    padding: 20px 24px 40px;
+    background: var(--bg);
+  }
+  .grouped-wrap.active { display: block; }
+
+  .grouped-place {
+    margin-bottom: 32px;
+  }
+  .grouped-place-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .grouped-place-header h3 {
+    font-size: 17px; font-weight: 700; margin: 0;
+    display: flex; align-items: center; gap: 6px;
+    color: var(--text);
+  }
+  .grouped-place-header h3 svg { width: 16px; height: 16px; color: var(--accent); }
+  .grouped-place-header h3 a { color: inherit; text-decoration: none; }
+  .grouped-place-header h3 a:hover { color: var(--accent); }
+  .grouped-place-meta {
+    font-size: 12px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .grouped-place-meta .dot { color: var(--text-subtle); }
+  .grouped-place-more {
+    margin-left: auto;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    text-decoration: none;
+    display: flex; align-items: center; gap: 3px;
+  }
+  .grouped-place-more:hover { text-decoration: underline; }
+  .grouped-place-more svg { width: 12px; height: 12px; }
+
+  .grouped-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px;
+  }
+  @media (max-width: 640px) { .grouped-grid { grid-template-columns: repeat(3, 1fr); gap: 5px; } }
+
+  .g-card {
+    position: relative; display: block;
+    aspect-ratio: 1/1;
+    border-radius: 6px; overflow: hidden;
+    background: var(--surface-3);
+    text-decoration: none;
+    transition: transform .18s;
+  }
+  .g-card:hover { transform: scale(1.03); }
+  .g-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .g-card-ph {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-subtle);
+  }
+  .g-card-ph svg { width: 28px; height: 28px; }
+  .g-card-type {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(0,0,0,.7); color: #fff;
+    border-radius: 4px; padding: 2px 6px;
+    font-size: 10px; font-weight: 700; letter-spacing: .3px;
+    display: flex; align-items: center; gap: 3px;
+  }
+  .g-card-type svg { width: 10px; height: 10px; }
+  .g-card-overflow {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; color: var(--accent);
+    background: var(--surface-2);
+    border: 1px dashed var(--border-2, rgba(255,255,255,.13));
+    text-decoration: none;
+    transition: background .15s;
+  }
+  .g-card-overflow:hover { background: var(--surface-3); }
+
+  .grouped-empty {
+    text-align: center; padding: 80px 20px; color: var(--text-muted);
+  }
+  .grouped-empty svg { width: 48px; height: 48px; opacity: .3; margin: 0 auto 12px; display: block; }
+  .grouped-empty h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="map-page">
+
+  <!-- Toolbar -->
+  <div class="map-toolbar">
+    <h1>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           style="width:18px;height:18px;vertical-align:-3px;margin-right:6px;">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+      Media Map
+    </h1>
+
+    <!-- Type filter -->
+    <div class="type-toggle" id="typeToggle">
+      <label><input type="radio" name="mtype" value="" checked onchange="applyFilter()"><span>All</span></label>
+      <label><input type="radio" name="mtype" value="photo" onchange="applyFilter()">
+        <span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;vertical-align:-1px;">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+          </svg>
+          Photos
+        </span>
+      </label>
+      <label><input type="radio" name="mtype" value="video" onchange="applyFilter()">
+        <span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;vertical-align:-1px;">
+            <rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 8 16 11 10 14 10 8"/>
+          </svg>
+          Videos
+        </span>
+      </label>
+    </div>
+
+    {% if owned_channels %}
+    <div class="map-filter-row">
+      <select id="channelFilter" onchange="applyFilter()">
+        <option value="">All channels</option>
+        {% for ch in owned_channels %}
+        <option value="{{ ch.slug }}">{{ ch.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <div class="map-filter-row">
+      <select id="placeFilter" onchange="applyFilter()" style="display:none;">
+        <option value="">All places</option>
+      </select>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="map-stat" id="markerStat" style="display:none;">
+      <span id="markerCount">0</span> <span id="markerCountLabel">items</span>
+      <span id="markerBreakdown" style="font-weight:400;color:var(--text-subtle);margin-left:4px;"></span>
+    </div>
+
+    <!-- View toggle: Map vs Grouped-by-location -->
+    <div class="view-toggle" id="viewToggle">
+      <button type="button" class="active" data-view="map" onclick="switchView('map')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+          <line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>
+        </svg>
+        Map
+      </button>
+      <button type="button" data-view="grouped" onclick="switchView('grouped')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+        </svg>
+        Grouped
+      </button>
+    </div>
+  </div>
+
+  <!-- Map + overlays wrapper -->
+  <div class="map-wrap" id="mapViewWrap">
+    <div id="map"></div>
+
+    <!-- Map-only theme toggle -->
+    <div class="map-theme-toggle" role="group" aria-label="Map theme">
+      <button type="button" data-map-theme="light" onclick="setMapTheme('light')" title="Light map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        Light
+      </button>
+      <button type="button" data-map-theme="dark" onclick="setMapTheme('dark')" title="Dark map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        Dark
+      </button>
+    </div>
+
+    <!-- Loading spinner -->
+    <div id="map-loading">
+      <div class="spinner"></div>
+      Loading media…
+    </div>
+
+    <!-- Empty state -->
+    <div id="map-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+      <h2>No geotagged media</h2>
+      <p>Photos and videos need GPS coordinates assigned to appear here.
+         Add location data via the Edit Location controls on each media item.</p>
+      <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;justify-content:center;">
+        <a href="{% url 'photo_library' %}" class="map-nav-btn">Photos</a>
+        <a href="{% url 'player' %}" class="map-nav-btn">Videos</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Grouped-by-location view -->
+  <div class="grouped-wrap" id="groupedViewWrap">
+    <div id="groupedContent"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<!-- Leaflet.MarkerCluster JS -->
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
+
+<script>
+(function () {
+  'use strict';
+
+  if (typeof L === 'undefined' || typeof L.markerClusterGroup === 'undefined') {
+    document.getElementById('map-loading').classList.add('hidden');
+    const empty = document.getElementById('map-empty');
+    empty.querySelector('h2').textContent = 'Map library failed to load';
+    empty.querySelector('p').textContent  = 'Could not load Leaflet from CDN. Check your network connection and reload.';
+    empty.classList.add('visible');
+    return;
+  }
+
+  // ── Tile layers (light / dark Carto) ──
+  const TILES = {
+    light: {
+      url:  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    dark: {
+      url:  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+    },
+  };
+
+  // Map theme is independent of the site theme (persisted in localStorage).
+  const MAP_THEME_KEY = 'mediaMapTheme';
+  function getMapTheme() {
+    const saved = localStorage.getItem(MAP_THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+    return document.documentElement.getAttribute('data-theme') || 'dark';
+  }
+  const tileOpt = () => TILES[getMapTheme()] || TILES.dark;
+
+  // ── Init map ──
+  let map, tileLayer, cluster;
+  try {
+    map = L.map('map', { center: [20, 0], zoom: 2, zoomControl: true });
+    tileLayer = L.tileLayer(tileOpt().url, {
+      attribution: tileOpt().attr,
+      maxZoom: 19,
+    }).addTo(map);
+  } catch (e) {
+    console.error('Leaflet map init failed:', e);
+    document.getElementById('map-loading').classList.add('hidden');
+    const empty = document.getElementById('map-empty');
+    empty.querySelector('h2').textContent = 'Map failed to initialise';
+    empty.querySelector('p').textContent  = e.message || 'Unknown error — check the browser console.';
+    empty.classList.add('visible');
+    return;
+  }
+
+  function syncMapThemeButtons() {
+    const cur = getMapTheme();
+    document.querySelectorAll('.map-theme-toggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mapTheme === cur);
+    });
+  }
+  syncMapThemeButtons();
+
+  window.setMapTheme = function (newTheme) {
+    if (newTheme !== 'light' && newTheme !== 'dark') return;
+    localStorage.setItem(MAP_THEME_KEY, newTheme);
+    tileLayer.setUrl(tileOpt().url);
+    syncMapThemeButtons();
+  };
+
+  // If the user hasn't picked an explicit map theme, follow the site theme
+  // when it changes; otherwise keep the user's explicit choice.
+  const origToggle = window.toggleTheme;
+  window.toggleTheme = function () {
+    if (origToggle) origToggle();
+    if (!localStorage.getItem(MAP_THEME_KEY)) {
+      setTimeout(() => { tileLayer.setUrl(tileOpt().url); syncMapThemeButtons(); }, 50);
+    }
+  };
+
+  // ── Cluster group ──
+  cluster = L.markerClusterGroup({
+    showCoverageOnHover: false,
+    maxClusterRadius: 60,
+    spiderfyOnMaxZoom: true,
+    chunkedLoading: true,
+  });
+  map.addLayer(cluster);
+
+  // ── Helpers ──
+  function formatDate(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+      });
+    } catch { return ''; }
+  }
+
+  // ── Named place circles layer ──
+  let placeCirclesLayer = L.layerGroup().addTo(map);
+
+  // ── Marker icons — blue for photos, purple for videos ──
+  const photoIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:10px;height:10px;border-radius:50%;background:#60a5fa;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);"></div>',
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+  const videoIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:10px;height:10px;border-radius:2px;background:#a78bfa;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);transform:rotate(0deg);"></div>',
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+
+  // ── Build popup HTML ──
+  function makePopup(m) {
+    const dateStr  = m.date      ? `<div class="popup-date">${formatDate(m.date)}</div>` : '';
+    const placeStr = m.place_name ? `<div class="popup-date" style="color:var(--accent,#6366f1);">📍 ${m.place_name}</div>` : '';
+    const typeLabel = m.type === 'video' ? '▶ Video' : '🖼 Photo';
+    const thumbHtml = m.thumb
+      ? `<img src="${m.thumb}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" />`
+      : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;">${m.type === 'video' ? '▶' : '🌍'}</div>`;
+
+    return `<div class="map-popup">
+      <div class="thumb-wrap">
+        ${thumbHtml}
+        <span class="thumb-type">${typeLabel}</span>
+      </div>
+      <a href="${m.url}">${m.title}</a>
+      ${dateStr}${placeStr}
+    </div>`;
+  }
+
+  // Cached dataset from the last successful fetch so the grouped view can reuse it.
+  let _lastData = { markers: [], places: [] };
+  let _currentView = 'map';
+
+  // ── Load markers ──
+  function loadMarkers(channelSlug, placeSlug, mediaType) {
+    const loading    = document.getElementById('map-loading');
+    const empty      = document.getElementById('map-empty');
+    const stat       = document.getElementById('markerStat');
+    const countEl    = document.getElementById('markerCount');
+    const countLblEl = document.getElementById('markerCountLabel');
+    const breakdown  = document.getElementById('markerBreakdown');
+
+    loading.classList.remove('hidden');
+    empty.classList.remove('visible');
+    stat.style.display = 'none';
+
+    cluster.clearLayers();
+    placeCirclesLayer.clearLayers();
+
+    const params = new URLSearchParams();
+    if (channelSlug) params.set('channel', channelSlug);
+    if (placeSlug)   params.set('place',   placeSlug);
+    if (mediaType)   params.set('type',    mediaType);
+    const url = '/api/media/map-markers/' + (params.toString() ? '?' + params.toString() : '');
+
+    fetch(url)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        loading.classList.add('hidden');
+        const markers = data.markers || [];
+        const places  = data.places  || [];
+        _lastData = data;
+
+        places.forEach(p => {
+          L.circle([p.lat, p.lng], {
+            radius: p.radius,
+            color: p.color, fillColor: p.color, fillOpacity: 0.08,
+            weight: 2, dashArray: '5,5',
+          }).addTo(placeCirclesLayer)
+            .bindTooltip(p.name, { permanent: true, direction: 'center', className: 'place-label' });
+        });
+
+        const placeSelect = document.getElementById('placeFilter');
+        if (placeSelect && places.length) {
+          const currentVal = placeSelect.value;
+          placeSelect.style.display = '';
+          while (placeSelect.options.length > 1) placeSelect.remove(1);
+          places.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.slug; opt.textContent = '📍 ' + p.name;
+            if (p.slug === currentVal) opt.selected = true;
+            placeSelect.appendChild(opt);
+          });
+        }
+
+        // Stat bar: show total media + a breakdown and count of distinct places
+        const pc = data.photo_count || 0;
+        const vc = data.video_count || 0;
+        const total = markers.length;
+        const distinctPlaceSlugs = new Set();
+        markers.forEach(m => { if (m.place_slug) distinctPlaceSlugs.add(m.place_slug); });
+        const distinctPlaces = distinctPlaceSlugs.size;
+
+        countEl.textContent = total.toLocaleString();
+        countLblEl.textContent = total === 1 ? 'item' : 'items';
+        const parts = [];
+        if (pc > 0 && vc > 0) parts.push(`${pc.toLocaleString()} photo${pc !== 1 ? 's' : ''}, ${vc.toLocaleString()} video${vc !== 1 ? 's' : ''}`);
+        else if (pc > 0)     parts.push(`${pc.toLocaleString()} photo${pc !== 1 ? 's' : ''}`);
+        else if (vc > 0)     parts.push(`${vc.toLocaleString()} video${vc !== 1 ? 's' : ''}`);
+        if (distinctPlaces > 0) parts.push(`${distinctPlaces} place${distinctPlaces !== 1 ? 's' : ''}`);
+        breakdown.textContent = parts.length ? `(${parts.join(' · ')})` : '';
+        stat.style.display = '';
+
+        if (markers.length === 0) {
+          empty.classList.add('visible');
+          renderGroupedView();
+          return;
+        }
+
+        const leafletMarkers = markers.map(m => {
+          const icon = m.type === 'video' ? videoIcon : photoIcon;
+          const lm = L.marker([m.lat, m.lng], { icon });
+          lm.bindPopup(makePopup(m), { maxWidth: 230 });
+          return lm;
+        });
+
+        cluster.addLayers(leafletMarkers);
+
+        const group = L.featureGroup(leafletMarkers);
+        map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 14 });
+
+        renderGroupedView();
+      })
+      .catch(err => {
+        loading.classList.add('hidden');
+        console.error('Media map markers failed:', err);
+        empty.classList.add('visible');
+      });
+  }
+
+  // ── Grouped-by-location view (Apple-Photos style) ──
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function renderGroupedView() {
+    const container = document.getElementById('groupedContent');
+    const markers = _lastData.markers || [];
+    const places  = _lastData.places  || [];
+
+    if (!markers.length) {
+      container.innerHTML = `
+        <div class="grouped-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+          </svg>
+          <h3>No geotagged media</h3>
+          <p style="font-size:13px;">Assign a location to photos and videos to group them here.</p>
+        </div>`;
+      return;
+    }
+
+    // Group markers by place_slug
+    const placeMeta = {};
+    places.forEach(p => { placeMeta[p.slug] = p; });
+    const groups = {};
+    markers.forEach(m => {
+      const key = m.place_slug || '__none__';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(m);
+    });
+
+    const PREVIEW = 10;
+    const html = [];
+    const namedKeys = Object.keys(groups).filter(k => k !== '__none__');
+    namedKeys.sort((a, b) => groups[b].length - groups[a].length);
+
+    namedKeys.forEach(key => {
+      const items = groups[key];
+      const place = placeMeta[key];
+      const placeName = place ? place.name : (items[0].place_name || 'Unknown place');
+      const pUrl = `/places/${encodeURIComponent(key)}/`;
+      const photoN = items.filter(i => i.type === 'photo').length;
+      const videoN = items.filter(i => i.type === 'video').length;
+      const overflow = Math.max(0, items.length - PREVIEW);
+      const previewItems = items.slice(0, PREVIEW);
+
+      const cards = previewItems.map(m => {
+        const typeBadge = m.type === 'video'
+          ? `<span class="g-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="10 8 16 11 10 14 10 8"/></svg>VIDEO</span>`
+          : `<span class="g-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>PHOTO</span>`;
+        const thumb = m.thumb
+          ? `<img src="${escapeHtml(m.thumb)}" alt="${escapeHtml(m.title || '')}" loading="lazy" />`
+          : `<div class="g-card-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
+        return `<a class="g-card" href="${escapeHtml(m.url)}" title="${escapeHtml(m.title || '')}">${thumb}${typeBadge}</a>`;
+      }).join('');
+
+      const overflowCard = overflow > 0
+        ? `<a class="g-card" href="${pUrl}"><div class="g-card-overflow">+${overflow}</div></a>`
+        : '';
+
+      const metaBits = [];
+      if (photoN) metaBits.push(`${photoN} photo${photoN !== 1 ? 's' : ''}`);
+      if (videoN) metaBits.push(`${videoN} video${videoN !== 1 ? 's' : ''}`);
+
+      html.push(`
+        <section class="grouped-place">
+          <div class="grouped-place-header">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+              <a href="${pUrl}">${escapeHtml(placeName)}</a>
+            </h3>
+            <div class="grouped-place-meta">${metaBits.map(escapeHtml).join(' <span class="dot">·</span> ')}</div>
+            <a class="grouped-place-more" href="${pUrl}">
+              View more
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </a>
+          </div>
+          <div class="grouped-grid">${cards}${overflowCard}</div>
+        </section>`);
+    });
+
+    // Items with GPS but no named place are intentionally NOT rendered as a
+    // section here — the grouped view is conceptually "media by place", so an
+    // "unassigned" lumped bucket mixes unrelated real-world locations.
+    // Instead surface a small footer nudge so users can act on them.
+    const orphanCount = (groups.__none__ || []).length;
+    if (orphanCount > 0) {
+      const mapUrl = '/media/map/';
+      const npUrl  = '/named-places/';
+      html.push(`
+        <div style="margin-top:20px;padding:14px 16px;border:1px dashed var(--border-2);
+                    border-radius:10px;background:var(--surface);font-size:13px;color:var(--text-muted);
+                    display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               style="width:18px;height:18px;color:var(--accent);flex-shrink:0;">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span style="flex:1;min-width:180px;">
+            <strong>${orphanCount}</strong> geotagged item${orphanCount !== 1 ? 's' : ''}
+            ${orphanCount !== 1 ? 'are' : 'is'} not inside any named place yet —
+            they only appear in <a href="${mapUrl}" style="color:var(--accent);">Map view</a>.
+          </span>
+          <a href="${npUrl}" style="color:var(--accent);font-weight:600;text-decoration:none;">Manage named places →</a>
+        </div>`);
+    }
+
+    container.innerHTML = html.join('');
+  }
+
+  // ── View switcher ──
+  window.switchView = function(view) {
+    if (view === _currentView) return;
+    _currentView = view;
+    document.querySelectorAll('#viewToggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.view === view);
+    });
+    const mapWrap = document.getElementById('mapViewWrap');
+    const grpWrap = document.getElementById('groupedViewWrap');
+    if (view === 'map') {
+      mapWrap.style.display = '';
+      grpWrap.classList.remove('active');
+      setTimeout(() => map.invalidateSize(), 80);
+    } else {
+      mapWrap.style.display = 'none';
+      grpWrap.classList.add('active');
+      renderGroupedView();
+    }
+  };
+
+  function applyFilter() {
+    const channelSlug = document.getElementById('channelFilter')?.value || '';
+    const placeSlug   = document.getElementById('placeFilter')?.value   || '';
+    const mediaType   = document.querySelector('input[name="mtype"]:checked')?.value || '';
+    loadMarkers(channelSlug, placeSlug, mediaType);
+  }
+
+  window.applyFilter = applyFilter;
+
+  loadMarkers('', '', '');
+
+})();
+</script>
+{% endblock %}

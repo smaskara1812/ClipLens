@@ -167,6 +167,14 @@ class Video(models.Model):
     # Seek / scrub thumbnail sprite (generated post-processing)
     seek_sprite = models.CharField(max_length=500, blank=True)
 
+    # Location
+    latitude    = models.FloatField(null=True, blank=True, db_index=True)
+    longitude   = models.FloatField(null=True, blank=True, db_index=True)
+    named_place = models.ForeignKey(
+        'NamedPlace', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='videos',
+    )
+
     uploaded_by = models.CharField(max_length=100, blank=True)
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)

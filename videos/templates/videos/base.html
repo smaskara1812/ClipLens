@@ -20,6 +20,7 @@
     :root {
       --bg:            #09090e;
       --surface:       #111118;
+      --surface-1:     #111118;
       --surface-2:     #18181f;
       --surface-3:     #1e1e2a;
       --border:        #1e1e2a;
@@ -47,6 +48,7 @@
     [data-theme="light"] {
       --bg:            #f2f2f7;
       --surface:       #ffffff;
+      --surface-1:     #ffffff;
       --surface-2:     #f7f7fc;
       --surface-3:     #ededf4;
       --border:        #e4e4ec;
@@ -371,6 +373,46 @@
     .badge-processing .badge-dot { animation: pulse 1.2s ease-in-out infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
+    /* ── Admin pages (shared shell) ── */
+    .admin-layout {
+      max-width: 1200px; margin: 0 auto; padding: 28px 24px 80px;
+    }
+    .admin-nav {
+      display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+    .admin-nav a {
+      padding: 9px 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      font-size: 13px; font-weight: 600; text-decoration: none;
+      color: var(--text-muted); border: 1px solid transparent;
+      border-bottom: none;
+      transition: all var(--transition);
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-bottom: -1px;
+    }
+    .admin-nav a svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .admin-nav a:hover { color: var(--text); background: var(--surface-2); }
+    .admin-nav a.active {
+      color: var(--accent);
+      border-color: var(--border); background: var(--surface);
+    }
+    .admin-hero {
+      margin-bottom: 24px;
+      display: flex; align-items: flex-start; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+    }
+    .admin-hero-info h1 {
+      font-size: 22px; font-weight: 800; margin: 0 0 4px;
+      display: flex; align-items: center; gap: 10px; line-height: 1.2;
+    }
+    .admin-hero-info h1 svg { width: 22px; height: 22px; color: var(--accent); flex-shrink: 0; }
+    .admin-hero-info p { color: var(--text-muted); font-size: 13px; margin: 0; line-height: 1.5; }
+    .admin-hero-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    @media (max-width: 640px) {
+      .admin-layout { padding: 18px 14px 60px; }
+      .admin-hero-info h1 { font-size: 19px; }
+    }
+
     /* ── Toast ── */
     .fs-toast {
       position: fixed; bottom: 24px; right: 24px; z-index: 999;
@@ -644,7 +686,7 @@
       const item = _items[idx];
       if (!item) return;
       closeSuggest();
-      // Place suggestions carry a direct URL (e.g. /photos/?place=salaya).
+      // Place suggestions carry a direct URL (e.g. /places/salaya/).
       // Navigate there instead of running a generic text search.
       if (item.url) {
         window.location.href = item.url;

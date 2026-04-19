@@ -5,14 +5,7 @@
 
 {% block extra_head %}
 <style>
-  .admin-layout { max-width: 900px; margin: 0 auto; padding: 28px 24px; }
-  .page-hero { margin-bottom: 28px; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .page-hero h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
-  .page-hero h1 svg { width: 24px; height: 24px; color: var(--accent); }
-  .page-hero p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
-  .breadcrumb { font-size: 13px; color: var(--text-subtle); margin-bottom: 20px; display: flex; align-items: center; gap: 6px; }
-  .breadcrumb a { color: var(--accent); text-decoration: none; }
-  .breadcrumb a:hover { text-decoration: underline; }
+  /* .admin-layout, .admin-nav and .admin-hero are provided by base.html */
 
   /* Add form */
   .add-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 28px; }
@@ -55,20 +48,17 @@
 {% endblock %}
 
 {% block content %}
-<div class="admin-layout">
-  <div class="breadcrumb">
-    <a href="{% url 'user_management' %}">Admin Panel</a>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="9 18 15 12 9 6"/></svg>
-    Categories
-  </div>
+<div class="admin-layout" style="max-width:900px;">
 
-  <div class="page-hero">
-    <div>
+  {% include 'videos/_admin_nav.html' with admin_current='categories_manage' %}
+
+  <div class="admin-hero">
+    <div class="admin-hero-info">
       <h1>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-        Manage Categories
+        Categories
       </h1>
-      <p>{{ categories|length }} categor{{ categories|length|pluralize:"y,ies" }} · Superadmin only</p>
+      <p>{{ categories|length }} categor{{ categories|length|pluralize:"y,ies" }} · Organise videos and photos into discoverable topics.</p>
     </div>
   </div>
 
@@ -269,12 +259,12 @@ async function deleteCategory(id, count) {
 }
 
 function updateHeroCount(delta) {
-  const p = document.querySelector('.page-hero p');
+  const p = document.querySelector('.admin-hero-info p');
   if (!p) return;
   const m = p.textContent.match(/(\d+)/);
   if (!m) return;
   const n = parseInt(m[1]) + delta;
-  p.textContent = `${n} categor${n === 1 ? 'y' : 'ies'} · Superadmin only`;
+  p.textContent = `${n} categor${n === 1 ? 'y' : 'ies'} · Organise videos and photos into discoverable topics.`;
 }
 
 function escHtml(s) {
