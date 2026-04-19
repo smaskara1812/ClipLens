@@ -9,9 +9,7 @@
 
 ## 1. Vision
 
-ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, and visual semantics.w
-
-ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, speaker identities, and visual semantics.
+ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, speaker identities, visual semantics, and **named geographic places** (where GPS metadata exists).
 
 ---
 
@@ -74,11 +72,12 @@ ClipStream implements a **four-layer search stack** over every piece of processe
 - Threshold configurable (`CLIP_SIMILARITY_THRESHOLD`, default 0.20)
 - Caps: 250 video frames, 50 photos per query
 
-#### Layer 4 — Structural (faces, channels, playlists)
+#### Layer 4 — Structural (faces, channels, playlists, places)
 
 - Face identity name search across all DetectedFace records, grouped by person then video
 - Channel name and playlist title fuzzy search
-- Results grouped into tabbed UI: All / Videos / People / Scenes / Speech / Channels / Playlists / Photos
+- Named place name/description search → **Places** tab and place detail URLs (`/places/<slug>/`)
+- Results grouped into tabbed UI: All / Videos / People / Scenes / Speech / Channels / Playlists / Photos / **Places** (named locations; each row links to a place detail page so similarly named sites stay distinguishable)
 
 #### Filter propagation
 
@@ -93,7 +92,17 @@ Photos are first-class assets alongside videos:
 - **Detail** (`/photos/<id>/`) — full image viewer with AI metadata sidebar; polls for processing completion
 - **Search integration** — photos appear in the Photos tab of the main search results
 
-### 2.5 Face Recognition & Identity Management
+### 2.5 Named places, geolocation & media map
+
+- **`NamedPlace` model** — Curated locations (name, unique slug, lat/lng, radius in metres, optional description, map colour). Slugs are generated from the name and deduplicated automatically when names collide.
+- **Photos and videos** — Both support optional `latitude`, `longitude`, and optional `named_place` foreign key. Bulk tools can auto-assign items whose coordinates fall inside a place’s radius.
+- **Named Places admin** (`/named-places/`, editors and superadmins) — Leaflet map with inline address search (geocoding via **OpenStreetMap Nominatim** when the browser calls that API), create/edit places, and table with photo and video counts per place.
+- **Media Map** (`/media/map/`) — Unified map of geotagged **photos and videos**; statistics distinguish total markers vs distinct named places. **Map** vs **Grouped** view: grouped sections show media per named place with “View more” to the place page. Map tile theme can be toggled light/dark independently of the global site theme (stored in `localStorage`).
+- **Place detail** (`/places/<slug>/`) — Browse all photos and videos linked to one named place, with counts and a small map.
+- **Search suggestions** — Matching named places appear in autocomplete with short disambiguating text (description snippet or rounded coordinates) when names are similar.
+- **Admin chrome** — Users, Categories, Named Places, Commands, and Storage share the same top tab navigation. **Superadmins** see all tabs; **editors** only see **Categories** and **Named Places** (no links to superadmin-only routes).
+
+### 2.6 Face Recognition & Identity Management
 
 - InsightFace `buffalo_l` model (ArcFace) runs per frame and per photo
 - Detected faces are clustered per-video using greedy cosine similarity (threshold: 0.35 for within-video clustering)
@@ -102,7 +111,7 @@ Photos are first-class assets alongside videos:
 - Editors can rename, merge, and tag identities via the People page
 - Running-average embeddings are maintained per identity as the system sees more faces
 
-### 2.6 Speaker Identity & Voice Recognition (Diarization)
+### 2.7 Speaker Identity & Voice Recognition (Diarization)
 
 - Speaker diarization uses **pyannote.audio** (`pyannote/speaker-diarization-3.1`) to label who spoke when
 - Each Whisper transcript segment (`VideoSegment`) can be tagged with:
@@ -125,6 +134,7 @@ original_file | hls_path | thumbnail
 duration | file_size | resolution | available_qualities
 status (pending/processing/ready/failed)
 visibility (public/private/subscribers_only)
+latitude | longitude | named_place (FK → NamedPlace, optional)
 ```
 
 ### 3.2 VideoFrame (one per sampled frame)
@@ -169,11 +179,20 @@ labels       — YOLO class labels, FTS+trgm indexed
 scene_description — BLIP/Florence-2 caption, FTS+trgm indexed
 clip_embedding — vector(512), HNSW indexed
 face_count | face_names
+latitude | longitude | named_place (FK → NamedPlace, optional)
 status (pending/processing/ready/failed)
 visibility (public/private)
 ```
 
-### 3.7 SpeakerIdentity
+### 3.7 NamedPlace
+
+```
+name | slug (unique) | latitude | longitude
+radius_meters | color (hex) | description (optional)
+created_by (FK User) | created_at
+```
+
+### 3.8 SpeakerIdentity
 
 ```
 name | is_auto_named | role (speaker/narrator/background)

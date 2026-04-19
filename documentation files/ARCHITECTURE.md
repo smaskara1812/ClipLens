@@ -1,6 +1,6 @@
 # ClipStream — Architecture & Process Documentation
 
-A self-hosted video platform with adaptive streaming, AI-powered search, face recognition, and speech transcription. Runs entirely locally — no cloud APIs, no data sent externally.
+A self-hosted video platform with adaptive streaming, AI-powered search, face recognition, speech transcription, and optional **geotagging / named places**. Core AI runs locally; **address search** on admin maps uses the browser to query **OpenStreetMap Nominatim** (see [Location data, named places & maps](#location-data-named-places--maps)).
 
 ---
 
@@ -12,8 +12,10 @@ A self-hosted video platform with adaptive streaming, AI-powered search, face re
 4. [Video Upload Pipeline — Full Flow](#video-upload-pipeline)
 5. [Search Pipeline — How Queries Work](#search-pipeline)
 6. [Database Models](#database-models)
-7. [Configuration Reference](#configuration-reference)
-8. [Directory Structure](#directory-structure)
+7. [Location data, named places & maps](#location-data-named-places--maps)
+8. [Configuration Reference](#configuration-reference)
+9. [Directory Structure](#directory-structure)
+10. [Running the Project](#running-the-project)
 
 ---
 
@@ -338,7 +340,7 @@ Click a chip → video seeks directly to that moment
 
 | Model | Purpose |
 |-------|---------|
-| `Video` | Core video record — title, file, status, visibility, category |
+| `Video` | Core video record — title, file, status, visibility, category; optional `latitude`, `longitude`, `named_place` |
 | `Channel` | Creator channel — name, slug, avatar, banner |
 | `VideoFrame` | One row per extracted frame — labels, description, CLIP embedding |
 | `VideoSegment` | One row per Whisper speech segment — text, start/end seconds |
@@ -354,8 +356,27 @@ Click a chip → video seeks directly to that moment
 | `WatchTimeEntry` | Watch time analytics |
 | `Notification` | User notification records |
 | `Category` | Video categories for grouping |
+| `Photo` | Image asset — same AI fields as frames; optional `latitude`, `longitude`, `named_place` |
+| `NamedPlace` | Curated location — name, unique slug, lat/lng, radius (metres), colour, description |
 | `EndScreen` | End screen card overlays |
 | `VideoChapter` | Chapter markers |
+
+---
+
+## Location data, named places & maps
+
+**Purpose:** Group and discover photos and videos by real-world site, not only by channel or search text.
+
+| Piece | Role |
+|-------|------|
+| `NamedPlace` | Canonical row per site (coordinates + radius used for auto-assignment rules in the app). |
+| `Video` / `Photo` | Optional GPS columns and optional FK to `NamedPlace`. |
+| `/named-places/` | Editor+superadmin UI — Leaflet map, CRUD, photo/video counts, inline geocoding search. |
+| `/media/map/` | Combined map + optional **grouped-by-place** grid; API `GET /api/media/map-markers/`. |
+| `/places/<slug>/` | Public-style browse page for all media at one `NamedPlace`. |
+| Search | Main results **Places** tab; `/api/search/suggest/` can return place rows with disambiguating subtitle. |
+
+**Roles:** `categories_manage` and `named_places` use `@editor_required`. User management, commands, and storage remain superadmin-only; the shared admin tab component only renders superadmin tabs for users who pass `is_superadmin` in template context.
 
 ---
 

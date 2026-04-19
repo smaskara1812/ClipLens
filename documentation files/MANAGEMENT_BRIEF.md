@@ -64,7 +64,12 @@ Every uploaded photo is automatically:
   - "All photos featuring the sales team"
 - Share albums via a private link
 
-### 6. Live Subtitle Editing
+### 6. Named places & media map
+- Define **named locations** (sites, offices, venues) with a map radius so photos and videos with GPS can be grouped and auto-tagged where appropriate.
+- **Media map** — browse geotagged photos and videos together; optional grouped view by place.
+- **Search** — dedicated **Places** tab and smarter autocomplete when several locations share a similar name.
+
+### 7. Live Subtitle Editing
 Videos get auto-generated subtitles. Editors can refine them in a built-in web editor
 and republish — no external tools required.
 

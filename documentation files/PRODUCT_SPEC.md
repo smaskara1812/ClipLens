@@ -9,7 +9,7 @@
 
 ## 1. Vision
 
-ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, and visual semantics.w
+ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, speaker identities, visual semantics, and **named geographic places** (where GPS metadata exists).
 
 ---
 
@@ -74,11 +74,12 @@ ClipStream implements a **four-layer search stack** over every piece of processe
 - Threshold configurable (`CLIP_SIMILARITY_THRESHOLD`, default 0.20)
 - Caps: 250 video frames, 50 photos per query
 
-#### Layer 4 — Structural (faces, channels, playlists)
+#### Layer 4 — Structural (faces, channels, playlists, places)
 
 - Face identity name search across all DetectedFace records, grouped by person then video
 - Channel name and playlist title fuzzy search
-- Results grouped into tabbed UI: All / Videos / People / Scenes / Speech / Channels / Playlists / Photos
+- Named place name/description search → **Places** tab and `/places/<slug>/` pages
+- Results grouped into tabbed UI: All / Videos / People / Scenes / Speech / Channels / Playlists / Photos / **Places** (named locations; links disambiguate similar place names)
 
 #### Filter propagation
 
@@ -93,7 +94,15 @@ Photos are first-class assets alongside videos:
 - **Detail** (`/photos/<id>/`) — full image viewer with AI metadata sidebar; polls for processing completion
 - **Search integration** — photos appear in the Photos tab of the main search results
 
-### 2.5 Face Recognition & Identity Management
+### 2.5 Named places, geolocation & media map
+
+- **`NamedPlace`** — Curated sites (name, unique auto-deduped **slug**, coordinates, radius in metres, optional description, map colour). **Photo** and **Video** rows may store `latitude`, `longitude`, and optional `named_place`; bulk assignment can attach items inside a place’s radius.
+- **Named Places** (`/named-places/`) — Editors and superadmins. Leaflet map, inline address search (browser calls **OpenStreetMap Nominatim** for geocoding), counts of photos and videos per place.
+- **Media Map** (`/media/map/`) — All geotagged photos and videos on one map; **Map** or **Grouped** (by named place) view; optional map-only light/dark theme (`localStorage`). **Place detail** (`/places/<slug>/`) lists all media for one place.
+- **Search** — Top search suggestions can include places (with disambiguating text). Main search results include a **Places** tab.
+- **Admin navigation** — Shared tab bar across Users (`/admin-panel/`), Categories, Named Places, Commands, and Storage. Superadmins see every tab; editors only **Categories** and **Named Places** (no dead links to superadmin-only pages).
+
+### 2.6 Face Recognition & Identity Management
 
 - InsightFace `buffalo_l` model (ArcFace) runs per frame and per photo
 - Detected faces are clustered per-video using greedy cosine similarity (threshold: 0.35 for within-video clustering)
@@ -114,6 +123,7 @@ original_file | hls_path | thumbnail
 duration | file_size | resolution | available_qualities
 status (pending/processing/ready/failed)
 visibility (public/private/subscribers_only)
+latitude | longitude | named_place (FK → NamedPlace, optional)
 ```
 
 ### 3.2 VideoFrame (one per sampled frame)
@@ -156,8 +166,17 @@ labels       — YOLO class labels, FTS+trgm indexed
 scene_description — BLIP/Florence-2 caption, FTS+trgm indexed
 clip_embedding — vector(512), HNSW indexed
 face_count | face_names
+latitude | longitude | named_place (FK → NamedPlace, optional)
 status (pending/processing/ready/failed)
 visibility (public/private)
+```
+
+### 3.7 NamedPlace
+
+```
+name | slug (unique) | latitude | longitude
+radius_meters | color (hex) | description (optional)
+created_by (FK User) | created_at
 ```
 
 ---

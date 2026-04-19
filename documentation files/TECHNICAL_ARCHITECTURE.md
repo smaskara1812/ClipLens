@@ -429,6 +429,8 @@ player_page() view
          ├─► Photo.title/tags/labels/scene_description ── FTS + fuzzy → photos tab
          │   Photo.clip_embedding ── HNSW (semantic=1) → photos tab
          │
+         ├─► NamedPlace.name / description ── icontains → places tab + suggest API
+         │
          └─► Channel.name, Playlist.title ── fuzzy → channels/playlists tab
 ```
 
@@ -449,4 +451,15 @@ FUZZY_SEARCH_ENABLED      = True          # enable pg_trgm fuzzy search
 FUZZY_SEARCH_SIMILARITY_THRESHOLD = 0.22  # trigram similarity threshold (0–1)
 YOLO_MODEL                = 'yolov8n'    # YOLO model name (without .pt)
 ```
+
+---
+
+## 11. Geolocation & named places (application layer)
+
+Location features are mostly **relational and HTTP**, not extra vector indexes:
+
+- **`NamedPlace`** — one row per curated site (`slug` unique; `latitude`, `longitude`, `radius_meters`).
+- **`Video` / `Photo`** — optional `latitude`, `longitude`, optional `named_place_id` FK; B-tree indexes on coordinates support map queries and proximity assignment.
+- **Map UI** — Leaflet on `/media/map/` and `/named-places/`; marker payloads from `/api/media/map-markers/` (combined media) and place CRUD via `/api/named-places/`.
+- **Search** — `NamedPlace` name/description matches feed the main search **Places** tab and `/api/search/suggest/` (deduped by slug with human-readable disambiguation).
 

@@ -33,6 +33,7 @@ ClipStream is not:
 | "I need all scenes featuring John Doe across every asset"                | InsightFace ArcFace embeddings + greedy identity clustering                        |
 | "I need to search my photo library the same way I search videos"         | Unified DAM pipeline — photos go through the same YOLO/BLIP/CLIP/InsightFace stack |
 | "My search is returning garbage with minor typos"                        | pg_trgm trigram fuzzy matching GIN-indexed on every text field                     |
+| "I need everything shot at Site A vs Site B"                             | **Named places** with GPS on photos/videos, **media map**, grouped-by-place browse, and **place detail** pages (`/places/<slug>/`)                 |
 
 
 ---
@@ -86,6 +87,7 @@ ClipStream is not:
 - **Semantic CLIP** — text query → CLIP text encoder → HNSW ANN on `clip_embedding`
 - All three are combined per search, results merged and deduped in Python
 - Same channel / category / duration / date filters applied to AI sub-searches
+- **Geolocation** — `Photo` and `Video` can store latitude, longitude, and an optional `NamedPlace` link. Editors maintain places at `/named-places/`; authenticated users can open `/media/map/` for a combined photo+video map and grouped-by-place view, and `/places/<slug>/` for a single place’s media. Search includes a **Places** tab and place hints in autocomplete.
 
 ---
 

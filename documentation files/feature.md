@@ -61,6 +61,16 @@ Search merges several signals so one query can surface **moments** across the li
 
 ---
 
+## Location, places, and maps
+
+- **Named places** — Define sites (offices, plants, venues) with coordinates, a catchment **radius**, and a stable **URL slug** (auto-generated from the name, with numeric suffixes when names collide). Photos and videos can be geotagged and linked to a place; proximity rules can bulk-assign items inside the radius.
+- **Media map** (`/media/map/`) — One map for **photos and videos** that have coordinates. Switch between a traditional **map** view and a **grouped** view (sections per named place, similar to “Memories by location” in consumer photo apps), with deep links to a **place page** for the full set of assets at that site.
+- **Place pages** (`/places/<slug>/`) — Single destination to review every photo and video tied to a named place.
+- **Search** — A **Places** tab on the main search results lists matching named places (with disambiguation when names are similar). Autocomplete can suggest places with short extra context (description or coordinates).
+- **Privacy note for geocoding** — Creating or moving pins via address search uses the browser to call **OpenStreetMap Nominatim** (query text leaves your network for that request unless you self-host an alternative).
+
+---
+
 ## Personalization & retention
 
 - **Watch history** and **resume progress** — Pick up where viewers left off.
@@ -71,22 +81,24 @@ Search merges several signals so one query can surface **moments** across the li
 
 ## Administration & governance
 
-- **User management** — Web **admin panel** paths plus APIs for user-oriented admin tasks (e.g. enable/disable users where implemented).
-- **Category administration** — Manage taxonomy from the admin UI.
+- **User management** — Superadmins: `/admin-panel/` (users), `/admin-panel/commands/`, `/admin-panel/storage/`.
+- **Category administration** — `/admin-panel/categories/` — available to **editors** and superadmins.
+- **Named places** — `/named-places/` — same **editor** access as categories; map + table for place CRUD and media counts.
+- **Consistent admin UI** — Those pages share one **tabbed admin header** (Users, Categories, Named Places, Commands, Storage). Editors only see tabs for routes they are allowed to open, avoiding broken navigation.
 - **Configurable analysis** — Operators can tune or disable heavy steps (e.g. frame analysis, CLIP, face pipeline, Whisper size) via environment settings for cost/performance tradeoffs.
 
 ---
 
 ## APIs & extensibility
 
-- **REST APIs** — Broad coverage for videos, channels, playlists, comments, faces, frames, subtitles, notifications, and admin—suitable for **custom frontends**, automation, or integration with internal tools.
+- **REST APIs** — Broad coverage for videos, channels, playlists, comments, faces, frames, subtitles, notifications, admin, **named places** (`/api/named-places/`), and **map markers** (`/api/media/map-markers/`) — suitable for **custom frontends**, automation, or integration with internal tools.
 - **Health endpoint** — Simple **health check** for monitoring and load balancers.
 
 ---
 
 ## Technical foundation (for IT / security briefings)
 
-- **Stack:** Django, Django REST Framework, Celery, Redis, MySQL (configurable), FFmpeg, HLS.
+- **Stack:** Django, Django REST Framework, Celery, Redis, PostgreSQL (typical deployment; DB is configurable), FFmpeg, HLS.
 - **Deployment model:** Self-hosted; async workers handle encoding, transcription, and analysis queues.
 - **Authentication:** Session-based web login (typical for single-domain browser apps); embed behavior documented separately for LMS scenarios.
 
