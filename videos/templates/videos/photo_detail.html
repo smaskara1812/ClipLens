@@ -239,6 +239,17 @@
         Download
       </a>
       {% endif %}
+      {% if is_photo_owner and photo.file and photo.status != 'processing' %}
+      <button type="button"
+              class="btn btn-ghost btn-sm"
+              style="display:inline-flex;align-items:center;gap:5px;"
+              onclick="openPhotoUpscaleModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;">
+          <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+        </svg>
+        Upscale
+      </button>
+      {% endif %}
       {% if request.user.is_authenticated %}
       <button id="archiveBtn"
               class="btn btn-ghost btn-sm"
@@ -420,6 +431,60 @@
 
     <div class="divider"></div>
 
+    {% if photo.named_place %}
+    <div class="info-section">
+      <div class="info-label">Location</div>
+      <div class="info-text">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;color:var(--accent);">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        <a href="{% url 'photo_library' %}?place={{ photo.named_place.slug }}"
+           style="color:var(--accent);text-decoration:none;font-weight:600;">{{ photo.named_place.name }}</a>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if is_photo_owner %}
+    <div class="info-section" id="locationEditSection">
+      <div class="info-label" style="display:flex;align-items:center;justify-content:space-between;">
+        Named Place
+        <span style="font-size:10px;color:var(--text-subtle);">assign or override</span>
+      </div>
+      <select id="namedPlaceSelect"
+              style="width:100%;margin-top:6px;background:var(--surface-2);border:1px solid var(--border-2);
+                     border-radius:var(--radius-sm);color:var(--text);font-size:13px;padding:6px 10px;
+                     outline:none;font-family:inherit;"
+              onchange="setNamedPlace(this.value)">
+        <option value="">— None —</option>
+        <!-- populated by JS -->
+      </select>
+
+      <div style="margin-top:12px;">
+        <div class="info-label">Manual Location</div>
+        <div style="display:flex;gap:6px;margin-top:4px;">
+          <input type="number" id="manualLat" placeholder="Latitude" step="0.000001"
+                 style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;
+                        outline:none;font-family:inherit;"
+                 value="{{ photo.latitude|default:'' }}" />
+          <input type="number" id="manualLng" placeholder="Longitude" step="0.000001"
+                 style="flex:1;background:var(--surface-2);border:1px solid var(--border-2);
+                        border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:5px 8px;
+                        outline:none;font-family:inherit;"
+                 value="{{ photo.longitude|default:'' }}" />
+          <button class="btn btn-ghost btn-sm" onclick="saveManualLocation()"
+                  style="white-space:nowrap;font-size:12px;">Set</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-subtle);margin-top:4px;">
+          Set GPS coordinates manually — named place will be auto-assigned if within radius.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="divider"></div>
+
     <div class="info-section">
       <div class="info-label">Uploaded</div>
       <div class="info-text">{{ photo.created_at|date:"N j, Y" }}{% if photo.uploaded_by %} by {{ photo.uploaded_by }}{% endif %}</div>
@@ -427,15 +492,117 @@
   </div>
 </div>
 
+{% if is_photo_owner and photo.file %}
+<div class="modal-backdrop" id="photoUpscaleBackdrop" onclick="photoUpscaleBackdropClick(event)" style="display:none;z-index:1200;">
+  <div class="modal" style="max-width:440px;" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">Upscale image</div>
+      <button type="button" class="modal-close" onclick="closePhotoUpscaleModal()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="padding:18px 22px;">
+      <p style="font-size:12px;color:var(--text-muted);line-height:1.55;margin:0 0 12px;">
+        High-quality Lanczos resize to a standard long-edge size (replaces the stored file), then AI analysis runs again.
+      </p>
+      <label class="w-label" for="photoUpscaleSelect">Target preset</label>
+      <select id="photoUpscaleSelect" class="w-input" style="width:100%;margin-top:6px;">
+        <option value="">Loading…</option>
+      </select>
+      <div id="photoUpscaleStatus" style="font-size:12px;margin-top:10px;min-height:18px;color:var(--text-muted);"></div>
+    </div>
+    <div class="modal-footer" style="padding:12px 20px;">
+      <button type="button" class="btn btn-secondary" onclick="closePhotoUpscaleModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="photoUpscaleGoBtn" onclick="startPhotoUpscale()" disabled>Start upscale</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 // Archive toggle
 const _photoId = '{{ photo.id }}';
 let _isArchived = {{ photo.is_archived|yesno:'true,false' }};
+const CURRENT_PLACE_ID = {{ photo.named_place_id|default:'null' }};
 
 function getCsrfToken() {
   const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
   return v ? v[2] : '';
 }
+
+{% if is_photo_owner and photo.file %}
+async function openPhotoUpscaleModal() {
+  const bd = document.getElementById('photoUpscaleBackdrop');
+  const sel = document.getElementById('photoUpscaleSelect');
+  const st = document.getElementById('photoUpscaleStatus');
+  const go = document.getElementById('photoUpscaleGoBtn');
+  if (!bd || !sel) return;
+  bd.style.display = 'flex';
+  sel.innerHTML = '<option value="">Loading…</option>';
+  if (go) go.disabled = true;
+  if (st) { st.style.color = 'var(--text-muted)'; st.textContent = ''; }
+  try {
+    const r = await fetch('{{ SITE_URL }}/api/photos/' + _photoId + '/upscale/presets/', { credentials: 'include' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed to load presets');
+    sel.innerHTML = '';
+    let any = false;
+    (d.presets || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.label + ' — long edge ' + p.long_edge + ' px';
+      opt.disabled = !p.available;
+      if (p.available) any = true;
+      sel.appendChild(opt);
+    });
+    if (!any) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Already at or above the top preset';
+      sel.appendChild(opt);
+    } else {
+      const first = [...sel.options].find(o => !o.disabled && o.value);
+      if (first) sel.value = first.value;
+    }
+    if (go) go.disabled = !any;
+    if (st && d.current_long_edge) st.textContent = 'Current long edge: ' + d.current_long_edge + ' px';
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error</option>';
+    if (st) { st.style.color = '#ef4444'; st.textContent = e.message || String(e); }
+  }
+}
+
+function closePhotoUpscaleModal() {
+  const bd = document.getElementById('photoUpscaleBackdrop');
+  if (bd) bd.style.display = 'none';
+}
+
+function photoUpscaleBackdropClick(ev) {
+  if (ev.target && ev.target.id === 'photoUpscaleBackdrop') closePhotoUpscaleModal();
+}
+
+async function startPhotoUpscale() {
+  const sel = document.getElementById('photoUpscaleSelect');
+  const st = document.getElementById('photoUpscaleStatus');
+  const preset = sel && sel.value;
+  if (!preset) return;
+  if (st) { st.style.color = 'var(--text-muted)'; st.textContent = 'Starting…'; }
+  try {
+    const r = await fetch('{{ SITE_URL }}/api/photos/' + _photoId + '/upscale/', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ preset }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed');
+    closePhotoUpscaleModal();
+    location.reload();
+  } catch (e) {
+    if (st) { st.style.color = '#ef4444'; st.textContent = e.message || String(e); }
+  }
+}
+{% endif %}
 
 async function toggleDetailArchive() {
   const btn = document.getElementById('archiveBtn');
@@ -576,6 +743,56 @@ async function toggleDetailArchive() {
     }
   });
 })();
+{% endif %}
+
+// ── Named Places ────────────────────────────────────────────────────────────
+{% if is_photo_owner %}
+(async function loadNamedPlaces() {
+  const sel = document.getElementById('namedPlaceSelect');
+  if (!sel) return;
+  try {
+    const r = await fetch('/api/named-places/');
+    if (!r.ok) return;
+    const places = await r.json();
+    places.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name + (p.photo_count ? ` (${p.photo_count} photos)` : '');
+      if (p.id === CURRENT_PLACE_ID) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* ignore */ }
+})();
+
+window.setNamedPlace = async function(placeId) {
+  const r = await fetch(`/api/photos/${_photoId}/`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ named_place_id: placeId ? parseInt(placeId) : null }),
+  });
+  if (r.ok) {
+    if (window.fsTost) fsTost('success', placeId ? 'Place assigned' : 'Place removed');
+  }
+};
+
+window.saveManualLocation = async function() {
+  const lat = parseFloat(document.getElementById('manualLat').value);
+  const lng = parseFloat(document.getElementById('manualLng').value);
+  if (isNaN(lat) || isNaN(lng)) {
+    if (window.fsTost) fsTost('error', 'Enter valid latitude and longitude');
+    return;
+  }
+  const r = await fetch(`/api/photos/${_photoId}/`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ latitude: lat, longitude: lng }),
+  });
+  if (r.ok) {
+    if (window.fsTost) fsTost('success', 'Location saved — place auto-assigned if within radius');
+    // Reload to show updated named place
+    setTimeout(() => location.reload(), 1200);
+  }
+};
 {% endif %}
 
 // EXIF panel + map (must exist even when photo is "ready")

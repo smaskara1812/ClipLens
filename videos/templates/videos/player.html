@@ -610,6 +610,14 @@
 
       <div class="filter-divider"></div>
 
+      <!-- Orientation -->
+      <select class="filter-select {% if current_orientation %}active{% endif %}" onchange="applySelect('orientation', this.value)" title="Filter by orientation">
+        <option value=""          {% if not current_orientation %}selected{% endif %}>⬜ Orientation: Any</option>
+        <option value="landscape" {% if current_orientation == 'landscape' %}selected{% endif %}>🖥 Landscape</option>
+        <option value="portrait"  {% if current_orientation == 'portrait'  %}selected{% endif %}>📱 Portrait</option>
+        <option value="square"    {% if current_orientation == 'square'    %}selected{% endif %}>🔲 Square</option>
+      </select>
+
       <!-- Duration -->
       <select class="filter-select {% if current_duration %}active{% endif %}" onchange="applySelect('duration', this.value)" title="Filter by duration">
         <option value=""       {% if not current_duration %}selected{% endif %}>⏱ Duration: Any</option>
@@ -661,7 +669,7 @@
       {% endif %}
 
       <!-- Clear filters (shown when any filter is active) -->
-      {% if current_sort or current_duration or current_date or current_cat or current_event_slug %}
+      {% if current_sort or current_duration or current_date or current_cat or current_event_slug or current_orientation %}
       <div class="filter-divider"></div>
       <button class="filter-clear" onclick="clearFilters()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

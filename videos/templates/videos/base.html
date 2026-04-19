@@ -6,11 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>{% block title %}ClipLens{% endblock %}</title>
   {% block meta %}{% endblock %}
-  <!-- Favicons — always use dark variant (matches app's default dark theme) -->
-  <link rel="icon" type="image/x-icon"       href="{% static 'videos/logos/favicon-dark.ico' %}">
-  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'videos/logos/favicon-32x32-dark.png' %}">
-  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'videos/logos/favicon-16x16-dark.png' %}">
-  <link rel="apple-touch-icon"               href="{% static 'videos/logos/apple-touch-icon.png' %}">
+  <!-- Favicons — PNG listed first so Safari picks it up reliably -->
+  <link rel="icon"           type="image/png" sizes="32x32"  href="{% static 'videos/logos/favicon-32x32-dark.png' %}">
+  <link rel="icon"           type="image/png" sizes="16x16"  href="{% static 'videos/logos/favicon-16x16-dark.png' %}">
+  <link rel="shortcut icon"  type="image/x-icon"             href="{% static 'videos/logos/favicon-dark.ico' %}">
+  <link rel="apple-touch-icon" sizes="180x180"               href="{% static 'videos/logos/apple-touch-icon.png' %}">
+  <link rel="icon"           type="image/png" sizes="192x192" href="{% static 'videos/logos/android-chrome-192.png' %}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -614,6 +615,7 @@
       channel: '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
       person:  '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a9 9 0 0 1 13 0"/></svg>',
       photo:   '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+      place:   '<svg class="fs-suggest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
     };
 
     function closeSuggest() {
@@ -641,8 +643,14 @@
     window._fsSuggestPick = function(idx) {
       const item = _items[idx];
       if (!item) return;
-      input.value = item.text;
       closeSuggest();
+      // Place suggestions carry a direct URL (e.g. /photos/?place=salaya).
+      // Navigate there instead of running a generic text search.
+      if (item.url) {
+        window.location.href = item.url;
+        return;
+      }
+      input.value = item.text;
       form.submit();
     };
 

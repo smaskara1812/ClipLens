@@ -27,6 +27,7 @@
     transition: all var(--transition); outline: none;
   }
   .filter-select:hover, .filter-select:focus { border-color: var(--accent); color: var(--text); }
+  .filter-select.active { border-color: var(--accent); color: var(--accent); background-color: var(--accent-soft); }
 
   /* Photo grid */
   .photo-grid {
@@ -300,7 +301,25 @@
       <option value="views"  {% if current_sort == 'views'  %}selected{% endif %}>Most viewed</option>
     </select>
 
-    {% if current_q or current_cat or current_sort %}
+    <select name="orientation" class="filter-select" onchange="this.form.submit()">
+      <option value=""          {% if not current_orientation %}selected{% endif %}>⬜ Any orientation</option>
+      <option value="landscape" {% if current_orientation == 'landscape' %}selected{% endif %}>🖥 Landscape</option>
+      <option value="portrait"  {% if current_orientation == 'portrait'  %}selected{% endif %}>📱 Portrait</option>
+      <option value="square"    {% if current_orientation == 'square'    %}selected{% endif %}>🔲 Square</option>
+    </select>
+
+    {% if named_places %}
+    <select name="place" class="filter-select {% if current_place %}active{% endif %}" onchange="this.form.submit()">
+      <option value="">📍 Place: All</option>
+      {% for pl in named_places %}
+      <option value="{{ pl.slug }}" {% if current_place == pl.slug %}selected{% endif %}>
+        {{ pl.name }} ({{ pl.photo_count }})
+      </option>
+      {% endfor %}
+    </select>
+    {% endif %}
+
+    {% if current_q or current_cat or current_sort or current_orientation or current_place %}
     <a href="{% url 'photo_library' %}" class="btn btn-ghost btn-sm" style="border-radius:999px;">Clear</a>
     {% endif %}
   </form>

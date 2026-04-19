@@ -55,9 +55,19 @@ urlpatterns = [
     # ── API: Channel Links ──
     path('api/channel-links/<int:link_id>/', views.channel_link_detail),
 
+    # ── Named Places ──
+    path('named-places/',                    views.named_places_page, name='named_places'),
+    path('api/named-places/',                views.named_place_list),
+    path('api/named-places/<int:place_id>/', views.named_place_detail),
+
     # ── API: Categories ──
     path('api/categories/', views.category_list),
     path('api/categories/<int:category_id>/', views.category_detail),
+
+    # ── API: Moment Categories ──
+    path('api/moment-categories/', views.moment_category_list),
+    path('api/moment-categories/<int:cat_id>/', views.moment_category_detail),
+
 
     # ── API: Videos ──
     path('api/videos/',                                    views.video_list),
@@ -66,7 +76,10 @@ urlpatterns = [
     path('api/videos/<uuid:video_id>/view/',               views.record_view),
     path('api/videos/<uuid:video_id>/status/',             views.video_status),
     path('api/videos/<uuid:video_id>/reprocess/',          views.reprocess_video),
+    path('api/videos/<uuid:video_id>/upscale/presets/',     views.video_upscale_presets),
+    path('api/videos/<uuid:video_id>/upscale/',             views.video_upscale_start),
     path('api/videos/<uuid:video_id>/stream/',             views.stream_playlist),
+    path('api/videos/<uuid:video_id>/download/',           views.video_download),
     path('api/videos/<uuid:video_id>/thumbnail/',          views.video_update_thumbnail),
     path('api/videos/<uuid:video_id>/like/',               views.toggle_like),
     path('api/videos/<uuid:video_id>/save/',               views.toggle_save),
@@ -162,6 +175,8 @@ urlpatterns = [
     path('api/photos/<uuid:photo_id>/',                                    views.photo_detail_api),
     path('api/photos/<uuid:photo_id>/status/',                             views.photo_status),
     path('api/photos/<uuid:photo_id>/archive/',                            views.photo_toggle_archive),
+    path('api/photos/<uuid:photo_id>/upscale/presets/',                     views.photo_upscale_presets),
+    path('api/photos/<uuid:photo_id>/upscale/',                             views.photo_upscale_start),
     path('api/photos/<uuid:photo_id>/faces/',                              views.photo_faces_list),
     path('api/photos/<uuid:photo_id>/faces/<int:identity_id>/remove/',     views.photo_face_remove),
 

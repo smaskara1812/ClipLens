@@ -222,6 +222,13 @@
     color: #888;
   }
   [data-theme="dark"] .leaflet-control-attribution a { color: #aaa; }
+
+  /* Named place label on map */
+  .place-label {
+    background: transparent !important; border: none !important; box-shadow: none !important;
+    font-size: 11px; font-weight: 700; color: rgba(255,255,255,.85);
+    white-space: nowrap; pointer-events: none;
+  }
 </style>
 {% endblock %}
 
@@ -249,6 +256,12 @@
       </select>
     </div>
     {% endif %}
+
+    <div class="map-filter-row">
+      <select id="placeFilter" onchange="applyFilter()" style="display:none;">
+        <option value="">All places</option>
+      </select>
+    </div>
 
     <div class="spacer"></div>
 
@@ -376,22 +389,26 @@
     } catch { return ''; }
   }
 
+  // ── Named place circles layer ──
+  let placeCirclesLayer = L.layerGroup().addTo(map);
+
+  // ── Load markers ──
+  let allMarkers = [];
+
   function makePopup(m) {
     const dateStr = m.taken_at ? `<div class="popup-date">${formatDate(m.taken_at)}</div>` : '';
+    const placeStr = m.place_name ? `<div class="popup-date" style="color:var(--accent,#6366f1);">📍 ${m.place_name}</div>` : '';
     const imgHtml = m.thumb
       ? `<img src="${m.thumb}" alt="${m.title}" loading="lazy" />`
       : `<div style="width:100%;height:80px;display:flex;align-items:center;justify-content:center;background:#1c1c24;border-radius:6px;margin-bottom:8px;font-size:24px;">🌍</div>`;
     return `<div class="map-popup">
       ${imgHtml}
       <a href="/photos/${m.id}/">${m.title}</a>
-      ${dateStr}
+      ${dateStr}${placeStr}
     </div>`;
   }
 
-  // ── Load markers ──
-  let allMarkers = [];
-
-  function loadMarkers(channelSlug) {
+  function loadMarkers(channelSlug, placeSlug) {
     const loading = document.getElementById('map-loading');
     const empty   = document.getElementById('map-empty');
     const stat    = document.getElementById('markerStat');
@@ -402,15 +419,45 @@
     stat.style.display = 'none';
 
     cluster.clearLayers();
+    placeCirclesLayer.clearLayers();
     allMarkers = [];
 
-    const url = '/api/photos/map-markers/' + (channelSlug ? `?channel=${channelSlug}` : '');
+    const params = new URLSearchParams();
+    if (channelSlug) params.set('channel', channelSlug);
+    if (placeSlug)   params.set('place',   placeSlug);
+    const url = '/api/photos/map-markers/' + (params.toString() ? '?' + params.toString() : '');
 
     fetch(url)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => {
         loading.classList.add('hidden');
         const markers = data.markers || [];
+        const places  = data.places  || [];
+
+        // Draw named place circles
+        places.forEach(p => {
+          L.circle([p.lat, p.lng], {
+            radius: p.radius,
+            color: p.color, fillColor: p.color, fillOpacity: 0.08,
+            weight: 2, dashArray: '5,5',
+          }).addTo(placeCirclesLayer)
+            .bindTooltip(p.name, { permanent: true, direction: 'center', className: 'place-label' });
+        });
+
+        // Populate place filter dropdown
+        const placeSelect = document.getElementById('placeFilter');
+        if (placeSelect && places.length) {
+          const currentVal = placeSelect.value;
+          placeSelect.style.display = '';
+          // Clear and re-populate options, keep current selection
+          while (placeSelect.options.length > 1) placeSelect.remove(1);
+          places.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.slug; opt.textContent = '📍 ' + p.name;
+            if (p.slug === currentVal) opt.selected = true;
+            placeSelect.appendChild(opt);
+          });
+        }
 
         if (markers.length === 0) {
           empty.classList.add('visible');
@@ -441,15 +488,16 @@
   }
 
   function applyFilter() {
-    const slug = document.getElementById('channelFilter')?.value || '';
-    loadMarkers(slug);
+    const channelSlug = document.getElementById('channelFilter')?.value || '';
+    const placeSlug   = document.getElementById('placeFilter')?.value   || '';
+    loadMarkers(channelSlug, placeSlug);
   }
 
   // Expose for the channel dropdown onchange
   window.applyFilter = applyFilter;
 
   // ── Initial load ──
-  loadMarkers('');
+  loadMarkers('', '');
 
 })();
 </script>

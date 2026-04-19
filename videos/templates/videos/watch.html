@@ -208,6 +208,37 @@
   .mom-cat-strip { display: none; }
   .mom-cat-btn.active .mom-cat-strip { display: block; }
 
+  /* "+ Custom" add-category button — matches mom-cat-btn style but dashed */
+  .mom-cat-add-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 5px; padding: 9px 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1.5px dashed var(--border); background: none;
+    color: var(--text-subtle); font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: border-color .12s, background .12s, color .12s;
+    font-family: inherit; text-align: center; line-height: 1.3; min-width: 0;
+  }
+  .mom-cat-add-btn:hover {
+    border-color: var(--accent); color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+
+  /* Inline custom-category creation form */
+  #customCatForm {
+    display: none; margin-top: 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 12px;
+  }
+  #customCatForm.open { display: block; }
+  .ccf-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .ccf-group { display: flex; flex-direction: column; gap: 4px; }
+  .ccf-label { font-size: 11px; font-weight: 600; color: var(--text-subtle); text-transform: uppercase; letter-spacing: .4px; }
+  .ccf-input { font-size: 13px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+  .ccf-input:focus { outline: none; border-color: var(--accent); }
+  .ccf-emoji { font-size: 20px; width: 44px; text-align: center; cursor: text; }
+  .ccf-color { width: 38px; height: 34px; padding: 2px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; background: var(--surface); }
+  .ccf-actions { display: flex; gap: 6px; margin-top: 8px; }
+
   /* Visibility selector in modal */
   .mom-vis-opt {
     display: flex; align-items: center; gap: 6px;
@@ -308,6 +339,30 @@
   .meta-item svg { width: 14px; height: 14px; }
 
   .action-row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+  /* Download dropdown */
+  .dl-wrap { position: relative; display: inline-flex; }
+  .dl-menu {
+    display: none; position: absolute; bottom: calc(100% + 6px); left: 0;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius); min-width: 160px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); z-index: 50; overflow: hidden;
+  }
+  .dl-menu.open { display: block; }
+  .dl-menu-header {
+    padding: 8px 12px 6px; font-size: 10px; font-weight: 700;
+    color: var(--text-subtle); text-transform: uppercase; letter-spacing: .5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dl-option {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 9px 12px; background: none; border: none;
+    color: var(--text); font-size: 13px; font-family: inherit;
+    cursor: pointer; text-align: left; transition: background .12s;
+    text-decoration: none;
+  }
+  .dl-option:hover { background: var(--accent-soft); color: var(--accent); }
+  .dl-option svg { width: 13px; height: 13px; flex-shrink: 0; }
 
   /* Channel card */
   .channel-card {
@@ -854,12 +909,31 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           Share Link
         </button>
-        {% if video.hls_path %}
-        <button class="btn btn-secondary btn-sm" onclick="copyText('{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}', 'HLS URL copied!')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-          Copy HLS URL
-        </button>
+        {% if video.hls_path or video.original_file %}
+        <div class="dl-wrap" id="dlWrap">
+          <button class="btn btn-ghost btn-sm" onclick="toggleDlMenu(event)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;margin-left:2px;"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="dl-menu" id="dlMenu">
+            <div class="dl-menu-header">Choose quality</div>
+            {% for q in video.qualities_list %}
+            <a class="dl-option" href="/api/videos/{{ video.id }}/download/?quality={{ q }}" download>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              {{ q }}
+            </a>
+            {% endfor %}
+            {% if video.original_file %}
+            <a class="dl-option" href="/api/videos/{{ video.id }}/download/?quality=original" download>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Original file
+            </a>
+            {% endif %}
+          </div>
+        </div>
         {% endif %}
+
         {% if is_owner %}
         <a class="btn btn-ghost btn-sm" href="{% url 'video_xray' video.id %}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"/><path d="M3 6h8"/><path d="M3 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
@@ -929,12 +1003,11 @@
       </div>
       {% endif %}
 
-      <!-- HLS URL -->
+      <!-- HLS URL (internal — not shown in UI) -->
       {% if video.hls_path %}
-      <div class="hls-info">
+      <div class="hls-info" style="display:none;">
         <span class="hls-label">HLS</span>
         <span class="hls-url">{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}</span>
-        <button class="btn btn-sm btn-ghost" onclick="copyText('{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}', 'HLS URL copied!')">Copy</button>
       </div>
 
       <!-- Embed Wizard button -->
@@ -1250,7 +1323,40 @@
             <span class="mom-cat-icon">❓</span>
             <span class="mom-cat-label">Question</span>
           </button>
+          <!-- Custom categories injected here by JS -->
+          {% if is_owner %}
+          <button type="button" class="mom-cat-add-btn" id="showCustomCatFormBtn" onclick="toggleCustomCatForm()">
+            <span style="font-size:18px;line-height:1;">+</span>
+            <span>Custom</span>
+          </button>
+          {% endif %}
         </div>
+
+        {% if is_owner %}
+        <!-- Inline custom category creation form -->
+        <div id="customCatForm">
+          <div class="ccf-row">
+            <div class="ccf-group">
+              <span class="ccf-label">Emoji</span>
+              <input type="text" id="ccfIcon" class="ccf-input ccf-emoji" value="🏷️" maxlength="2" placeholder="🏷️" />
+            </div>
+            <div class="ccf-group" style="flex:1;min-width:100px;">
+              <span class="ccf-label">Name</span>
+              <input type="text" id="ccfName" class="ccf-input" placeholder="e.g. Action Shot" maxlength="50"
+                     onkeydown="if(event.key==='Enter')saveCustomCat(); if(event.key==='Escape')toggleCustomCatForm(false);" />
+            </div>
+            <div class="ccf-group">
+              <span class="ccf-label">Color</span>
+              <input type="color" id="ccfColor" class="ccf-color" value="#8b5cf6" />
+            </div>
+          </div>
+          <div class="ccf-actions">
+            <button class="btn btn-primary btn-sm" onclick="saveCustomCat()">Add</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleCustomCatForm(false)">Cancel</button>
+          </div>
+        </div>
+        {% endif %}
+
       </div>
 
       <!-- Title -->
@@ -1434,6 +1540,27 @@
               <div style="font-size:11px;color:var(--text-muted);line-height:1.5;">Recommended: 16:9,<br>at least 1280×720px</div>
             </div>
           </div>
+        </div>
+        {% endif %}
+
+        {% if is_owner and video.original_file %}
+        <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
+          <label class="w-label">Upscale source file</label>
+          <p style="font-size:11px;color:var(--text-muted);margin:6px 0 10px;line-height:1.5;">
+            Lanczos upscale using a standard preset (long edge), then full stream re-encode.
+            Replaces the uploaded original — existing captions and analysis are not re-run automatically.
+          </p>
+          {% if video.status == 'processing' %}
+          <p style="font-size:12px;color:var(--text-muted);margin:0;">Wait until processing finishes before upscaling.</p>
+          {% else %}
+          <select id="upscalePresetSelect" class="w-input" style="width:100%;margin-bottom:8px;">
+            <option value="">Open this dialog to load presets…</option>
+          </select>
+          <button type="button" class="btn btn-ghost btn-sm" id="upscaleVideoBtn" onclick="startVideoUpscale()" disabled>
+            Start upscale
+          </button>
+          <div id="upscaleVideoStatus" style="font-size:12px;color:var(--text-muted);margin-top:8px;min-height:18px;"></div>
+          {% endif %}
         </div>
         {% endif %}
 
@@ -2235,12 +2362,7 @@
     } catch(e) {}
   }
 
-  function renderMomentMarkers() {
-    if (!momMarkersEl) return;
-    momMarkersEl.innerHTML = '';
-    const dur = videoEl.duration;
-    if (!dur) return;
-  // Category → colour + icon map (mirrors VideoMoment.CATEGORY_COLORS)
+  // Category → colour + icon map — module-scope so custom cats can be added at runtime
   const CAT_META = {
     '':           { color: '#6b7280', icon: '◌' },
     'important':  { color: '#ef4444', icon: '🔴' },
@@ -2252,6 +2374,12 @@
   };
   function catColor(cat) { return (CAT_META[cat] || CAT_META['']).color; }
   function catIcon(cat)  { return (CAT_META[cat] || CAT_META['']).icon;  }
+
+  function renderMomentMarkers() {
+    if (!momMarkersEl) return;
+    momMarkersEl.innerHTML = '';
+    const dur = videoEl.duration;
+    if (!dur) return;
 
     _moments.forEach(m => {
       const pct = (m.timestamp / dur * 100).toFixed(3) + '%';
@@ -2284,6 +2412,93 @@
 
   // Load on page ready
   loadMoments();
+  loadMomentCategories();
+
+  // ── Custom moment categories ───────────────────────────────────────────────
+  async function loadMomentCategories() {
+    try {
+      const r = await fetch('/api/moment-categories/');
+      if (!r.ok) return;
+      const all = await r.json();
+      // Inject custom (non-system) categories into CAT_META and the picker
+      all.filter(c => !c.is_system).forEach(c => {
+        CAT_META[c.key] = { color: c.color, icon: c.icon };
+        _injectCustomCatBtn(c);
+      });
+    } catch(e) {}
+  }
+
+  function _injectCustomCatBtn(c) {
+    const picker = document.getElementById('momCatPicker');
+    if (!picker) return;
+    if (picker.querySelector(`[data-cat="${CSS.escape(c.key)}"]`)) return; // already present
+    const addBtn = document.getElementById('showCustomCatFormBtn');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mom-cat-btn mom-cat-btn-custom';
+    btn.dataset.cat = c.key;
+    btn.style.setProperty('--cat-color', c.color);
+    btn.innerHTML = `<span class="mom-cat-strip"></span><span class="mom-cat-icon">${c.icon}</span><span class="mom-cat-label">${escHtml(c.name)}</span>`;
+    // Long-press / right-click to delete (editors only)
+    {% if is_owner %}
+    btn.title = 'Right-click to delete';
+    btn.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (confirm(`Delete custom category "${c.name}"?`)) deleteCustomCat(c.id, c.key);
+    });
+    {% endif %}
+    // Insert before the "+ Custom" button if it exists
+    addBtn ? picker.insertBefore(btn, addBtn) : picker.appendChild(btn);
+  }
+
+  function toggleCustomCatForm(forceClose) {
+    const form = document.getElementById('customCatForm');
+    if (!form) return;
+    const willOpen = forceClose === false ? false : !form.classList.contains('open');
+    form.classList.toggle('open', willOpen);
+    if (willOpen) setTimeout(() => document.getElementById('ccfName')?.focus(), 50);
+  }
+
+  async function saveCustomCat() {
+    const name  = (document.getElementById('ccfName')?.value || '').trim();
+    const icon  = (document.getElementById('ccfIcon')?.value || '🏷️').trim() || '🏷️';
+    const color = document.getElementById('ccfColor')?.value || '#8b5cf6';
+    if (!name) { document.getElementById('ccfName')?.focus(); return; }
+    try {
+      const r = await fetch('/api/moment-categories/', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN_MOM },
+        body: JSON.stringify({ name, icon, color }),
+      });
+      if (!r.ok) { showToast('error', 'Could not create category'); return; }
+      const c = await r.json();
+      CAT_META[c.key] = { color: c.color, icon: c.icon };
+      _injectCustomCatBtn(c);
+      // Select the new category immediately
+      _resetMomCat(c.key);
+      // Clear form + close
+      document.getElementById('ccfName').value  = '';
+      document.getElementById('ccfIcon').value  = '🏷️';
+      document.getElementById('ccfColor').value = '#8b5cf6';
+      toggleCustomCatForm(false);
+      showToast('success', `Category "${c.name}" added`);
+    } catch(e) { showToast('error', 'Network error'); }
+  }
+
+  async function deleteCustomCat(id, key) {
+    try {
+      const r = await fetch(`/api/moment-categories/${id}/`, {
+        method: 'DELETE', credentials: 'include',
+        headers: { 'X-CSRFToken': CSRF_TOKEN_MOM },
+      });
+      if (r.ok || r.status === 204) {
+        document.getElementById('momCatPicker')?.querySelector(`[data-cat="${key}"]`)?.remove();
+        delete CAT_META[key];
+        if (_selectedCat === key) _resetMomCat('');
+        showToast('success', 'Category deleted');
+      }
+    } catch(e) {}
+  }
 
   // ── Modal open/close ───────────────────────────────────────────────────────
   const momentModal  = document.getElementById('momentModal');
@@ -2593,7 +2808,14 @@
   document.addEventListener('click', () => {
     document.getElementById('qualityMenu')?.classList.remove('open');
     document.getElementById('speedMenu')?.classList.remove('open');
+    document.getElementById('dlMenu')?.classList.remove('open');
   });
+
+  // ── Download dropdown ─────────────────────────────────────────────────────
+  function toggleDlMenu(e) {
+    e.stopPropagation();
+    document.getElementById('dlMenu')?.classList.toggle('open');
+  }
 
   // ── Speed picker ─────────────────────────────────────────────────────────────
   const WATCH_SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -2659,6 +2881,7 @@
   function openEditModal() {
     document.getElementById('editModal').classList.add('open');
     document.getElementById('editStatus').textContent = '';
+    if (typeof loadUpscalePresets === 'function') loadUpscalePresets();
   }
   function closeEditModal() {
     document.getElementById('editModal').classList.remove('open');
@@ -2666,6 +2889,86 @@
   function closeEditBackdrop(e) {
     if (e.target === document.getElementById('editModal')) closeEditModal();
   }
+
+  {% if is_owner and video.original_file %}
+  async function loadUpscalePresets() {
+    const sel = document.getElementById('upscalePresetSelect');
+    const btn = document.getElementById('upscaleVideoBtn');
+    const st = document.getElementById('upscaleVideoStatus');
+    if (!sel || !btn) return;
+    sel.innerHTML = '<option value="">Loading…</option>';
+    btn.disabled = true;
+    if (st) { st.style.color = 'var(--text-muted)'; st.textContent = ''; }
+    try {
+      const r = await fetch('{{ SITE_URL }}/api/videos/{{ video.id }}/upscale/presets/', { credentials: 'include' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed to load presets');
+      sel.innerHTML = '';
+      let any = false;
+      (d.presets || []).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.label + ' — long edge ' + p.long_edge + ' px';
+        opt.disabled = !p.available;
+        if (p.available) any = true;
+        sel.appendChild(opt);
+      });
+      if (!any) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Already at or above the top preset';
+        sel.appendChild(opt);
+      } else {
+        const first = [...sel.options].find(o => !o.disabled && o.value);
+        if (first) sel.value = first.value;
+      }
+      btn.disabled = !any;
+      if (st && d.current_long_edge)
+        st.textContent = 'Current long edge: ' + d.current_long_edge + ' px';
+    } catch (e) {
+      sel.innerHTML = '<option value="">Could not load presets</option>';
+      if (st) { st.style.color = '#ef4444'; st.textContent = e.message || String(e); }
+    }
+  }
+
+  async function startVideoUpscale() {
+    const sel = document.getElementById('upscalePresetSelect');
+    const st = document.getElementById('upscaleVideoStatus');
+    const preset = sel && sel.value;
+    if (!preset) return;
+    if (st) { st.style.color = 'var(--text-muted)'; st.textContent = 'Starting…'; }
+    try {
+      const r = await fetch('{{ SITE_URL }}/api/videos/{{ video.id }}/upscale/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ preset }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Upscale failed');
+      if (st) {
+        st.textContent = 'Processing — refreshing when ready…';
+        st.style.color = 'var(--accent)';
+      }
+      const poll = setInterval(async () => {
+        try {
+          const rs = await fetch('{{ SITE_URL }}/api/videos/{{ video.id }}/status/', { credentials: 'include' });
+          const sd = await rs.json();
+          if (sd.status === 'ready') { clearInterval(poll); location.reload(); }
+          if (sd.status === 'failed') {
+            clearInterval(poll);
+            if (st) {
+              st.style.color = '#ef4444';
+              st.textContent = sd.processing_error || 'Processing failed.';
+            }
+          }
+        } catch (_) {}
+      }, 4000);
+    } catch (e) {
+      if (st) { st.style.color = '#ef4444'; st.textContent = e.message || String(e); }
+    }
+  }
+  {% endif %}
 
   function previewWatchThumb(input) {
     if (!input.files[0]) return;

@@ -1038,6 +1038,38 @@
       <pre class="cmd-output" id="out-rename_auto_identities"></pre>
     </div>
 
+    <!-- ═══ 6. Photos & Location ══════════════════════════════════════════════ -->
+    <div class="cmd-section-heading">📸 Photos &amp; Location</div>
+
+    <!-- ── backfill_photo_gps ─────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-backfill_photo_gps">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(59,130,246,.12);">🌍</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Backfill Photo GPS Coordinates</div>
+          <div class="cmd-desc">Reads <code>GPSInfo</code> from stored EXIF data for photos that have GPS in their EXIF JSON but no <code>latitude</code>/<code>longitude</code> in the DB. Populates the indexed geo fields and re-runs Named Place assignment. Run this once after upgrading to the Named Places feature.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-db">DB-only · No inference</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <label class="toggle-row"><input type="checkbox" id="backfill_photo_gps-dry_run" /> Dry Run (preview only, no saves)</label>
+        <label class="toggle-row"><input type="checkbox" id="backfill_photo_gps-reassign_all" /> Re-assign all geotagged photos to Named Places (phase 2)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('backfill_photo_gps', {
+          dry_run:      document.getElementById('backfill_photo_gps-dry_run').checked || undefined,
+          reassign_all: document.getElementById('backfill_photo_gps-reassign_all').checked || undefined,
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run
+        </button>
+        <span class="cmd-dryrun-hint">Safe to run multiple times — skips photos that already have lat/lng.</span>
+      </div>
+      <pre class="cmd-output" id="out-backfill_photo_gps"></pre>
+    </div>
+
   </div><!-- /.cmd-grid -->
 </div>
 

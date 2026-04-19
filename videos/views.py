@@ -20,7 +20,7 @@ from django.contrib.auth.models import User
 from django.apps import apps
 from django.db import connection
 from django.db.models import Q, Sum, Count, F
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
@@ -36,7 +36,7 @@ from .models import (
     Playlist, PlaylistItem, WatchHistory, SavedVideo,
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
     FaceIdentity, FaceIdentityNickname, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
-    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event,
+    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event, NamedPlace,
 )
 from .serializers import (
     VideoListSerializer, VideoDetailSerializer, VideoUploadSerializer,
@@ -48,7 +48,8 @@ from .serializers import (
     EndScreenSerializer, SubtitleSerializer, AudioTrackSerializer, VideoFrameSerializer,
     FaceIdentitySerializer, DetectedFaceSerializer,
 )
-from .services import process_video
+from .services import process_video, get_video_metadata
+from .upscale import UPSCALE_PRESETS, preset_by_id, long_edge_from_dimensions
 from . import tasks as _tasks
 
 
@@ -214,6 +215,48 @@ def _dispatch_process_video(video_id: str):
         ).start()
 
 
+def _dispatch_upscale_video(video_id: str, target_long_edge: int) -> None:
+    try:
+        _tasks.upscale_video_task.apply_async(
+            args=[str(video_id), int(target_long_edge)],
+            queue='processing',
+        )
+        _task_logger.info('Dispatched upscale_video_task for %s → %s', video_id, target_long_edge)
+    except Exception as exc:
+        _task_logger.warning('Celery unavailable (%s), sync thread upscale for %s', exc, video_id)
+
+        def _run():
+            from .upscale import run_video_upscale_pipeline
+
+            try:
+                run_video_upscale_pipeline(str(video_id), int(target_long_edge))
+            except Exception as inner:
+                _task_logger.error('upscale_video sync failed for %s: %s', video_id, inner)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
+def _dispatch_upscale_photo(photo_id: str, target_long_edge: int) -> None:
+    try:
+        _tasks.upscale_photo_task.apply_async(
+            args=[str(photo_id), int(target_long_edge)],
+            queue='processing',
+        )
+        _task_logger.info('Dispatched upscale_photo_task for %s → %s', photo_id, target_long_edge)
+    except Exception as exc:
+        _task_logger.warning('Celery unavailable (%s), sync thread upscale for %s', exc, photo_id)
+
+        def _run():
+            from .upscale import run_photo_upscale_pipeline
+
+            try:
+                run_photo_upscale_pipeline(str(photo_id), int(target_long_edge))
+            except Exception as inner:
+                _task_logger.error('upscale_photo sync failed for %s: %s', photo_id, inner)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
 # ─── Helper decorators ───────────────────────────────────────────────────────
 
 def api_login_required(view_func):
@@ -322,6 +365,13 @@ def _is_video_owner(user, video) -> bool:
     if not user or not user.is_authenticated or not video.channel:
         return False
     return _is_channel_owner(user, video.channel)
+
+
+def _is_photo_owner(user, photo) -> bool:
+    """True if the user can manage the channel this photo belongs to."""
+    if not user or not user.is_authenticated or not photo.channel:
+        return False
+    return _is_channel_owner(user, photo.channel)
 
 
 # ─── Auth / onboarding helpers ───────────────────────────────────────────────
@@ -505,6 +555,26 @@ def player_page(request):
         elif date_filter == 'year':
             videos = videos.filter(created_at__gte=now - datetime.timedelta(days=365))
 
+    # ── Orientation filter (landscape / portrait / square) ───────────────────
+    orientation_filter = request.GET.get('orientation', '').strip()
+    if orientation_filter in ('landscape', 'portrait', 'square'):
+        from django.db.models import IntegerField as _IntF
+        from django.db.models.expressions import RawSQL
+        # SPLIT_PART works on PostgreSQL; fall back silently for other DBs
+        try:
+            videos = videos.exclude(resolution='').exclude(resolution__isnull=True).annotate(
+                _vw=RawSQL("CAST(NULLIF(SPLIT_PART(resolution,'x',1),'') AS INTEGER)", [], output_field=_IntF()),
+                _vh=RawSQL("CAST(NULLIF(SPLIT_PART(resolution,'x',2),'') AS INTEGER)", [], output_field=_IntF()),
+            )
+            if orientation_filter == 'landscape':
+                videos = videos.filter(_vw__gt=models.F('_vh'))
+            elif orientation_filter == 'portrait':
+                videos = videos.filter(_vh__gt=models.F('_vw'))
+            elif orientation_filter == 'square':
+                videos = videos.filter(_vw=models.F('_vh'))
+        except Exception:
+            pass  # Non-PostgreSQL or empty resolution data — skip silently
+
     sort = request.GET.get('sort', '').strip()
     if sort == 'views':
         videos = videos.order_by('-views_count')
@@ -550,6 +620,7 @@ def player_page(request):
     _CARD_FIELDS = (
         'id', 'title', 'thumbnail', 'duration', 'views_count', 'status',
         'created_at', 'channel_id', 'category_id',
+        'seek_sprite',  # used in vcard hover-scrub; omitting triggers N+1
     )
 
     feed_total_count = None
@@ -1103,8 +1174,9 @@ def player_page(request):
                 | Q(pk__in=_fts_face_qs.values('pk'))
                 | Q(pk__in=_fuzzy_qs.values('pk'))
                 | Q(pk__in=_photo_people_ids)
-                | Q(face_names__icontains=q)   # direct substring match for names
-                | Q(ocr_text__icontains=q)     # exact substring: "cow" in "cowboy" ✓; not in "conference" ✗
+                | Q(face_names__icontains=q)        # direct substring match for names
+                | Q(ocr_text__icontains=q)          # exact substring: "cow" in "cowboy" ✓
+                | Q(named_place__name__icontains=q) # match place name e.g. "Salaya"
             ).distinct()
         else:
             _photo_qs = _photo_qs.filter(
@@ -1115,6 +1187,7 @@ def player_page(request):
                 | _q_icontains_all_terms('ocr_text', q)
                 | Q(face_names__icontains=q)
                 | Q(pk__in=_photo_people_ids)
+                | Q(named_place__name__icontains=q)
             ).distinct()
 
         # CLIP semantic search on photos
@@ -1201,6 +1274,7 @@ def player_page(request):
         'current_duration':    duration_filter,
         'current_date':        date_filter,
         'current_sort':        sort,
+        'current_orientation': orientation_filter,
         'current_event':       current_event,
         'current_event_slug':  event_slug,
         'all_events':          all_events,
@@ -1379,6 +1453,7 @@ def channel_page(request, slug):
     _video_fields = (
         'id', 'title', 'duration', 'views_count', 'status',
         'visibility', 'thumbnail', 'created_at', 'channel_id', 'category_id',
+        'seek_sprite',  # accessed in template for hover-scrub; omitting triggers N+1
     )
     if is_owner:
         videos = list(Video.objects.filter(channel=channel)
@@ -1528,7 +1603,8 @@ def category_page(request, slug):
         visibility=Video.VISIBILITY_PUBLIC,
         status=Video.STATUS_READY,
     ).select_related('channel').order_by('-created_at').only(
-        'id', 'title', 'duration', 'views_count', 'status', 'created_at', 'channel_id',
+        'id', 'title', 'thumbnail', 'duration', 'views_count', 'status',
+        'created_at', 'channel_id', 'seek_sprite',
     )
     _peek = list(videos_qs[:25])
     has_more_videos = len(_peek) > 24
@@ -1749,6 +1825,7 @@ def admin_commands_run(request):
         'generate_seek_sprites',
         # Individual AI step commands
         'run_yolo', 'run_blip', 'run_clip', 'run_insightface',
+        'backfill_photo_gps',
     }
     if cmd not in ALLOWED:
         return Response({'error': f'Command not allowed: {cmd}'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1776,6 +1853,14 @@ def admin_commands_run(request):
 def categories_manage_page(request):
     cats = Category.objects.annotate(video_count=Count('videos')).order_by('name')
     return render(request, 'videos/categories_manage.html', {'categories': cats})
+
+
+@editor_required
+def named_places_page(request):
+    places = NamedPlace.objects.annotate(photo_count=Count('photos')).order_by('name')
+    return render(request, 'videos/named_places.html', {'places': places})
+
+
 
 
 # ─── Storage Dashboard ────────────────────────────────────────────────────────
@@ -1819,6 +1904,36 @@ def _dms_to_decimal(dms_arr, ref: str):
         return round(dd, 6)
     except (TypeError, ValueError, IndexError):
         return None
+
+
+import math as _math
+
+
+def _haversine_m(lat1, lon1, lat2, lon2) -> float:
+    """Return distance in metres between two lat/lng points."""
+    R = 6_371_000
+    phi1, phi2 = _math.radians(lat1), _math.radians(lat2)
+    dphi  = _math.radians(lat2 - lat1)
+    dlam  = _math.radians(lon2 - lon1)
+    a = _math.sin(dphi/2)**2 + _math.cos(phi1)*_math.cos(phi2)*_math.sin(dlam/2)**2
+    return 2 * R * _math.asin(_math.sqrt(a))
+
+
+def _assign_named_place(photo) -> None:
+    """
+    Given a Photo with latitude/longitude set, find the closest NamedPlace
+    whose radius covers that point and assign it.  Clears assignment if none match.
+    Does NOT call photo.save() — caller must save.
+    """
+    if photo.latitude is None or photo.longitude is None:
+        photo.named_place = None
+        return
+    best, best_dist = None, float('inf')
+    for place in NamedPlace.objects.all():
+        d = _haversine_m(photo.latitude, photo.longitude, place.latitude, place.longitude)
+        if d <= place.radius_meters and d < best_dist:
+            best, best_dist = place, d
+    photo.named_place = best
 
 
 @superuser_required
@@ -2188,6 +2303,212 @@ def category_detail(request, category_id):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+# ── Named Places ─────────────────────────────────────────────────────────────
+
+def _bulk_assign_named_place(place) -> None:
+    """
+    After creating/updating a NamedPlace, scan all photos with coordinates
+    and assign/update their named_place if they fall within the radius.
+    Uses Python-level haversine (no PostGIS required).
+    """
+    from .models import Photo
+    photos = Photo.objects.filter(
+        latitude__isnull=False, longitude__isnull=False
+    ).select_related('named_place')
+    updated = []
+    for photo in photos:
+        d = _haversine_m(photo.latitude, photo.longitude, place.latitude, place.longitude)
+        if d <= place.radius_meters:
+            if photo.named_place_id != place.id:
+                photo.named_place = place
+                updated.append(photo)
+    if updated:
+        Photo.objects.bulk_update(updated, ['named_place'])
+
+
+@api_view(['GET', 'POST'])
+def named_place_list(request):
+    """
+    GET  /api/named-places/  — list all named places (public)
+    POST /api/named-places/  — create (editor required)
+         body: { name, latitude, longitude, radius_meters?, color?, description? }
+    """
+    if request.method == 'GET':
+        places = NamedPlace.objects.annotate(photo_count=Count('photos'))
+        return Response([{
+            'id': p.id, 'name': p.name, 'slug': p.slug,
+            'latitude': p.latitude, 'longitude': p.longitude,
+            'radius_meters': p.radius_meters, 'color': p.color,
+            'description': p.description, 'photo_count': p.photo_count,
+        } for p in places])
+
+    if not request.user.is_authenticated or not _is_editor(request.user):
+        return Response({'error': 'Editor access required.'}, status=403)
+
+    from django.utils.text import slugify as _slugify
+    name = (request.data.get('name') or '').strip()
+    if not name:
+        return Response({'error': 'name is required'}, status=400)
+    try:
+        lat = float(request.data['latitude'])
+        lng = float(request.data['longitude'])
+    except (KeyError, ValueError, TypeError):
+        return Response({'error': 'latitude and longitude are required numbers'}, status=400)
+
+    slug = _slugify(name)
+    base, i = slug, 1
+    while NamedPlace.objects.filter(slug=slug).exists():
+        slug = f'{base}-{i}'; i += 1
+
+    place = NamedPlace.objects.create(
+        name=name, slug=slug, latitude=lat, longitude=lng,
+        radius_meters=int(request.data.get('radius_meters') or 500),
+        color=(request.data.get('color') or '#3b82f6').strip(),
+        description=(request.data.get('description') or '').strip(),
+        created_by=request.user,
+    )
+    # Auto-assign existing photos that fall within this new place's radius
+    _bulk_assign_named_place(place)
+    return Response({
+        'id': place.id, 'name': place.name, 'slug': place.slug,
+        'latitude': place.latitude, 'longitude': place.longitude,
+        'radius_meters': place.radius_meters, 'color': place.color,
+        'description': place.description, 'photo_count': 0,
+    }, status=201)
+
+
+@api_view(['PATCH', 'DELETE'])
+@api_login_required
+def named_place_detail(request, place_id):
+    """PATCH /api/named-places/<id>/  DELETE /api/named-places/<id>/"""
+    try:
+        place = NamedPlace.objects.get(id=place_id)
+    except NamedPlace.DoesNotExist:
+        return Response({'error': 'Not found'}, status=404)
+    if not _is_editor(request.user):
+        return Response({'error': 'Editor access required.'}, status=403)
+
+    if request.method == 'DELETE':
+        place.delete()  # named_place FK on photos is SET_NULL
+        return Response(status=204)
+
+    # PATCH
+    if 'name' in request.data:
+        place.name = request.data['name'].strip()
+    if 'latitude' in request.data:
+        place.latitude = float(request.data['latitude'])
+    if 'longitude' in request.data:
+        place.longitude = float(request.data['longitude'])
+    if 'radius_meters' in request.data:
+        place.radius_meters = int(request.data['radius_meters'])
+    if 'color' in request.data:
+        place.color = request.data['color'].strip()
+    if 'description' in request.data:
+        place.description = request.data['description'].strip()
+    place.save()
+    # Re-run auto-assignment for all photos since location/radius may have changed
+    _bulk_assign_named_place(place)
+    return Response({
+        'id': place.id, 'name': place.name, 'slug': place.slug,
+        'latitude': place.latitude, 'longitude': place.longitude,
+        'radius_meters': place.radius_meters, 'color': place.color,
+        'description': place.description,
+    })
+
+
+# ── Moment Categories ────────────────────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+def moment_category_list(request):
+    """
+    GET  /api/moment-categories/
+         Returns all moment categories (system built-ins + custom user-defined).
+         No auth required — the list is read-only for public use.
+
+    POST /api/moment-categories/
+         Create a custom category.  Editor access required.
+         body: { name, icon?, color? }
+    """
+    from .models import MomentCategory
+    # Ensure system categories exist (idempotent)
+    MomentCategory.ensure_system_categories()
+
+    if request.method == 'GET':
+        cats = MomentCategory.objects.all()
+        return Response([
+            {
+                'id':        c.id,
+                'key':       c.key,
+                'name':      c.name,
+                'icon':      c.icon,
+                'color':     c.color,
+                'is_system': c.is_system,
+            }
+            for c in cats
+        ])
+
+    # POST — create custom category
+    if not request.user.is_authenticated or not _is_editor(request.user):
+        return Response({'error': 'Editor access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+    name  = (request.data.get('name') or '').strip()
+    icon  = (request.data.get('icon') or '🏷️').strip() or '🏷️'
+    color = (request.data.get('color') or '#6b7280').strip()
+    if not name:
+        return Response({'error': 'name is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(name) > 50:
+        return Response({'error': 'name too long (max 50 chars)'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Temporary key — updated after save so we know the PK
+    cat = MomentCategory.objects.create(
+        key='tmp', name=name, icon=icon, color=color,
+        is_system=False, created_by=request.user, sort_order=200,
+    )
+    cat.key = f'c_{cat.id}'
+    cat.save(update_fields=['key'])
+
+    return Response(
+        {'id': cat.id, 'key': cat.key, 'name': cat.name, 'icon': cat.icon,
+         'color': cat.color, 'is_system': False},
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['PATCH', 'DELETE'])
+@api_login_required
+def moment_category_detail(request, cat_id):
+    """
+    PATCH  /api/moment-categories/<id>/  — rename/recolor/re-icon a custom category
+    DELETE /api/moment-categories/<id>/  — delete a custom category
+    System categories cannot be modified or deleted.
+    """
+    from .models import MomentCategory
+    try:
+        cat = MomentCategory.objects.get(id=cat_id)
+    except MomentCategory.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if cat.is_system:
+        return Response({'error': 'System categories cannot be modified.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not _is_editor(request.user):
+        return Response({'error': 'Editor access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'DELETE':
+        cat.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # PATCH
+    if 'name' in request.data:
+        cat.name = (request.data['name'] or '').strip() or cat.name
+    if 'icon' in request.data:
+        cat.icon = (request.data['icon'] or '🏷️').strip() or '🏷️'
+    if 'color' in request.data:
+        cat.color = (request.data['color'] or '#6b7280').strip()
+    cat.save()
+    return Response({'id': cat.id, 'key': cat.key, 'name': cat.name, 'icon': cat.icon,
+                     'color': cat.color, 'is_system': False})
+
+
 # ─── Videos API ──────────────────────────────────────────────────────────────
 
 @api_view(['GET'])
@@ -2403,6 +2724,109 @@ def video_detail(request, video_id):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@api_view(['GET'])
+def video_download(request, video_id):
+    """
+    GET /api/videos/<uuid>/download/?quality=<label>
+    quality: 'original' | '1080p' | '720p' | '480p' | '360p' (or any encoded label)
+
+    Streams the video as a downloadable MP4.
+    - 'original' serves the raw uploaded file.
+    - Any HLS quality label muxes the TS segments into MP4 via ffmpeg stream-copy
+      (no re-encoding, so it's fast) and streams the result.
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Visibility / auth gate:
+    #   - Public videos → anyone can download
+    #   - Private videos → editors/superadmins can download (they manage content);
+    #     viewers cannot (returns 404 so we don't leak that the video exists)
+    if video.visibility != Video.VISIBILITY_PUBLIC:
+        if not _is_editor(request.user):
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    quality = request.GET.get('quality', 'original').strip()
+
+    # Sanitise the video title for use as a filename
+    safe_title = "".join(c for c in video.title if c.isalnum() or c in ' -_').strip() or 'video'
+
+    if quality == 'original':
+        if not video.original_file:
+            return Response({'error': 'Original file not available.'}, status=status.HTTP_404_NOT_FOUND)
+        file_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+        if not file_path.exists():
+            return Response({'error': 'Original file not found on disk.'}, status=status.HTTP_404_NOT_FOUND)
+        ext = file_path.suffix.lstrip('.') or 'mp4'
+        # Derive content-type from actual extension rather than assuming mp4
+        _ext_map = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'mkv': 'video/x-matroska',
+                    'webm': 'video/webm', 'avi': 'video/x-msvideo'}
+        content_type = _ext_map.get(ext.lower(), 'video/mp4')
+        filename = f"{safe_title}_original.{ext}"
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Content-Length'] = file_path.stat().st_size
+        return response
+
+    # HLS-based quality
+    available = [q.strip() for q in (video.available_qualities or '').split(',') if q.strip()]
+    if quality not in available:
+        return Response(
+            {'error': f'Quality {quality!r} not available. Available: {available}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    hls_playlist = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id) / quality / 'playlist.m3u8'
+    if not hls_playlist.exists():
+        return Response({'error': 'Rendition playlist not found on disk.'}, status=status.HTTP_404_NOT_FOUND)
+
+    filename = f"{safe_title}_{quality}.mp4"
+    ffmpeg = getattr(settings, 'FFMPEG_PATH', 'ffmpeg')
+
+    # Mux HLS → MP4 via stream-copy into a temp file (fast, no re-encode).
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.mp4')
+    os.close(tmp_fd)
+    try:
+        result = subprocess.run(
+            [ffmpeg, '-y', '-i', str(hls_playlist), '-c', 'copy', '-movflags', '+faststart', tmp_path],
+            capture_output=True,
+            timeout=3600,
+        )
+        if result.returncode != 0:
+            os.unlink(tmp_path)
+            return Response({'error': 'Mux failed — ffmpeg error.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except subprocess.TimeoutExpired:
+        os.unlink(tmp_path)
+        return Response({'error': 'Mux timed out.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    file_size = os.path.getsize(tmp_path)
+
+    def _stream_and_delete(path, chunk=8 * 1024 * 1024):
+        try:
+            with open(path, 'rb') as fh:
+                while True:
+                    data = fh.read(chunk)
+                    if not data:
+                        break
+                    yield data
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    response = StreamingHttpResponse(_stream_and_delete(tmp_path), content_type='video/mp4')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Content-Length'] = file_size
+    return response
+
+
 @api_view(['POST'])
 @api_login_required
 @parser_classes([MultiPartParser, FormParser])
@@ -2474,6 +2898,159 @@ def reprocess_video(request, video_id):
 
     _dispatch_process_video(video.id)
     return Response({'message': 'Reprocessing started', 'id': str(video.id)})
+
+
+@api_view(['GET'])
+@api_login_required
+def video_upscale_presets(request, video_id):
+    """GET — list industry-style presets and which are available given current resolution."""
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _is_video_owner(request.user, video):
+        return Response({'error': 'You do not own this video.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if not video.original_file or not video.original_file.name:
+        return Response({
+            'current_long_edge': None,
+            'presets': [{**p, 'available': False} for p in UPSCALE_PRESETS],
+        })
+
+    src = Path(settings.MEDIA_ROOT) / video.original_file.name
+    meta = get_video_metadata(src)
+    w, h = meta.get('width', 0), meta.get('height', 0)
+    if w <= 0 or h <= 0:
+        return Response(
+            {'error': 'Could not read video dimensions from the original file.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    cur = long_edge_from_dimensions(w, h)
+    presets = [{**p, 'available': p['long_edge'] > cur} for p in UPSCALE_PRESETS]
+    return Response({'current_long_edge': cur, 'width': w, 'height': h, 'presets': presets})
+
+
+@api_view(['POST'])
+@api_login_required
+def video_upscale_start(request, video_id):
+    """POST JSON: preset id (e.g. 1080p). Lanczos upscale of original, then full HLS re-encode."""
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _is_video_owner(request.user, video):
+        return Response({'error': 'You do not own this video.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if video.status == Video.STATUS_PROCESSING:
+        return Response({'error': 'Already processing'}, status=status.HTTP_400_BAD_REQUEST)
+
+    preset_id = (request.data.get('preset') or request.data.get('preset_id') or '').strip()
+    pr = preset_by_id(preset_id)
+    if not pr:
+        return Response({'error': 'Unknown preset. Use preset id: 480p, 720p, 1080p, 1440p, 2160p.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not video.original_file or not video.original_file.name:
+        return Response({'error': 'No original file to upscale.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    src = Path(settings.MEDIA_ROOT) / video.original_file.name
+    meta = get_video_metadata(src)
+    w, h = meta.get('width', 0), meta.get('height', 0)
+    if w <= 0 or h <= 0:
+        return Response({'error': 'Could not read video dimensions.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cur = long_edge_from_dimensions(w, h)
+    if pr['long_edge'] <= cur:
+        return Response(
+            {'error': 'Choose a preset above the current resolution.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    _dispatch_upscale_video(video.id, pr['long_edge'])
+    return Response({
+        'message': 'Upscale started',
+        'id': str(video.id),
+        'preset': pr['id'],
+        'target_long_edge': pr['long_edge'],
+    })
+
+
+@api_view(['GET'])
+@api_login_required
+def photo_upscale_presets(request, photo_id):
+    try:
+        photo = Photo.objects.get(id=photo_id)
+    except Photo.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _is_photo_owner(request.user, photo):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+    if not photo.file or not photo.file.name:
+        return Response({
+            'current_long_edge': None,
+            'presets': [{**p, 'available': False} for p in UPSCALE_PRESETS],
+        })
+
+    w, h = photo.width, photo.height
+    if not w or not h:
+        pth = Path(settings.MEDIA_ROOT) / photo.file.name
+        from PIL import Image as _PILImage
+
+        with _PILImage.open(pth) as im:
+            w, h = im.size
+
+    cur = long_edge_from_dimensions(w, h)
+    presets = [{**p, 'available': p['long_edge'] > cur} for p in UPSCALE_PRESETS]
+    return Response({'current_long_edge': cur, 'width': w, 'height': h, 'presets': presets})
+
+
+@api_view(['POST'])
+@api_login_required
+def photo_upscale_start(request, photo_id):
+    try:
+        photo = Photo.objects.get(id=photo_id)
+    except Photo.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _is_photo_owner(request.user, photo):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+    if photo.status == Photo.STATUS_PROCESSING:
+        return Response({'error': 'Already processing'}, status=status.HTTP_400_BAD_REQUEST)
+
+    preset_id = (request.data.get('preset') or request.data.get('preset_id') or '').strip()
+    pr = preset_by_id(preset_id)
+    if not pr:
+        return Response({'error': 'Unknown preset.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not photo.file or not photo.file.name:
+        return Response({'error': 'No file to upscale.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    pth = Path(settings.MEDIA_ROOT) / photo.file.name
+    w, h = photo.width, photo.height
+    if not w or not h:
+        from PIL import Image as _PILImage
+
+        with _PILImage.open(pth) as im:
+            w, h = im.size
+
+    cur = long_edge_from_dimensions(w, h)
+    if pr['long_edge'] <= cur:
+        return Response(
+            {'error': 'Choose a preset above the current resolution.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    _dispatch_upscale_photo(photo.id, pr['long_edge'])
+    return Response({
+        'message': 'Upscale started',
+        'id': str(photo.id),
+        'preset': pr['id'],
+        'target_long_edge': pr['long_edge'],
+    })
 
 
 @api_view(['GET'])
@@ -4930,6 +5507,7 @@ def photo_library_page(request):
                 | Q(pk__in=people_photo_ids)
                 | Q(face_names__icontains=q)   # direct name substring match
                 | Q(ocr_text__icontains=q)     # exact substring: "cow" in "cowboy" ✓; not in "conference" ✗
+                | Q(named_place__name__icontains=q)  # search by place name e.g. "Salaya"
             ).distinct()
         else:
             photos = photos.filter(
@@ -4941,6 +5519,7 @@ def photo_library_page(request):
                 | _q_icontains_all_terms('ocr_text', q)
                 | Q(face_names__icontains=q)
                 | Q(pk__in=people_photo_ids)
+                | Q(named_place__name__icontains=q)  # search by place name
             ).distinct()
 
     cat_slug = request.GET.get('category', '').strip()
@@ -4955,25 +5534,51 @@ def photo_library_page(request):
     else:
         photos = photos.order_by('-created_at')
 
+    # ── Orientation filter ────────────────────────────────────────────────────
+    orientation_filter = request.GET.get('orientation', '').strip()
+    if orientation_filter in ('landscape', 'portrait', 'square'):
+        if orientation_filter == 'landscape':
+            photos = photos.filter(width__isnull=False, height__isnull=False).extra(
+                where=['width > height']
+            )
+        elif orientation_filter == 'portrait':
+            photos = photos.filter(width__isnull=False, height__isnull=False).extra(
+                where=['height > width']
+            )
+        elif orientation_filter == 'square':
+            photos = photos.filter(width__isnull=False, height__isnull=False).extra(
+                where=['width = height']
+            )
+
+    # ── Named place filter ────────────────────────────────────────────────────
+    place_filter = request.GET.get('place', '').strip()
+    if place_filter:
+        photos = photos.filter(named_place__slug=place_filter)
+
     categories = cache.get('all_categories')
     if categories is None:
         categories = list(Category.objects.all())
         cache.set('all_categories', categories, getattr(django_settings, 'CACHE_TTL_CATEGORIES', 3600))
 
+    named_places = list(NamedPlace.objects.annotate(photo_count=Count('photos')).filter(photo_count__gt=0))
+
     PAGE = 36
-    photos = photos.select_related('channel')
+    photos = photos.select_related('channel', 'named_place')
     _peek = list(photos[:PAGE + 1])
     has_more = len(_peek) > PAGE
     photos_page = _peek[:PAGE]
 
     return render(request, 'videos/photo_library.html', {
-        'photos':       photos_page,
-        'has_more':     has_more,
-        'categories':   categories,
-        'current_q':    q,
-        'current_cat':  cat_slug,
-        'current_sort': sort,
-        'current_tab':  tab,
+        'photos':            photos_page,
+        'has_more':          has_more,
+        'categories':        categories,
+        'named_places':      named_places,
+        'current_q':         q,
+        'current_cat':       cat_slug,
+        'current_sort':      sort,
+        'current_orientation': orientation_filter,
+        'current_place':     place_filter,
+        'current_tab':       tab,
     })
 
 
@@ -4985,41 +5590,83 @@ def photo_map_page(request):
     return render(request, 'videos/photo_map.html', {})
 
 
+@api_view(['GET'])
 @login_required
 def photo_map_markers(request):
-    """JSON: all geotagged photos with pre-computed decimal lat/lng for Leaflet.
-    Returns only photos that have valid GPSInfo in exif_data.
-    Optional filter: ?channel=<slug>
-    """
+    """Returns photos that have lat/lng (from EXIF or manually set) as map markers."""
+    # Photos with pre-indexed lat/lng fields
     qs = Photo.objects.filter(
-        visibility=Photo.VISIBILITY_PUBLIC,
         status=Photo.STATUS_READY,
         is_archived=False,
+        latitude__isnull=False,
+        longitude__isnull=False,
+    ).select_related('named_place')
+
+    # Backward compat: also include photos with EXIF GPS but no indexed lat/lng yet
+    qs_exif_only = Photo.objects.filter(
+        status=Photo.STATUS_READY,
+        is_archived=False,
+        latitude__isnull=True,
         exif_data__has_key='GPSInfo',
-    ).only('id', 'title', 'thumbnail', 'exif_data', 'taken_at')
+    )
+
+    if not _is_editor(request.user):
+        qs = qs.filter(visibility=Photo.VISIBILITY_PUBLIC)
+        qs_exif_only = qs_exif_only.filter(visibility=Photo.VISIBILITY_PUBLIC)
 
     ch_slug = request.GET.get('channel', '').strip()
     if ch_slug:
         qs = qs.filter(channel__slug=ch_slug)
+        qs_exif_only = qs_exif_only.filter(channel__slug=ch_slug)
+
+    place_slug = request.GET.get('place', '').strip()
+    if place_slug:
+        qs = qs.filter(named_place__slug=place_slug)
+        qs_exif_only = qs_exif_only.none()  # EXIF-only photos have no place assigned yet
 
     markers = []
-    for p in qs:
+    seen_ids = set()
+
+    for p in qs.only('id', 'title', 'thumbnail', 'latitude', 'longitude', 'taken_at', 'named_place_id'):
+        seen_ids.add(p.id)
+        markers.append({
+            'id':         str(p.id),
+            'title':      p.title or 'Untitled',
+            'lat':        p.latitude,
+            'lng':        p.longitude,
+            'thumb':      p.thumbnail_url,
+            'taken_at':   p.taken_at.isoformat() if p.taken_at else None,
+            'place_slug': p.named_place.slug if p.named_place_id else None,
+            'place_name': p.named_place.name if p.named_place_id else None,
+        })
+
+    # Add EXIF-only photos (backward compat — not yet re-analyzed)
+    for p in qs_exif_only.only('id', 'title', 'thumbnail', 'exif_data', 'taken_at'):
+        if p.id in seen_ids:
+            continue
         gps = (p.exif_data or {}).get('GPSInfo', {})
-        lat = _dms_to_decimal(gps.get('GPSLatitude'),  gps.get('GPSLatitudeRef',  'N'))
+        lat = _dms_to_decimal(gps.get('GPSLatitude'), gps.get('GPSLatitudeRef', 'N'))
         lng = _dms_to_decimal(gps.get('GPSLongitude'), gps.get('GPSLongitudeRef', 'E'))
         if lat is None or lng is None:
             continue
-        thumb_url = p.thumbnail.url if p.thumbnail else None
         markers.append({
-            'id':        str(p.id),
-            'title':     p.title or 'Untitled',
-            'lat':       lat,
-            'lng':       lng,
-            'thumb':     thumb_url,
-            'taken_at':  p.taken_at.isoformat() if p.taken_at else None,
+            'id':         str(p.id),
+            'title':      p.title or 'Untitled',
+            'lat':        lat,
+            'lng':        lng,
+            'thumb':      p.thumbnail_url,
+            'taken_at':   p.taken_at.isoformat() if p.taken_at else None,
+            'place_slug': None,
+            'place_name': None,
         })
 
-    return JsonResponse({'markers': markers, 'total': len(markers)})
+    # Also return named places for rendering circles on map
+    places = [{'id': pl.id, 'name': pl.name, 'slug': pl.slug,
+                'lat': pl.latitude, 'lng': pl.longitude,
+                'radius': pl.radius_meters, 'color': pl.color}
+               for pl in NamedPlace.objects.all()]
+
+    return Response({'markers': markers, 'total': len(markers), 'places': places})
 
 
 @editor_required
@@ -5059,9 +5706,12 @@ def photo_detail_page(request, photo_id):
 
     photo_tags = [t.strip() for t in (photo.tags or '').split(',') if t.strip()]
 
+    is_photo_owner = _is_photo_owner(request.user, photo)
+
     return render(request, 'videos/photo_detail.html', {
         'photo': photo,
         'photo_tags': photo_tags,
+        'is_photo_owner': is_photo_owner,
     })
 
 
@@ -5274,7 +5924,7 @@ def photo_upload(request):
 def photo_detail_api(request, photo_id):
     """Retrieve, update metadata, or delete a photo."""
     try:
-        photo = Photo.objects.select_related('channel', 'category').get(id=photo_id)
+        photo = Photo.objects.select_related('channel', 'category', 'named_place').get(id=photo_id)
     except Photo.DoesNotExist:
         raise Http404
 
@@ -5302,6 +5952,11 @@ def photo_detail_api(request, photo_id):
             'thumbnail_url':    photo.thumbnail_url,
             'file_url':         photo.file.url if photo.file else None,
             'photo_url':        photo.photo_url,
+            'latitude':         photo.latitude,
+            'longitude':        photo.longitude,
+            'named_place_id':   photo.named_place_id,
+            'named_place_name': photo.named_place.name if photo.named_place_id else None,
+            'named_place_slug': photo.named_place.slug if photo.named_place_id else None,
             'channel': {'id': str(photo.channel.id), 'name': photo.channel.name} if photo.channel else None,
             'category': {'id': photo.category.id, 'name': photo.category.name} if photo.category else None,
         })
@@ -5313,7 +5968,27 @@ def photo_detail_api(request, photo_id):
         for field in updatable:
             if field in request.data:
                 setattr(photo, field, request.data[field])
-        photo.save(update_fields=[f for f in updatable if f in request.data])
+
+        # Handle lat/lng — auto-assign named place if coordinates set
+        extra_fields = []
+        if 'latitude' in request.data or 'longitude' in request.data:
+            try:
+                photo.latitude  = float(request.data['latitude'])  if 'latitude'  in request.data else photo.latitude
+                photo.longitude = float(request.data['longitude']) if 'longitude' in request.data else photo.longitude
+                _assign_named_place(photo)
+                extra_fields += ['latitude', 'longitude', 'named_place']
+            except (ValueError, TypeError):
+                pass
+
+        if 'named_place_id' in request.data:
+            pid = request.data['named_place_id']
+            photo.named_place_id = int(pid) if pid else None
+            if 'named_place' not in extra_fields:
+                extra_fields.append('named_place')
+
+        all_update_fields = [f for f in updatable if f in request.data] + extra_fields
+        if all_update_fields:
+            photo.save(update_fields=all_update_fields)
         return Response({'ok': True})
 
     if request.method == 'DELETE':
@@ -5369,7 +6044,9 @@ def photo_status(request, photo_id):
 def search_suggest(request):
     """
     Fast typeahead suggestions for the search bar.
-    Returns up to 10 items drawn from video titles, channel names, face names, and labels.
+    Returns up to 10 items drawn from video titles, channel names, face names, labels,
+    and named places.  Place items carry a `url` field so the frontend can navigate
+    directly to /photos/?place=<slug> instead of running a generic search.
     """
     q = request.GET.get('q', '').strip()
     if len(q) < 2:
@@ -5378,11 +6055,14 @@ def search_suggest(request):
     suggestions = []
     seen = set()
 
-    def _add(text, kind):
+    def _add(text, kind, url=None):
         key = text.lower()
         if key not in seen:
             seen.add(key)
-            suggestions.append({'text': text, 'type': kind})
+            entry = {'text': text, 'type': kind}
+            if url:
+                entry['url'] = url
+            suggestions.append(entry)
 
     # Video titles
     for title in (
@@ -5408,6 +6088,14 @@ def search_suggest(request):
             .values('identity__name')[:3]
         ):
             _add(nick_row['identity__name'], 'person')
+
+        # Named places — navigate directly to the filtered photo library
+        for place in (
+            NamedPlace.objects
+            .filter(name__icontains=q)
+            .values('name', 'slug')[:3]
+        ):
+            _add(place['name'], 'place', url=f"/photos/?place={place['slug']}")
 
     # Photo titles (if under limit)
     if len(suggestions) < 10:
@@ -6133,11 +6821,13 @@ def event_search_api(request, event_id):
                 Q(pk__in=_fts_p.values('pk')) | Q(pk__in=_fts_pl.values('pk'))
                 | Q(pk__in=_fts_pd.values('pk')) | Q(pk__in=_fts_pf.values('pk'))
                 | Q(pk__in=_fuzz_p.values('pk')) | Q(face_names__icontains=q)
+                | Q(named_place__name__icontains=q)
             ).distinct()
         else:
             _pqs = _pqs.filter(
                 _q_icontains_all_terms('title', q) | _q_icontains_all_terms('tags', q)
                 | _q_icontains_all_terms('labels', q) | Q(face_names__icontains=q)
+                | Q(named_place__name__icontains=q)
             ).distinct()
         for p in _pqs.only('id', 'title', 'thumbnail')[:40]:
             photo_results.append({
@@ -6349,11 +7039,13 @@ def scoped_search_api(request):
                 Q(pk__in=_fts_p.values('pk')) | Q(pk__in=_fts_pl.values('pk'))
                 | Q(pk__in=_fts_pd.values('pk')) | Q(pk__in=_fts_pf.values('pk'))
                 | Q(pk__in=_fuzz_p.values('pk')) | Q(face_names__icontains=q)
+                | Q(named_place__name__icontains=q)
             ).distinct()
         else:
             _pqs = _pqs.filter(
                 _q_icontains_all_terms('title', q) | _q_icontains_all_terms('tags', q)
                 | _q_icontains_all_terms('labels', q) | Q(face_names__icontains=q)
+                | Q(named_place__name__icontains=q)
             ).distinct()
         for p in _pqs.only('id', 'title', 'thumbnail')[:40]:
             photo_results.append({'id': str(p.id), 'title': p.title,

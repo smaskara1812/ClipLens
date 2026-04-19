@@ -39,9 +39,38 @@ class ChannelSerializer(serializers.ModelSerializer):
 # ── Category ──────────────────────────────────────────────────────────────────
 
 class CategorySerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(read_only=True)
+
     class Meta:
         model = Category
         fields = ['id', 'name', 'slug', 'created_at']
+
+    def _unique_slug(self, name, exclude_pk=None):
+        from django.utils.text import slugify
+        base = slugify(name)
+        slug = base
+        counter = 1
+        qs = Category.objects.filter(slug=slug)
+        if exclude_pk:
+            qs = qs.exclude(pk=exclude_pk)
+        while qs.exists():
+            slug = f'{base}-{counter}'
+            counter += 1
+            qs = Category.objects.filter(slug=slug)
+            if exclude_pk:
+                qs = qs.exclude(pk=exclude_pk)
+        return slug
+
+    def create(self, validated_data):
+        slug = self._unique_slug(validated_data['name'])
+        return Category.objects.create(name=validated_data['name'], slug=slug)
+
+    def update(self, instance, validated_data):
+        if 'name' in validated_data:
+            instance.name = validated_data['name']
+            instance.slug = self._unique_slug(validated_data['name'], exclude_pk=instance.pk)
+        instance.save()
+        return instance
 
 
 # ── Video ─────────────────────────────────────────────────────────────────────

@@ -1,0 +1,551 @@
+{% extends "videos/base.html" %}
+{% load static %}
+
+{% block title %}Named Places — ClipLens{% endblock %}
+
+{% block extra_head %}
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+  .np-page { padding: 24px 28px 60px; max-width: 1100px; margin: 0 auto; }
+
+  /* Breadcrumb */
+  .np-breadcrumb {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--text-muted); margin-bottom: 20px;
+  }
+  .np-breadcrumb a { color: var(--text-muted); text-decoration: none; }
+  .np-breadcrumb a:hover { color: var(--accent); }
+  .np-breadcrumb svg { width: 12px; height: 12px; opacity: .5; }
+
+  /* Header */
+  .np-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px; gap: 12px; flex-wrap: wrap;
+  }
+  .np-header h1 {
+    font-size: 22px; font-weight: 800; display: flex; align-items: center; gap: 8px;
+  }
+  .np-header h1 svg { width: 22px; height: 22px; color: var(--accent); }
+
+  /* Map */
+  #np-map-wrap {
+    border-radius: var(--radius-lg); overflow: hidden;
+    border: 1px solid var(--border); margin-bottom: 28px;
+    position: relative;
+  }
+  #np-map { height: 420px; width: 100%; }
+
+  /* Create form (floating, appears on map click) */
+  #createFormPanel {
+    display: none;
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 1000;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 18px 22px; width: 340px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.45);
+  }
+  #createFormPanel h3 { font-size: 14px; font-weight: 700; margin: 0 0 12px; }
+  #createFormPanel .np-field { margin-bottom: 10px; }
+  #createFormPanel .np-field label {
+    display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-subtle); margin-bottom: 4px;
+  }
+  #createFormPanel .np-field input,
+  #createFormPanel .np-field textarea {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); color: var(--text); font-size: 13px;
+    padding: 6px 10px; outline: none; font-family: inherit; box-sizing: border-box;
+  }
+  #createFormPanel .np-field input:focus,
+  #createFormPanel .np-field textarea:focus { border-color: var(--accent); }
+  #createFormPanel .np-row { display: flex; gap: 8px; }
+  #createFormPanel .np-row .np-field { flex: 1; }
+  .np-form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
+  /* Table */
+  .np-table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); overflow: hidden;
+  }
+  .np-table-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+  }
+  .np-table-head h2 { font-size: 14px; font-weight: 700; margin: 0; }
+
+  table.np-table { width: 100%; border-collapse: collapse; }
+  table.np-table th {
+    text-align: left; padding: 10px 16px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-subtle);
+    border-bottom: 1px solid var(--border); background: var(--surface-2);
+  }
+  table.np-table td {
+    padding: 12px 16px; font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  table.np-table tr:last-child td { border-bottom: none; }
+  table.np-table tr:hover td { background: var(--surface-2); }
+
+  .np-color-dot {
+    display: inline-block; width: 12px; height: 12px;
+    border-radius: 50%; flex-shrink: 0; margin-right: 6px;
+    border: 1px solid rgba(255,255,255,.15);
+    vertical-align: middle;
+  }
+
+  .np-actions { display: flex; gap: 6px; }
+  .np-btn {
+    padding: 4px 12px; border-radius: var(--radius-sm);
+    font-size: 12px; font-weight: 600; cursor: pointer; border: none;
+    transition: background .12s, color .12s;
+  }
+  .np-btn-edit {
+    background: var(--surface-3); color: var(--text-muted);
+  }
+  .np-btn-edit:hover { background: var(--accent-soft); color: var(--accent); }
+  .np-btn-del {
+    background: rgba(239,68,68,.12); color: var(--red, #ef4444);
+  }
+  .np-btn-del:hover { background: rgba(239,68,68,.25); }
+
+  /* Inline edit row */
+  .np-edit-row { display: none; }
+  .np-edit-row.active { display: table-row; }
+  .np-edit-row td { background: var(--surface-2); padding: 12px 16px; }
+  .np-edit-inner { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .np-edit-inner .np-field { display: flex; flex-direction: column; gap: 3px; }
+  .np-edit-inner .np-field label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-subtle);
+  }
+  .np-edit-inner input[type=text],
+  .np-edit-inner input[type=number] {
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-size: 13px; padding: 5px 9px; outline: none; font-family: inherit;
+  }
+  .np-edit-inner input:focus { border-color: var(--accent); }
+
+  /* Empty state */
+  .np-empty {
+    padding: 40px; text-align: center; color: var(--text-muted);
+  }
+  .np-empty p { font-size: 14px; margin-top: 8px; }
+
+  /* Place label on map */
+  .place-label {
+    background: transparent; border: none; box-shadow: none;
+    font-size: 11px; font-weight: 700; color: rgba(255,255,255,.85);
+    white-space: nowrap; pointer-events: none;
+  }
+
+  /* Toast */
+  #np-toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg); padding: 12px 18px;
+    font-size: 13px; font-weight: 600; display: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    transition: opacity .2s;
+  }
+  #np-toast.success { border-color: var(--green, #22c55e); color: var(--green, #22c55e); }
+  #np-toast.error   { border-color: var(--red, #ef4444);   color: var(--red, #ef4444); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="np-page">
+
+  <!-- Breadcrumb -->
+  <div class="np-breadcrumb">
+    <a href="{% url 'user_management' %}">Admin</a>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="9 18 15 12 9 6"/>
+    </svg>
+    Named Places
+  </div>
+
+  <!-- Header -->
+  <div class="np-header">
+    <h1>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+      </svg>
+      Named Places
+    </h1>
+    <p style="font-size:13px;color:var(--text-muted);max-width:420px;margin:0;">
+      Click anywhere on the map to create a named place. Photos with GPS coordinates inside
+      the radius will be automatically assigned.
+    </p>
+  </div>
+
+  <!-- Map -->
+  <div id="np-map-wrap">
+    <div id="np-map"></div>
+
+    <!-- Create form (shown on map click) -->
+    <div id="createFormPanel">
+      <h3>New Named Place</h3>
+      <div class="np-field">
+        <label>Name</label>
+        <input type="text" id="cf-name" placeholder="e.g. Home, Office, etc." />
+      </div>
+      <div class="np-row">
+        <div class="np-field">
+          <label>Radius (m)</label>
+          <input type="number" id="cf-radius" value="500" min="50" max="50000" />
+        </div>
+        <div class="np-field">
+          <label>Color</label>
+          <input type="color" id="cf-color" value="#3b82f6" style="height:32px;padding:2px 4px;width:100%;" />
+        </div>
+      </div>
+      <div class="np-field">
+        <label>Description (optional)</label>
+        <textarea id="cf-desc" rows="2" placeholder="Brief description…"></textarea>
+      </div>
+      <div style="font-size:11px;color:var(--text-subtle);margin-bottom:4px;" id="cf-coords"></div>
+      <div class="np-form-actions">
+        <button class="btn btn-ghost btn-sm" onclick="closeCreateForm()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitCreate()">Create Place</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Places table -->
+  <div class="np-table-wrap">
+    <div class="np-table-head">
+      <h2>All Named Places</h2>
+      <span id="np-total-badge" style="font-size:12px;color:var(--text-muted);"></span>
+    </div>
+
+    <div id="np-table-body">
+      <div class="np-empty"><p>Loading…</p></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div id="np-toast"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── CSRF ──────────────────────────────────────────────────────────────────
+  function csrf() {
+    const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+    return v ? v[2] : '';
+  }
+
+  // ── Toast ─────────────────────────────────────────────────────────────────
+  let _toastTimer;
+  function toast(type, msg) {
+    const el = document.getElementById('np-toast');
+    el.className = type;
+    el.textContent = msg;
+    el.style.display = 'block';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
+  }
+
+  // ── Map init ──────────────────────────────────────────────────────────────
+  if (typeof L === 'undefined') {
+    document.getElementById('np-map').innerHTML =
+      '<div style="padding:20px;color:var(--red);">Leaflet failed to load from CDN.</div>';
+    return;
+  }
+
+  const TILES = {
+    light: {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    dark: {
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
+    },
+  };
+  const themeKey = () => document.documentElement.getAttribute('data-theme') || 'dark';
+  const tileOpt  = () => TILES[themeKey()] || TILES.dark;
+
+  const map = L.map('np-map', { center: [20, 0], zoom: 2 });
+  let tileLayer = L.tileLayer(tileOpt().url, { attribution: tileOpt().attr, maxZoom: 19 }).addTo(map);
+
+  // Swap tile on theme toggle
+  const origToggle = window.toggleTheme;
+  window.toggleTheme = function () {
+    if (origToggle) origToggle();
+    setTimeout(() => { tileLayer.setUrl(tileOpt().url); }, 50);
+  };
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let placesData = [];   // current fetched places
+  let circleMap  = {};   // place.id → L.circle
+  let markerMap  = {};   // place.id → L.marker
+  let createLatLng = null;
+  let createMarker = null;
+
+  // ── Load & render places ──────────────────────────────────────────────────
+  async function loadPlaces() {
+    const r = await fetch('/api/named-places/');
+    placesData = await r.json();
+    renderMap();
+    renderTable();
+  }
+
+  function renderMap() {
+    // Clear old layers
+    Object.values(circleMap).forEach(c => c.remove());
+    Object.values(markerMap).forEach(m => m.remove());
+    circleMap = {}; markerMap = {};
+
+    placesData.forEach(p => {
+      const circle = L.circle([p.latitude, p.longitude], {
+        radius: p.radius_meters,
+        color: p.color, fillColor: p.color, fillOpacity: 0.1,
+        weight: 2, dashArray: '6,4',
+      }).addTo(map).bindTooltip(p.name, {
+        permanent: true, direction: 'center', className: 'place-label',
+      });
+
+      const pin = L.circleMarker([p.latitude, p.longitude], {
+        radius: 7, color: p.color, fillColor: p.color, fillOpacity: 0.9, weight: 2,
+      }).addTo(map).bindPopup(`
+        <b style="font-size:13px;">${p.name}</b><br>
+        <span style="font-size:11px;color:#888;">${p.photo_count || 0} photo${p.photo_count === 1 ? '' : 's'} · radius ${p.radius_meters}m</span>
+      `);
+
+      circleMap[p.id] = circle;
+      markerMap[p.id] = pin;
+    });
+
+    if (placesData.length) {
+      const group = L.featureGroup(Object.values(markerMap));
+      if (group.getBounds().isValid()) {
+        map.fitBounds(group.getBounds().pad(0.3), { maxZoom: 12 });
+      }
+    }
+  }
+
+  function renderTable() {
+    const body  = document.getElementById('np-table-body');
+    const badge = document.getElementById('np-total-badge');
+    badge.textContent = placesData.length ? `${placesData.length} place${placesData.length === 1 ? '' : 's'}` : '';
+
+    if (!placesData.length) {
+      body.innerHTML = `<div class="np-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+             style="width:40px;height:40px;opacity:.3;margin:0 auto 8px;display:block;">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        <p>No named places yet. Click on the map to create the first one.</p>
+      </div>`;
+      return;
+    }
+
+    body.innerHTML = `
+      <table class="np-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Location</th>
+            <th>Radius</th>
+            <th>Photos</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="np-tbody"></tbody>
+      </table>`;
+
+    const tbody = document.getElementById('np-tbody');
+    placesData.forEach(p => {
+      // Data row
+      const tr = document.createElement('tr');
+      tr.id = `np-row-${p.id}`;
+      tr.innerHTML = `
+        <td>
+          <span class="np-color-dot" style="background:${p.color};"></span>
+          <span style="font-weight:600;">${escHtml(p.name)}</span>
+          ${p.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(p.description)}</div>` : ''}
+        </td>
+        <td style="font-size:12px;color:var(--text-muted);">${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</td>
+        <td>${p.radius_meters} m</td>
+        <td>
+          <a href="/photos/?place=${encodeURIComponent(p.slug)}" style="color:var(--accent);font-size:12px;">
+            ${p.photo_count || 0}
+          </a>
+        </td>
+        <td>
+          <div class="np-actions">
+            <button class="np-btn np-btn-edit" onclick="startEdit(${p.id})">Edit</button>
+            <button class="np-btn np-btn-del"  onclick="deletePlace(${p.id}, '${escHtml(p.name)}')">Delete</button>
+          </div>
+        </td>`;
+      tbody.appendChild(tr);
+
+      // Inline edit row (hidden by default)
+      const editRow = document.createElement('tr');
+      editRow.id = `np-edit-${p.id}`;
+      editRow.className = 'np-edit-row';
+      editRow.innerHTML = `
+        <td colspan="5">
+          <div class="np-edit-inner">
+            <div class="np-field">
+              <label>Name</label>
+              <input type="text" id="ep-name-${p.id}" value="${escHtml(p.name)}" style="width:180px;" />
+            </div>
+            <div class="np-field">
+              <label>Radius (m)</label>
+              <input type="number" id="ep-radius-${p.id}" value="${p.radius_meters}" style="width:90px;" />
+            </div>
+            <div class="np-field">
+              <label>Color</label>
+              <input type="color" id="ep-color-${p.id}" value="${p.color}" style="height:32px;padding:2px 4px;width:60px;" />
+            </div>
+            <div class="np-field">
+              <label>Description</label>
+              <input type="text" id="ep-desc-${p.id}" value="${escHtml(p.description || '')}" style="width:200px;" />
+            </div>
+            <div style="display:flex;gap:6px;align-items:flex-end;">
+              <button class="btn btn-primary btn-sm" onclick="saveEdit(${p.id})">Save</button>
+              <button class="btn btn-ghost btn-sm"   onclick="cancelEdit(${p.id})">Cancel</button>
+            </div>
+          </div>
+        </td>`;
+      tbody.appendChild(editRow);
+    });
+  }
+
+  // ── Map click → show create form ──────────────────────────────────────────
+  map.on('click', function (e) {
+    createLatLng = e.latlng;
+    if (createMarker) createMarker.remove();
+    createMarker = L.circleMarker([e.latlng.lat, e.latlng.lng], {
+      radius: 8, color: document.getElementById('cf-color').value,
+      fillColor: document.getElementById('cf-color').value, fillOpacity: .9, weight: 2,
+    }).addTo(map);
+    document.getElementById('cf-coords').textContent =
+      `Lat: ${e.latlng.lat.toFixed(6)}, Lng: ${e.latlng.lng.toFixed(6)}`;
+    document.getElementById('createFormPanel').style.display = 'block';
+    document.getElementById('cf-name').focus();
+  });
+
+  // Update marker color when color picker changes
+  document.getElementById('cf-color').addEventListener('input', function () {
+    if (createMarker) {
+      createMarker.setStyle({ color: this.value, fillColor: this.value });
+    }
+  });
+
+  window.closeCreateForm = function () {
+    document.getElementById('createFormPanel').style.display = 'none';
+    if (createMarker) { createMarker.remove(); createMarker = null; }
+    createLatLng = null;
+    document.getElementById('cf-name').value = '';
+    document.getElementById('cf-radius').value = '500';
+    document.getElementById('cf-color').value = '#3b82f6';
+    document.getElementById('cf-desc').value = '';
+  };
+
+  window.submitCreate = async function () {
+    const name = document.getElementById('cf-name').value.trim();
+    if (!name) { toast('error', 'Name is required'); return; }
+    if (!createLatLng) { toast('error', 'Click on the map first'); return; }
+
+    const body = {
+      name,
+      latitude:      createLatLng.lat,
+      longitude:     createLatLng.lng,
+      radius_meters: parseInt(document.getElementById('cf-radius').value) || 500,
+      color:         document.getElementById('cf-color').value,
+      description:   document.getElementById('cf-desc').value.trim(),
+    };
+
+    const r = await fetch('/api/named-places/', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      toast('error', d.error || 'Failed to create place');
+      return;
+    }
+    closeCreateForm();
+    toast('success', `"${name}" created`);
+    await loadPlaces();
+  };
+
+  // ── Inline edit ───────────────────────────────────────────────────────────
+  window.startEdit = function (id) {
+    // Close any other open edit rows
+    document.querySelectorAll('.np-edit-row.active').forEach(r => {
+      if (r.id !== `np-edit-${id}`) r.classList.remove('active');
+    });
+    document.getElementById(`np-edit-${id}`).classList.toggle('active');
+  };
+
+  window.cancelEdit = function (id) {
+    document.getElementById(`np-edit-${id}`).classList.remove('active');
+  };
+
+  window.saveEdit = async function (id) {
+    const body = {
+      name:         document.getElementById(`ep-name-${id}`).value.trim(),
+      radius_meters: parseInt(document.getElementById(`ep-radius-${id}`).value) || 500,
+      color:        document.getElementById(`ep-color-${id}`).value,
+      description:  document.getElementById(`ep-desc-${id}`).value.trim(),
+    };
+    const r = await fetch(`/api/named-places/${id}/`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      toast('error', d.error || 'Failed to save');
+      return;
+    }
+    toast('success', 'Place updated');
+    await loadPlaces();
+  };
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  window.deletePlace = async function (id, name) {
+    if (!confirm(`Delete "${name}"? Photos tagged with this place will lose their assignment.`)) return;
+    const r = await fetch(`/api/named-places/${id}/`, {
+      method: 'DELETE', credentials: 'include',
+      headers: { 'X-CSRFToken': csrf() },
+    });
+    if (!r.ok && r.status !== 204) {
+      toast('error', 'Failed to delete');
+      return;
+    }
+    toast('success', `"${name}" deleted`);
+    await loadPlaces();
+  };
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ── Initial load ──────────────────────────────────────────────────────────
+  loadPlaces();
+
+})();
+</script>
+{% endblock %}

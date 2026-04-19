@@ -97,6 +97,25 @@ class Category(models.Model):
         return self.name
 
 
+class NamedPlace(models.Model):
+    """A physical location (plant, office, site) that photos can be tagged with."""
+    name          = models.CharField(max_length=150)
+    slug          = models.SlugField(max_length=150, unique=True)
+    latitude      = models.FloatField()
+    longitude     = models.FloatField()
+    radius_meters = models.PositiveIntegerField(default=500, help_text='Auto-assign radius in metres')
+    color         = models.CharField(max_length=7, default='#3b82f6')  # hex for map circle
+    description   = models.TextField(blank=True)
+    created_by    = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Video(models.Model):
     STATUS_PENDING    = 'pending'
     STATUS_PROCESSING = 'processing'
@@ -375,6 +394,46 @@ class VideoChapter(models.Model):
 
 # ── Video Moments ─────────────────────────────────────────────────────────────
 
+class MomentCategory(models.Model):
+    """
+    A category that can be applied to VideoMoment.
+    System categories (is_system=True) ship with the app and cannot be deleted.
+    Custom categories (is_system=False) are created by editors/superadmins and are global.
+    """
+    SYSTEM_CATEGORIES = [
+        # (key, name, icon, color, sort_order)
+        ('important',   'Important',   '🔴', '#ef4444', 10),
+        ('celebration', 'Celebration', '🎉', '#f97316', 20),
+        ('watch_again', 'Watch Again', '⭐', '#eab308', 30),
+        ('highlight',   'Highlight',   '✅', '#22c55e', 40),
+        ('note',        'Note',        '📝', '#3b82f6', 50),
+        ('question',    'Question',    '❓', '#a855f7', 60),
+    ]
+
+    key        = models.CharField(max_length=50, unique=True)
+    name       = models.CharField(max_length=50)
+    icon       = models.CharField(max_length=8, default='🏷️')
+    color      = models.CharField(max_length=7, default='#6b7280')
+    is_system  = models.BooleanField(default=False)
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True)
+    sort_order = models.PositiveIntegerField(default=100)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def ensure_system_categories(cls):
+        """Idempotent — create system categories if they don't exist yet."""
+        for key, name, icon, color, order in cls.SYSTEM_CATEGORIES:
+            cls.objects.get_or_create(
+                key=key,
+                defaults=dict(name=name, icon=icon, color=color, is_system=True, sort_order=order),
+            )
+
+
 class VideoMoment(models.Model):
     """
     User-tagged moment in a video.
@@ -426,7 +485,8 @@ class VideoMoment(models.Model):
     title         = models.CharField(max_length=200)
     description   = models.TextField(blank=True)
     visibility    = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default=VISIBILITY_PRIVATE)
-    category      = models.CharField(max_length=20, choices=CATEGORY_CHOICES, blank=True, default='')
+    # Stores the MomentCategory.key — may be a system key or a custom 'c_<id>' key
+    category      = models.CharField(max_length=50, blank=True, default='')
     created_at    = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -816,6 +876,12 @@ class Photo(models.Model):
                                  help_text='Camera EXIF metadata: make, model, GPS, exposure settings, etc.')
     taken_at  = models.DateTimeField(null=True, blank=True, db_index=True,
                                      help_text='Date/time the photo was taken (from EXIF DateTimeOriginal)')
+
+    # GPS coordinates — indexed for fast geo queries (populated from EXIF or set manually)
+    latitude    = models.FloatField(null=True, blank=True, db_index=True)
+    longitude   = models.FloatField(null=True, blank=True, db_index=True)
+    named_place = models.ForeignKey('NamedPlace', on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name='photos')
 
     # Archive — hidden from main library without deleting
     is_archived = models.BooleanField(default=False, db_index=True,

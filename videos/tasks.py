@@ -204,6 +204,44 @@ def generate_seek_thumbnails_task(self, video_id: str):
     logger.info(f'[seek_thumbnails] sprite saved → {relative_path}')
 
 
+# ── Manual upscale (Lanczos → replace source → re-encode / re-analyse) ───────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.upscale_video_task',
+    queue='processing',
+    max_retries=1,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def upscale_video_task(self, video_id: str, target_long_edge: int):
+    from .upscale import run_video_upscale_pipeline
+
+    try:
+        run_video_upscale_pipeline(video_id, int(target_long_edge))
+    except Exception as exc:
+        logger.error(f'upscale_video_task failed for {video_id}: {exc}')
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.upscale_photo_task',
+    queue='processing',
+    max_retries=1,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def upscale_photo_task(self, photo_id: str, target_long_edge: int):
+    from .upscale import run_photo_upscale_pipeline
+
+    try:
+        run_photo_upscale_pipeline(photo_id, int(target_long_edge))
+    except Exception as exc:
+        logger.error(f'upscale_photo_task failed for {photo_id}: {exc}')
+        raise self.retry(exc=exc)
+
+
 # ── Auto-caption generation (faster-whisper) ──────────────────────────────────
 
 def _seconds_to_vtt_time(seconds: float) -> str:
@@ -1861,6 +1899,36 @@ def analyze_photo_task(self, photo_id: str):
         photo.duplicate_of_id       = dup_of_id
         photo.exif_data             = exif_data if exif_data else None
         photo.taken_at              = taken_at
+
+        # Extract GPS into indexed lat/lng fields for fast geo queries
+        try:
+            gps = photo.exif_data.get('GPSInfo', {}) if photo.exif_data else {}
+            if gps and 'GPSLatitude' in gps and 'GPSLongitude' in gps:
+                def _dms(arr, ref):
+                    d, m, s = arr[0], arr[1], arr[2]
+                    dec = d + m/60 + s/3600
+                    return -dec if ref in ('S', 'W') else dec
+                photo.latitude  = round(_dms(gps['GPSLatitude'],  gps.get('GPSLatitudeRef',  'N')), 7)
+                photo.longitude = round(_dms(gps['GPSLongitude'], gps.get('GPSLongitudeRef', 'E')), 7)
+                # Auto-assign nearest named place (inline to avoid circular import)
+                from .models import NamedPlace as _NP
+                import math as _m
+                def _hav(lat1, lon1, lat2, lon2):
+                    R = 6_371_000
+                    p1, p2 = _m.radians(lat1), _m.radians(lat2)
+                    dp = _m.radians(lat2 - lat1)
+                    dl = _m.radians(lon2 - lon1)
+                    a = _m.sin(dp/2)**2 + _m.cos(p1)*_m.cos(p2)*_m.sin(dl/2)**2
+                    return 2 * R * _m.asin(_m.sqrt(a))
+                best, best_dist = None, float('inf')
+                for place in _NP.objects.all():
+                    dist = _hav(photo.latitude, photo.longitude, place.latitude, place.longitude)
+                    if dist <= place.radius_meters and dist < best_dist:
+                        best, best_dist = place, dist
+                photo.named_place = best
+        except Exception:
+            pass
+
         photo.status                = Photo.STATUS_READY
         photo.processing_error      = ''
         photo.save(update_fields=[
@@ -1868,6 +1936,7 @@ def analyze_photo_task(self, photo_id: str):
             'clip_embedding', 'ocr_text', 'width', 'height', 'thumbnail',
             'is_potential_duplicate', 'duplicate_of_id',
             'exif_data', 'taken_at',
+            'latitude', 'longitude', 'named_place',
             'status', 'processing_error',
         ])
         logger.info(
