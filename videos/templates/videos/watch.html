@@ -1495,17 +1495,17 @@
 
         <div>
           <label class="w-label">Title</label>
-          <input type="text" id="editTitle" class="w-input" value="{{ video.title|escapejs }}" style="width:100%;margin-top:5px;" />
+          <input type="text" id="editTitle" class="w-input" value="{{ video.title }}" style="width:100%;margin-top:5px;" />
         </div>
 
         <div>
           <label class="w-label">Description</label>
-          <textarea id="editDesc" class="w-input" rows="4" style="width:100%;margin-top:5px;resize:vertical;">{{ video.description|escapejs }}</textarea>
+          <textarea id="editDesc" class="w-input" rows="4" style="width:100%;margin-top:5px;resize:vertical;">{{ video.description }}</textarea>
         </div>
 
         <div>
           <label class="w-label">Tags <span style="font-size:11px;color:var(--text-subtle);">(comma separated)</span></label>
-          <input type="text" id="editTags" class="w-input" value="{{ video.tags|escapejs }}" style="width:100%;margin-top:5px;" placeholder="tutorial, python, django" />
+          <input type="text" id="editTags" class="w-input" value="{{ video.tags }}" style="width:100%;margin-top:5px;" placeholder="tutorial, python, django" />
         </div>
 
         <div>
@@ -1870,11 +1870,79 @@
       </div><!-- /two-column grid -->
     </div>
 
+    <div class="modal-footer" style="justify-content:space-between;">
+      <button class="btn btn-danger"
+              id="deleteVideoBtn"
+              onclick="openDeleteVideoModal()"
+              style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.35);display:inline-flex;align-items:center;gap:6px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6M14 11v6"/>
+          <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+        </svg>
+        Delete Video
+      </button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+        <button class="btn btn-primary" id="editSaveBtn" onclick="saveVideoEdit()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+          Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Delete Video Confirmation Modal (GitHub-style typed confirm) ── -->
+<div class="modal-backdrop" id="deleteVideoModal" onclick="deleteVideoBackdropClick(event)" style="z-index:3100;">
+  <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+    <div class="modal-header" style="background:rgba(239,68,68,.08);border-bottom:1px solid rgba(239,68,68,.25);">
+      <div class="modal-title" style="color:#ef4444;display:flex;align-items:center;gap:8px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9"  x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        Move this video to Trash?
+      </div>
+      <button type="button" class="modal-close" onclick="closeDeleteVideoModal()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="padding:18px 22px;">
+      <p style="font-size:13px;line-height:1.5;margin:0 0 10px;">
+        This video will be <strong>moved to Trash</strong>. It will be hidden from:
+      </p>
+      <ul style="font-size:12px;color:var(--text-muted);margin:0 0 14px 18px;padding:0;line-height:1.7;">
+        <li>All search results, feeds, channel pages and place pages</li>
+        <li>All tag, category and people counts</li>
+        <li>Playlists, recommendations and the watch page</li>
+      </ul>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">
+        To confirm, type the phrase exactly:
+      </p>
+      <div style="background:var(--surface-2,var(--bg));border:1px dashed var(--border);border-radius:6px;padding:8px 10px;font-size:12px;margin-bottom:10px;word-break:break-word;">
+        <code id="delVidTitleEcho" style="color:var(--accent);">Confirm Delete</code>
+      </div>
+      <input type="text" id="delVidConfirmInput"
+             class="w-input" style="width:100%;"
+             placeholder='Type "Confirm Delete" to enable Delete'
+             autocomplete="off"
+             autocorrect="off"
+             autocapitalize="off"
+             spellcheck="false"
+             onpaste="event.preventDefault(); return false;"
+             ondrop="event.preventDefault(); return false;"
+             oninput="onDelVidConfirmInput()">
+      <div id="delVidStatus" style="font-size:12px;margin-top:10px;min-height:18px;color:var(--text-muted);"></div>
+    </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
-      <button class="btn btn-primary" id="editSaveBtn" onclick="saveVideoEdit()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
-        Save Changes
+      <button type="button" class="btn btn-secondary" onclick="closeDeleteVideoModal()">Cancel</button>
+      <button type="button" class="btn" id="delVidGoBtn" disabled
+              style="background:#ef4444;color:#fff;opacity:.5;pointer-events:none;"
+              onclick="confirmDeleteVideo()">
+        Move to Trash
       </button>
     </div>
   </div>
@@ -3170,6 +3238,79 @@
     }
     btn.disabled = false;
     btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg> Save Changes';
+  }
+
+  // ── Delete Video (GitHub-style typed confirmation) ──────────────────────────
+  const _VID_TITLE_EXPECTED = 'Confirm Delete';
+  function _expectedVidTitle() { return _VID_TITLE_EXPECTED; }
+  function openDeleteVideoModal() {
+    const m = document.getElementById('deleteVideoModal');
+    if (!m) return;
+    m.classList.add('open');
+    m.style.display = 'flex';
+    const inp = document.getElementById('delVidConfirmInput');
+    if (inp) { inp.value = ''; setTimeout(() => inp.focus(), 80); }
+    document.getElementById('delVidStatus').textContent = '';
+    _setDelVidEnabled(false);
+  }
+  function closeDeleteVideoModal() {
+    const m = document.getElementById('deleteVideoModal');
+    if (!m) return;
+    m.classList.remove('open');
+    m.style.display = 'none';
+  }
+  function deleteVideoBackdropClick(ev) {
+    if (ev.target && ev.target.id === 'deleteVideoModal') closeDeleteVideoModal();
+  }
+  function _setDelVidEnabled(on) {
+    const b = document.getElementById('delVidGoBtn');
+    if (!b) return;
+    b.disabled = !on;
+    b.style.opacity      = on ? '1' : '.5';
+    b.style.pointerEvents = on ? 'auto' : 'none';
+  }
+  function onDelVidConfirmInput() {
+    const inp = document.getElementById('delVidConfirmInput');
+    const expected = _expectedVidTitle();
+    const ok = (inp && inp.value.trim() === expected && expected.length > 0);
+    _setDelVidEnabled(ok);
+    const status = document.getElementById('delVidStatus');
+    if (inp && inp.value && !ok) {
+      status.style.color = 'var(--text-muted)';
+      status.textContent = 'Phrase does not match yet.';
+    } else if (ok) {
+      status.style.color = '#ef4444';
+      status.textContent = 'Match confirmed — click Delete to proceed.';
+    } else {
+      status.textContent = '';
+    }
+  }
+  async function confirmDeleteVideo() {
+    const btn    = document.getElementById('delVidGoBtn');
+    const status = document.getElementById('delVidStatus');
+    _setDelVidEnabled(false);
+    btn.textContent = 'Moving to Trash…';
+    status.style.color = 'var(--text-muted)';
+    status.textContent = 'Moving video to Trash…';
+    try {
+      const r = await fetch(VIDEO_API, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      if (!r.ok && r.status !== 204) {
+        const t = await r.text().catch(() => '');
+        throw new Error(t || ('Delete failed (HTTP ' + r.status + ')'));
+      }
+      status.style.color = '#22c55e';
+      status.textContent = '✓ Moved to Trash. Redirecting…';
+      setTimeout(() => { window.location.href = '{{ SITE_URL }}/'; }, 900);
+    } catch (err) {
+      status.style.color = '#ef4444';
+      status.textContent = (err && err.message) || 'Delete failed.';
+      btn.textContent = 'Move to Trash';
+      _setDelVidEnabled(true);
+    }
   }
 
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEditModal(); });

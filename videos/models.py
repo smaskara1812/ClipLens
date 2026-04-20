@@ -7,6 +7,42 @@ from django.dispatch import receiver
 from pgvector.django import VectorField
 
 
+# ────────────────────────────────────────────────────────────────────────
+# Soft-delete managers — shared by Video and Photo
+#
+# Default manager (`objects`) hides soft-deleted rows (deleted_at IS NOT NULL),
+# so every existing query across views, searches, counts, and reverse FK
+# lookups automatically skips trash.
+#
+# `all_objects` returns every row (including soft-deleted) for the
+# deleted-media admin page, restore/purge endpoints, and storage scans.
+# ────────────────────────────────────────────────────────────────────────
+class _AliveQuerySet(models.QuerySet):
+    def alive(self):
+        return self.filter(deleted_at__isnull=True)
+
+    def deleted(self):
+        return self.filter(deleted_at__isnull=False)
+
+
+class AliveManager(models.Manager):
+    """Default manager — excludes soft-deleted rows."""
+    def get_queryset(self):
+        return _AliveQuerySet(self.model, using=self._db).filter(deleted_at__isnull=True)
+
+
+class AllObjectsManager(models.Manager):
+    """Manager that returns everything, including soft-deleted rows."""
+    def get_queryset(self):
+        return _AliveQuerySet(self.model, using=self._db)
+
+    def alive(self):
+        return self.get_queryset().alive()
+
+    def deleted(self):
+        return self.get_queryset().deleted()
+
+
 class UserProfile(models.Model):
     """Extends Django's User with a platform role."""
     ROLE_SUPERADMIN = 'superadmin'
@@ -152,7 +188,10 @@ class Video(models.Model):
     thumbnail         = models.ImageField(upload_to='thumbnails/', blank=True, null=True)
 
     duration   = models.FloatField(null=True, blank=True)
-    file_size  = models.BigIntegerField(null=True, blank=True)
+    file_size  = models.BigIntegerField(null=True, blank=True,
+                                        help_text='Size of the original uploaded file in bytes')
+    upscaled_size = models.BigIntegerField(null=True, blank=True,
+                                           help_text='Total size of all upscaled MP4 files in media/upscaled/<id>/ in bytes')
     resolution = models.CharField(max_length=20, blank=True)
     available_qualities = models.CharField(max_length=100, blank=True, default='')
 
@@ -179,8 +218,24 @@ class Video(models.Model):
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
 
+    # ── Soft-delete (trash) ──
+    deleted_at      = models.DateTimeField(null=True, blank=True, db_index=True,
+                                           help_text='If set, this video is in Trash and hidden everywhere')
+    deleted_by      = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                        related_name='deleted_videos')
+    deleted_reason  = models.CharField(max_length=255, blank=True)
+
+    # Default manager hides soft-deleted rows; all_objects sees everything.
+    objects     = AliveManager()
+    all_objects = AllObjectsManager()
+
     class Meta:
         ordering = ['-created_at']
+        # IMPORTANT: keep the default manager that hides deleted rows as
+        # the base manager too, so reverse relations (channel.videos.all(),
+        # named_place.videos.all(), etc.) also skip trash.
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
         indexes = [
             models.Index(fields=['status', 'visibility'], name='video_status_vis'),
             models.Index(fields=['channel', 'status', 'visibility'], name='video_ch_status_vis'),
@@ -192,6 +247,31 @@ class Video(models.Model):
 
     def __str__(self):
         return self.title
+
+    # ── Soft-delete helpers ──
+    @property
+    def is_deleted(self):
+        return self.deleted_at is not None
+
+    def soft_delete(self, *, user=None, reason=''):
+        """Mark as trashed — hides from everywhere, keeps files on disk."""
+        from django.utils import timezone
+        self.deleted_at     = timezone.now()
+        self.deleted_by     = user if (user and getattr(user, 'pk', None)) else None
+        self.deleted_reason = (reason or '')[:255]
+        self.save(update_fields=['deleted_at', 'deleted_by', 'deleted_reason', 'updated_at'])
+
+    def restore(self):
+        """Revert soft-delete — video becomes visible again."""
+        # Use all_objects so the UPDATE isn't filtered by AliveManager (base_manager_name).
+        Video.all_objects.filter(pk=self.pk).update(
+            deleted_at=None,
+            deleted_by=None,
+            deleted_reason='',
+        )
+        self.deleted_at     = None
+        self.deleted_by     = None
+        self.deleted_reason = ''
 
     # ── backward-compat property ──────────────────────────────────────────────
     @property
@@ -910,8 +990,21 @@ class Photo(models.Model):
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
 
+    # ── Soft-delete (trash) ──
+    deleted_at      = models.DateTimeField(null=True, blank=True, db_index=True,
+                                           help_text='If set, this photo is in Trash and hidden everywhere')
+    deleted_by      = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                        related_name='deleted_photos')
+    deleted_reason  = models.CharField(max_length=255, blank=True)
+
+    # Default manager hides soft-deleted rows; all_objects sees everything.
+    objects     = AliveManager()
+    all_objects = AllObjectsManager()
+
     class Meta:
         ordering = ['-created_at']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
         indexes = [
             models.Index(fields=['status', 'visibility'], name='photo_status_vis'),
             models.Index(fields=['channel', 'status', 'visibility'], name='photo_ch_status_vis'),
@@ -920,6 +1013,29 @@ class Photo(models.Model):
 
     def __str__(self):
         return self.title
+
+    # ── Soft-delete helpers ──
+    @property
+    def is_deleted(self):
+        return self.deleted_at is not None
+
+    def soft_delete(self, *, user=None, reason=''):
+        from django.utils import timezone
+        self.deleted_at     = timezone.now()
+        self.deleted_by     = user if (user and getattr(user, 'pk', None)) else None
+        self.deleted_reason = (reason or '')[:255]
+        self.save(update_fields=['deleted_at', 'deleted_by', 'deleted_reason', 'updated_at'])
+
+    def restore(self):
+        # Use all_objects so the UPDATE isn't filtered by AliveManager (base_manager_name).
+        Photo.all_objects.filter(pk=self.pk).update(
+            deleted_at=None,
+            deleted_by=None,
+            deleted_reason='',
+        )
+        self.deleted_at     = None
+        self.deleted_by     = None
+        self.deleted_reason = ''
 
     @property
     def thumbnail_url(self):
@@ -942,6 +1058,64 @@ class Photo(models.Model):
     @property
     def photo_url(self):
         return f'/photos/{self.id}/'
+
+
+@receiver(post_delete, sender='videos.Video')
+def _cleanup_video_files_on_delete(sender, instance, **kwargs):
+    """
+    Guarantee physical-file cleanup whenever a Video row is deleted — regardless of
+    whether the deletion came from the custom API view, Django admin, or any management
+    command.  The view-level cleanup is kept for symmetry but this is the safety net.
+    """
+    import shutil as _shutil
+    from django.conf import settings as _settings
+    from pathlib import Path as _Path
+
+    media = _Path(_settings.MEDIA_ROOT)
+
+    # 1. HLS segments directory
+    if instance.hls_path:
+        hls_dir = media / 'hls' / str(instance.id)
+        if hls_dir.exists():
+            try:
+                _shutil.rmtree(hls_dir)
+            except Exception:
+                pass
+
+    # 2. Original uploaded file
+    if instance.original_file:
+        try:
+            orig = media / instance.original_file.name
+            if orig.exists():
+                orig.unlink()
+        except Exception:
+            pass
+
+    # 3. Upscaled MP4 files (media/upscaled/<video_id>/)
+    upscale_dir = media / 'upscaled' / str(instance.id)
+    if upscale_dir.exists():
+        try:
+            _shutil.rmtree(upscale_dir)
+        except Exception:
+            pass
+
+    # 4. Thumbnail
+    if instance.thumbnail:
+        try:
+            thumb = _Path(instance.thumbnail.path)
+            if thumb.exists():
+                thumb.unlink()
+        except Exception:
+            pass
+
+    # 5. Seek sprite
+    if instance.seek_sprite:
+        seek_path = media / instance.seek_sprite
+        if seek_path.exists():
+            try:
+                seek_path.unlink()
+            except Exception:
+                pass
 
 
 @receiver(post_delete, sender='videos.Photo')
@@ -1144,3 +1318,103 @@ class Event(models.Model):
         if self.album and self.album.cover_photo:
             return self.album.cover_photo.thumbnail_url
         return None
+
+
+class ActivityLog(models.Model):
+    """Append-only audit trail for editorial & administrative actions.
+
+    Views and searches are intentionally NOT logged. Snapshot-style: the
+    target is referenced by type + id + a human label so log entries
+    survive deletion of the target.
+    """
+    # --- High-level action taxonomy ---------------------------------
+    ACTION_LOGIN          = 'login'
+    ACTION_LOGOUT         = 'logout'
+    ACTION_LOGIN_FAILED   = 'login_failed'
+    ACTION_CREATE         = 'create'
+    ACTION_UPDATE         = 'update'
+    ACTION_DELETE         = 'delete'
+    ACTION_UPLOAD         = 'upload'
+    ACTION_ARCHIVE        = 'archive'
+    ACTION_RESTORE        = 'restore'
+    ACTION_PURGE          = 'purge'
+    ACTION_BULK           = 'bulk'
+    ACTION_RUN_COMMAND    = 'run_command'
+    ACTION_ROLE_CHANGE    = 'role_change'
+    ACTION_PERMISSION     = 'permission_change'
+    ACTION_REGENERATE     = 'regenerate'
+    ACTION_TAG            = 'tag'
+    ACTION_MERGE          = 'merge'
+    ACTION_RENAME         = 'rename'
+    ACTION_OTHER          = 'other'
+    ACTION_CHOICES = [
+        (ACTION_LOGIN, 'Login'),
+        (ACTION_LOGOUT, 'Logout'),
+        (ACTION_LOGIN_FAILED, 'Login failed'),
+        (ACTION_CREATE, 'Create'),
+        (ACTION_UPDATE, 'Update'),
+        (ACTION_DELETE, 'Delete'),
+        (ACTION_UPLOAD, 'Upload'),
+        (ACTION_ARCHIVE, 'Archive'),
+        (ACTION_RESTORE, 'Restore'),
+        (ACTION_PURGE, 'Permanent delete (purge)'),
+        (ACTION_BULK, 'Bulk operation'),
+        (ACTION_RUN_COMMAND, 'Run command'),
+        (ACTION_ROLE_CHANGE, 'Role change'),
+        (ACTION_PERMISSION, 'Permission change'),
+        (ACTION_REGENERATE, 'Regenerate'),
+        (ACTION_TAG, 'Tag'),
+        (ACTION_MERGE, 'Merge'),
+        (ACTION_RENAME, 'Rename'),
+        (ACTION_OTHER, 'Other'),
+    ]
+
+    # --- Who ---
+    actor           = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='activity_log_entries'
+    )
+    actor_username  = models.CharField(max_length=150, blank=True,
+                                       help_text='Snapshot of username at time of action')
+
+    # --- What ---
+    action  = models.CharField(max_length=32, choices=ACTION_CHOICES, default=ACTION_OTHER)
+    verb    = models.CharField(max_length=140, blank=True,
+                               help_text='Short human-readable description, e.g. "uploaded video"')
+
+    # --- Target (generic snapshot FK) ---
+    target_type  = models.CharField(max_length=64, blank=True,
+                                    help_text='Model name of the target, e.g. "Video", "Photo"')
+    target_id    = models.CharField(max_length=64, blank=True,
+                                    help_text='PK of the target at time of action')
+    target_label = models.CharField(max_length=500, blank=True,
+                                    help_text='Human-friendly identifier snapshot (title/name)')
+
+    # --- Diff / extra payload ---
+    changes  = models.JSONField(default=dict, blank=True,
+                                help_text='{ field: {"before": ..., "after": ...}, ... }')
+    metadata = models.JSONField(default=dict, blank=True,
+                                help_text='Extra free-form context')
+
+    # --- Request context ---
+    ip_address     = models.GenericIPAddressField(null=True, blank=True)
+    user_agent     = models.CharField(max_length=500, blank=True)
+    request_path   = models.CharField(max_length=500, blank=True)
+    request_method = models.CharField(max_length=10, blank=True)
+
+    # --- When ---
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes  = [
+            models.Index(fields=['-timestamp'],                 name='act_ts_idx'),
+            models.Index(fields=['actor', '-timestamp'],        name='act_actor_ts_idx'),
+            models.Index(fields=['target_type', 'target_id'],   name='act_target_idx'),
+            models.Index(fields=['action', '-timestamp'],       name='act_action_ts_idx'),
+        ]
+
+    def __str__(self):
+        who = self.actor_username or 'system'
+        tgt = f' {self.target_type}#{self.target_id}' if self.target_type else ''
+        return f'[{self.timestamp:%Y-%m-%d %H:%M}] {who} {self.action}{tgt}'

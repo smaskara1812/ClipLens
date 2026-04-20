@@ -323,9 +323,20 @@ def run_video_upscale_pipeline(video_id: str, target_long_edge: int) -> None:
         existing = [q.strip() for q in (video.available_qualities or "").split(",") if q.strip()]
         if preset_id not in existing:
             existing.append(preset_id)
-            Video.objects.filter(id=video_id).update(
-                available_qualities=",".join(existing)
-            )
+
+        # ── Tally total upscaled_size across all presets in media/upscaled/<id>/ ─
+        total_upscaled = 0
+        try:
+            for f in upscale_dir.iterdir():
+                if f.is_file():
+                    total_upscaled += f.stat().st_size
+        except Exception:
+            pass
+
+        Video.objects.filter(id=video_id).update(
+            available_qualities=",".join(existing),
+            upscaled_size=total_upscaled or None,
+        )
 
         # ── Mark ready ────────────────────────────────────────────────────────
         Video.objects.filter(id=video_id).update(status=Video.STATUS_READY)

@@ -620,7 +620,7 @@ async function saveEdit() {
 }
 
 async function deleteVideo(videoId, title) {
-  if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
+  if (!confirm(`Move "${title}" to Trash? It can be restored by a superadmin.`)) return;
   const res = await fetch(`/api/videos/${videoId}/`, {
     method: 'DELETE',
     headers: { 'X-CSRFToken': getCookie('csrftoken') },

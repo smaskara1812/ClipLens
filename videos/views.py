@@ -38,6 +38,7 @@ from .models import (
     FaceIdentity, FaceIdentityNickname, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
     SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event, NamedPlace,
 )
+from .activity import log_activity, snapshot_fields, diff_snapshots
 from .serializers import (
     VideoListSerializer, VideoDetailSerializer, VideoUploadSerializer,
     VideoFeedSerializer,
@@ -352,9 +353,15 @@ def _user_channel(user):
 
 
 def _is_channel_owner(user, channel) -> bool:
-    """True if the user is the primary owner or a co-editor of this channel."""
+    """True if the user is the primary owner, a co-editor, or a superadmin.
+
+    Superadmins get a global override so they can manage every channel's
+    content without being explicitly added as a co-editor.
+    """
     if not user or not user.is_authenticated or not channel:
         return False
+    if _is_superadmin(user):
+        return True
     if channel.owner_id and channel.owner_id == user.pk:
         return True
     return channel.editors.filter(pk=user.pk).exists()
@@ -1138,8 +1145,8 @@ def player_page(request):
         _np_qs = NamedPlace.objects.filter(
             Q(name__icontains=q) | Q(description__icontains=q)
         ).annotate(
-            np_photo_count=Count('photos', distinct=True),
-            np_video_count=Count('videos', distinct=True),
+            np_photo_count=Count('photos', filter=Q(photos__deleted_at__isnull=True), distinct=True),
+            np_video_count=Count('videos', filter=Q(videos__deleted_at__isnull=True), distinct=True),
         ).order_by('name')[:20]
         place_matches = list(_np_qs)
 
@@ -1856,8 +1863,22 @@ def admin_commands_run(request):
         call_command(cmd, stdout=stdout_buf, stderr=stderr_buf, **kwargs)
         output = stdout_buf.getvalue() or '(no output)'
         errors = stderr_buf.getvalue()
+        log_activity(
+            request, 'run_command',
+            target_type='ManagementCommand', target_label=cmd,
+            verb=f'ran command "{cmd}"',
+            metadata={'command': cmd, 'args': kwargs, 'ok': True,
+                      'stderr_len': len(errors)},
+        )
         return Response({'ok': True, 'output': output, 'errors': errors})
     except Exception as exc:
+        log_activity(
+            request, 'run_command',
+            target_type='ManagementCommand', target_label=cmd,
+            verb=f'ran command "{cmd}" (failed)',
+            metadata={'command': cmd, 'args': kwargs, 'ok': False,
+                      'exception': str(exc)[:500]},
+        )
         return Response({
             'ok': False,
             'output': stdout_buf.getvalue(),
@@ -1866,15 +1887,188 @@ def admin_commands_run(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# ─── Trash: soft-delete restore / purge / admin list ──────────────────────────
+
+def _trash_target(model, obj_id):
+    """Fetch a soft-deleted row via all_objects. Returns None if not found/not deleted."""
+    try:
+        obj = model.all_objects.get(id=obj_id)
+    except model.DoesNotExist:
+        return None
+    return obj if obj.is_deleted else None
+
+
+@api_view(['POST'])
+def video_restore(request, video_id):
+    """POST /api/videos/<uuid>/restore/ — Superadmin-only: restore a soft-deleted video."""
+    if not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+    video = _trash_target(Video, video_id)
+    if video is None:
+        return Response({'error': 'Not in trash.'}, status=status.HTTP_404_NOT_FOUND)
+    video.restore()
+    log_activity(request, 'restore', target=video, verb='restored video from Trash')
+    return Response({'ok': True})
+
+
+@api_view(['DELETE'])
+def video_purge(request, video_id):
+    """DELETE /api/videos/<uuid>/purge/ — Superadmin-only: permanently delete
+    a soft-deleted video (files wiped via post_delete signal)."""
+    if not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+    video = _trash_target(Video, video_id)
+    if video is None:
+        return Response({'error': 'Not in trash.'}, status=status.HTTP_404_NOT_FOUND)
+    snap = {
+        'id': str(video.id), 'title': video.title,
+        'channel_id': video.channel_id,
+        'channel_name': video.channel.name if video.channel_id else None,
+        'original_filename': video.original_filename,
+        'file_size': video.file_size,
+        'upscaled_size': video.upscaled_size,
+    }
+    video.delete()  # fires post_delete signal → files on disk removed
+    log_activity(request, 'purge',
+                 target_type='Video', target_id=snap['id'], target_label=snap['title'],
+                 verb='permanently deleted video', metadata=snap)
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['POST'])
+def photo_restore(request, photo_id):
+    """POST /api/photos/<uuid>/restore/ — Superadmin-only: restore a soft-deleted photo."""
+    if not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+    photo = _trash_target(Photo, photo_id)
+    if photo is None:
+        return Response({'error': 'Not in trash.'}, status=status.HTTP_404_NOT_FOUND)
+    photo.restore()
+    log_activity(request, 'restore', target=photo, verb='restored photo from Trash')
+    return Response({'ok': True})
+
+
+@api_view(['DELETE'])
+def photo_purge(request, photo_id):
+    """DELETE /api/photos/<uuid>/purge/ — Superadmin-only: permanently delete
+    a soft-deleted photo, wiping original + thumbnail files from disk."""
+    if not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+    photo = _trash_target(Photo, photo_id)
+    if photo is None:
+        return Response({'error': 'Not in trash.'}, status=status.HTTP_404_NOT_FOUND)
+    snap = {
+        'id': str(photo.id), 'title': photo.title,
+        'channel_id': photo.channel_id,
+        'channel_name': photo.channel.name if photo.channel_id else None,
+        'file_size': photo.file_size,
+    }
+    # Remove files from disk (no post_delete signal on Photo yet)
+    for field in (photo.file, photo.thumbnail):
+        if field:
+            try:
+                import os as _os
+                _os.remove(field.path)
+            except Exception:
+                pass
+    photo.delete()
+    log_activity(request, 'purge',
+                 target_type='Photo', target_id=snap['id'], target_label=snap['title'],
+                 verb='permanently deleted photo', metadata=snap)
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@superuser_required
+def admin_trash_page(request):
+    """Superadmin-only listing of soft-deleted videos and photos.
+
+    Query params:
+      tab            — 'videos' | 'photos' (default: 'videos')
+      q              — free-text match on title
+      deleted_from   — YYYY-MM-DD  (deleted_at >=)
+      deleted_to     — YYYY-MM-DD  (deleted_at <=)
+      uploaded_from  — YYYY-MM-DD  (created_at >=)
+      uploaded_to    — YYYY-MM-DD  (created_at <=)
+      page           — 1-based
+    """
+    from django.core.paginator import Paginator
+    from datetime import datetime, time as _time
+
+    tab = (request.GET.get('tab') or 'videos').strip().lower()
+    if tab not in ('videos', 'photos'):
+        tab = 'videos'
+
+    q             = (request.GET.get('q') or '').strip()
+    deleted_from  = (request.GET.get('deleted_from') or '').strip()
+    deleted_to    = (request.GET.get('deleted_to') or '').strip()
+    uploaded_from = (request.GET.get('uploaded_from') or '').strip()
+    uploaded_to   = (request.GET.get('uploaded_to') or '').strip()
+
+    def _apply_filters(qs, title_field='title', created_field='created_at'):
+        if q:
+            qs = qs.filter(**{f'{title_field}__icontains': q})
+        try:
+            if deleted_from:
+                qs = qs.filter(deleted_at__gte=datetime.fromisoformat(deleted_from))
+            if deleted_to:
+                qs = qs.filter(deleted_at__lte=datetime.combine(
+                    datetime.fromisoformat(deleted_to).date(), _time.max))
+            if uploaded_from:
+                qs = qs.filter(**{f'{created_field}__gte': datetime.fromisoformat(uploaded_from)})
+            if uploaded_to:
+                qs = qs.filter(**{f'{created_field}__lte': datetime.combine(
+                    datetime.fromisoformat(uploaded_to).date(), _time.max)})
+        except ValueError:
+            pass
+        return qs
+
+    # Counts for both tabs (so the UI shows trash size)
+    videos_total = Video.all_objects.deleted().count()
+    photos_total = Photo.all_objects.deleted().count()
+
+    if tab == 'videos':
+        qs = (Video.all_objects.deleted()
+              .select_related('channel', 'deleted_by')
+              .order_by('-deleted_at'))
+        qs = _apply_filters(qs)
+    else:
+        qs = (Photo.all_objects.deleted()
+              .select_related('channel', 'deleted_by')
+              .order_by('-deleted_at'))
+        qs = _apply_filters(qs)
+
+    paginator = Paginator(qs, 30)
+    page_obj  = paginator.get_page(request.GET.get('page') or 1)
+
+    return render(request, 'videos/admin_trash.html', {
+        'tab':           tab,
+        'page_obj':      page_obj,
+        'total':         paginator.count,
+        'videos_total':  videos_total,
+        'photos_total':  photos_total,
+        'f': {
+            'q':             q,
+            'deleted_from':  deleted_from,
+            'deleted_to':    deleted_to,
+            'uploaded_from': uploaded_from,
+            'uploaded_to':   uploaded_to,
+        },
+    })
+
+
 @editor_required
 def categories_manage_page(request):
-    cats = Category.objects.annotate(video_count=Count('videos')).order_by('name')
+    cats = Category.objects.annotate(
+        video_count=Count('videos', filter=Q(videos__deleted_at__isnull=True))
+    ).order_by('name')
     return render(request, 'videos/categories_manage.html', {'categories': cats})
 
 
 @editor_required
 def named_places_page(request):
-    places = NamedPlace.objects.annotate(photo_count=Count('photos')).order_by('name')
+    places = NamedPlace.objects.annotate(
+        photo_count=Count('photos', filter=Q(photos__deleted_at__isnull=True))
+    ).order_by('name')
     return render(request, 'videos/named_places.html', {'places': places})
 
 
@@ -1994,7 +2188,7 @@ def storage_dashboard_page(request):
         .order_by('channel__name', '-created_at')
     )
 
-    ASSET_KEYS = ('original', 'hls', 'thumbnail', 'sprite', 'faces', 'subtitles', 'audio')
+    ASSET_KEYS = ('original', 'hls', 'upscaled', 'thumbnail', 'sprite', 'faces', 'subtitles', 'audio')
 
     rows        = []          # one dict per video
     ch_map      = {}          # channel_name → aggregated sizes dict
@@ -2009,6 +2203,9 @@ def storage_dashboard_page(request):
 
         # HLS segments directory
         s['hls'] = _path_size(media / 'hls' / str(v.id))
+
+        # Upscaled MP4 files
+        s['upscaled'] = _path_size(media / 'upscaled' / str(v.id))
 
         # Thumbnail image
         s['thumbnail'] = _path_size(v.thumbnail.path) if (v.thumbnail and v.thumbnail.name) else 0
@@ -2082,13 +2279,44 @@ def storage_dashboard_page(request):
 
     photo_grand['count'] = len(photo_rows)
 
-    # Combined grand total (videos + photos)
+    # Combined grand total (videos + photos) — alive only
     combined_total = grand['total'] + photo_grand['total']
 
-    # Pre-format sizes for template
-    def fmt_row(d):
-        return {k: _fmt_bytes(v) if isinstance(v, int) and k not in ('count',) else v
-                for k, v in d.items()}
+    # ── Trash (soft-deleted) disk usage ─────────────────────────────────────
+    # Files for soft-deleted media still occupy disk.  Count them separately
+    # so admins can see recoverable space by purging Trash.
+    trash_video_bytes = 0
+    trash_video_count = 0
+    for v in Video.all_objects.deleted().select_related('channel'):
+        trash_video_count += 1
+        if v.original_file and v.original_file.name:
+            trash_video_bytes += _path_size(v.original_file.path)
+        trash_video_bytes += _path_size(media / 'hls' / str(v.id))
+        trash_video_bytes += _path_size(media / 'upscaled' / str(v.id))
+        if v.thumbnail and v.thumbnail.name:
+            trash_video_bytes += _path_size(v.thumbnail.path)
+        if v.seek_sprite:
+            trash_video_bytes += _path_size(media / v.seek_sprite)
+        trash_video_bytes += _path_size(media / 'faces' / str(v.id))
+        trash_video_bytes += _path_size(media / 'audio' / f'{v.id}.wav')
+
+    trash_photo_bytes = 0
+    trash_photo_count = 0
+    for p in Photo.all_objects.deleted().select_related('channel'):
+        trash_photo_count += 1
+        if p.file and p.file.name:
+            trash_photo_bytes += _path_size(p.file.path)
+        if p.thumbnail and p.thumbnail.name:
+            trash_photo_bytes += _path_size(p.thumbnail.path)
+        trash_photo_bytes += _path_size(media / 'faces' / 'photos' / str(p.id))
+
+    trash_grand = {
+        'video_count':  trash_video_count,
+        'video_bytes':  trash_video_bytes,
+        'photo_count':  trash_photo_count,
+        'photo_bytes':  trash_photo_bytes,
+        'total':        trash_video_bytes + trash_photo_bytes,
+    }
 
     return render(request, 'videos/storage_dashboard.html', {
         'rows':           rows,
@@ -2100,6 +2328,7 @@ def storage_dashboard_page(request):
         'photo_grand':    photo_grand,
         'photo_keys':     PHOTO_KEYS,
         'combined_total': combined_total,
+        'trash':          trash_grand,
     })
 
 
@@ -2149,6 +2378,7 @@ def channel_list(request):
         slug=slug,
         description=data.get('description', ''),
     )
+    log_activity(request, 'create', target=channel, verb='created channel')
     return Response(ChannelSerializer(channel).data, status=status.HTTP_201_CREATED)
 
 
@@ -2179,13 +2409,26 @@ def _channel_detail_response(request, channel):
         return Response({'error': 'You do not own this channel.'}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == 'PATCH':
+        _fields = ['name', 'slug', 'description']
+        before = snapshot_fields(channel, _fields)
         serializer = ChannelSerializer(channel, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            channel.refresh_from_db()
+            after = snapshot_fields(channel, _fields)
+            diff = diff_snapshots(before, after)
+            if diff:
+                log_activity(request, 'update', target=channel,
+                             verb='updated channel', changes=diff)
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    _snap = {'id': channel.id, 'name': channel.name, 'slug': channel.slug}
     channel.delete()
+    log_activity(request, 'delete',
+                 target_type='Channel', target_id=str(_snap['id']),
+                 target_label=_snap['name'],
+                 verb='deleted channel', metadata=_snap)
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -2234,6 +2477,12 @@ def channel_editors(request, channel_id):
         return Response({'error': f'{username} has no role profile.'}, status=status.HTTP_400_BAD_REQUEST)
 
     channel.editors.add(target)
+    log_activity(
+        request, 'permission_change', target=channel,
+        verb=f'added editor {target.username}',
+        metadata={'editor_user_id': target.id, 'editor_username': target.username,
+                  'action': 'add'},
+    )
     return Response({'id': target.id, 'username': target.username, 'email': target.email}, status=status.HTTP_201_CREATED)
 
 
@@ -2248,6 +2497,12 @@ def channel_editor_remove(request, channel_id, user_id):
 
     target = get_object_or_404(User, pk=user_id)
     channel.editors.remove(target)
+    log_activity(
+        request, 'permission_change', target=channel,
+        verb=f'removed editor {target.username}',
+        metadata={'editor_user_id': target.id, 'editor_username': target.username,
+                  'action': 'remove'},
+    )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -2302,7 +2557,9 @@ def channel_link_detail(request, link_id):
 @api_view(['GET', 'POST'])
 def category_list(request):
     if request.method == 'GET':
-        cats = Category.objects.annotate(video_count=Count('videos')).all()
+        cats = Category.objects.annotate(
+            video_count=Count('videos', filter=Q(videos__deleted_at__isnull=True))
+        ).all()
         return Response([
             {**CategorySerializer(c).data, 'video_count': c.video_count}
             for c in cats
@@ -2313,8 +2570,9 @@ def category_list(request):
 
     serializer = CategorySerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        cat = serializer.save()
         cache.delete('all_categories')
+        log_activity(request, 'create', target=cat, verb='created category')
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2336,15 +2594,26 @@ def category_detail(request, category_id):
                 {'error': f'Cannot delete: {video_count} video(s) are assigned to this category. Reassign them first.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        _snap = {'id': cat.id, 'name': cat.name}
         cat.delete()
         cache.delete('all_categories')
+        log_activity(request, 'delete',
+                     target_type='Category', target_id=str(_snap['id']),
+                     target_label=_snap['name'], verb='deleted category')
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # PATCH — rename
+    _before = snapshot_fields(cat, ['name'])
     serializer = CategorySerializer(cat, data=request.data, partial=True)
     if serializer.is_valid():
         serializer.save()
         cache.delete('all_categories')
+        cat.refresh_from_db()
+        _after = snapshot_fields(cat, ['name'])
+        _diff = diff_snapshots(_before, _after)
+        if _diff:
+            log_activity(request, 'update', target=cat,
+                         verb='updated category', changes=_diff)
         return Response(serializer.data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2394,8 +2663,8 @@ def named_place_list(request):
     """
     if request.method == 'GET':
         places = NamedPlace.objects.annotate(
-            photo_count=Count('photos', distinct=True),
-            video_count=Count('videos', distinct=True),
+            photo_count=Count('photos', filter=Q(photos__deleted_at__isnull=True), distinct=True),
+            video_count=Count('videos', filter=Q(videos__deleted_at__isnull=True), distinct=True),
         )
         return Response([{
             'id': p.id, 'name': p.name, 'slug': p.slug,
@@ -2433,6 +2702,9 @@ def named_place_list(request):
     )
     # Auto-assign existing photos that fall within this new place's radius
     _bulk_assign_named_place(place)
+    log_activity(request, 'create', target=place, verb='created named place',
+                 metadata={'latitude': lat, 'longitude': lng,
+                           'radius_meters': place.radius_meters})
     return Response({
         'id': place.id, 'name': place.name, 'slug': place.slug,
         'latitude': place.latitude, 'longitude': place.longitude,
@@ -2454,10 +2726,17 @@ def named_place_detail(request, place_id):
         return Response({'error': 'Editor access required.'}, status=403)
 
     if request.method == 'DELETE':
+        _snap = {'id': place.id, 'name': place.name, 'slug': place.slug}
         place.delete()  # named_place FK on photos is SET_NULL
+        log_activity(request, 'delete',
+                     target_type='NamedPlace', target_id=str(_snap['id']),
+                     target_label=_snap['name'],
+                     verb='deleted named place', metadata=_snap)
         return Response(status=204)
 
     # PATCH
+    _np_fields = ['name', 'latitude', 'longitude', 'radius_meters', 'color', 'description']
+    _np_before = snapshot_fields(place, _np_fields)
     if 'name' in request.data:
         place.name = request.data['name'].strip()
     if 'latitude' in request.data:
@@ -2473,6 +2752,11 @@ def named_place_detail(request, place_id):
     place.save()
     # Re-run auto-assignment for all photos since location/radius may have changed
     _bulk_assign_named_place(place)
+    _np_after = snapshot_fields(place, _np_fields)
+    _np_diff = diff_snapshots(_np_before, _np_after)
+    if _np_diff:
+        log_activity(request, 'update', target=place,
+                     verb='updated named place', changes=_np_diff)
     return Response({
         'id': place.id, 'name': place.name, 'slug': place.slug,
         'latitude': place.latitude, 'longitude': place.longitude,
@@ -2718,6 +3002,16 @@ def video_upload(request):
 
     _dispatch_process_video(video.id)
 
+    log_activity(
+        request, 'upload', target=video, verb='uploaded video',
+        metadata={
+            'channel_id': channel.id if channel else None,
+            'channel_name': channel.name if channel else None,
+            'original_filename': video.original_filename,
+            'file_size': video.file_size,
+        },
+    )
+
     return Response({
         'id': str(video.id),
         'title': video.title,
@@ -2776,6 +3070,9 @@ def video_detail(request, video_id):
         return Response({'error': 'You do not own this video.'}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == 'PATCH':
+        _audit_fields = ['title', 'description', 'tags', 'category_id', 'visibility',
+                         'comments_enabled', 'named_place_id', 'latitude', 'longitude']
+        before_snap = snapshot_fields(video, _audit_fields)
         # Handle location fields separately (not in serializer)
         extra_fields = []
         if 'named_place_id' in request.data:
@@ -2796,6 +3093,12 @@ def video_detail(request, video_id):
         serializer = VideoDetailSerializer(video, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
+            video.refresh_from_db()
+            after_snap = snapshot_fields(video, _audit_fields)
+            diff = diff_snapshots(before_snap, after_snap)
+            if diff:
+                log_activity(request, 'update', target=video,
+                             verb='updated video', changes=diff)
             data = serializer.data
             data['latitude']         = video.latitude
             data['longitude']        = video.longitude
@@ -2805,16 +3108,25 @@ def video_detail(request, video_id):
             return Response(data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # DELETE
-    if video.hls_path:
-        hls_dir = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id)
-        if hls_dir.exists():
-            shutil.rmtree(hls_dir)
-    if video.original_file:
-        orig_path = Path(settings.MEDIA_ROOT) / video.original_file.name
-        if orig_path.exists():
-            orig_path.unlink()
-    video.delete()
+    # DELETE — soft-delete only. Files stay on disk until an admin purges
+    # the record from /admin-panel/deleted/. Editors + admins can soft-delete.
+    reason = ''
+    try:
+        reason = (request.data.get('reason') or '').strip()[:255]
+    except Exception:
+        reason = ''
+    video.soft_delete(user=request.user, reason=reason)
+    log_activity(
+        request, 'delete',
+        target=video,
+        verb='soft-deleted video (moved to Trash)',
+        metadata={
+            'type': 'soft_delete',
+            'reason': reason,
+            'channel_id': video.channel_id,
+            'channel_name': video.channel.name if video.channel_id else None,
+        },
+    )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -2940,6 +3252,9 @@ def video_update_thumbnail(request, video_id):
 
     video.thumbnail = thumbnail
     video.save(update_fields=['thumbnail'])
+    log_activity(request, 'update', target=video,
+                 verb='updated video thumbnail',
+                 metadata={'filename': thumbnail.name})
     return Response({'thumbnail_url': video.thumbnail_url})
 
 
@@ -3810,6 +4125,12 @@ def subtitle_upload(request, video_id):
     except Exception:
         pass  # non-critical — subtitle still saved, search index rebuilt on next regenerate
 
+    log_activity(
+        request, 'upload', target=video,
+        verb=f'uploaded subtitle ({language})',
+        metadata={'subtitle_id': subtitle.id, 'language': language,
+                  'format': fmt, 'filename': sub_file.name},
+    )
     return Response(SubtitleSerializer(subtitle).data, status=status.HTTP_201_CREATED)
 
 
@@ -3822,8 +4143,13 @@ def subtitle_delete(request, video_id, subtitle_id):
     is_owner = _is_video_owner(request.user, video)
     if not is_owner:
         return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+    _sub_snap = {'subtitle_id': subtitle.id, 'language': subtitle.language,
+                 'format': subtitle.format, 'is_auto': subtitle.is_auto_generated}
     subtitle.file.delete(save=False)
     subtitle.delete()
+    log_activity(request, 'delete', target=video,
+                 verb=f'deleted subtitle ({_sub_snap["language"]})',
+                 metadata=_sub_snap)
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -3842,6 +4168,9 @@ def subtitle_regenerate(request, video_id):
     try:
         from .tasks import generate_captions_task
         generate_captions_task.apply_async(args=[str(video_id), language], queue='captions')
+        log_activity(request, 'regenerate', target=video,
+                     verb=f'regenerated captions ({language})',
+                     metadata={'language': language})
         return Response({'message': f'Caption generation started for language: {language}'})
     except Exception as exc:
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -4556,9 +4885,14 @@ def face_identity_tag(request, identity_id):
     if not name:
         return Response({'error': 'name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    old_name = identity.name
     identity.name = name
     identity.is_auto_named = False
     identity.save(update_fields=['name', 'is_auto_named'])
+    log_activity(
+        request, 'tag', target=identity, verb='tagged face identity',
+        changes={'name': {'before': old_name, 'after': name}},
+    )
     return Response(FaceIdentitySerializer(identity, context={}).data)
 
 
@@ -4689,8 +5023,15 @@ def face_identity_merge(request, identity_id):
         ).exists():
             return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
-    DetectedFace.objects.filter(identity=source).update(identity=target)
+    _src_snap = {'id': source.pk, 'name': source.name}
+    face_count = DetectedFace.objects.filter(identity=source).update(identity=target)
     source.delete()
+    log_activity(
+        request, 'merge', target=target,
+        verb=f'merged face identity "{_src_snap["name"]}" → "{target.name}"',
+        metadata={'source': _src_snap, 'target_id': target.pk,
+                  'target_name': target.name, 'faces_migrated': face_count},
+    )
     return Response(FaceIdentitySerializer(target, context={}).data)
 
 
@@ -4716,10 +5057,13 @@ def faces_page(request):
         # Channel IDs as a list so we can reuse in multiple Q() filters efficiently
         user_channel_ids = list(user_channels.values_list('id', flat=True))
         ch_q = Q(
-            Q(faces__video__channel_id__in=user_channel_ids) |
-            Q(faces__photo__channel_id__in=user_channel_ids) |
+            Q(faces__video__channel_id__in=user_channel_ids,
+              faces__video__deleted_at__isnull=True) |
+            Q(faces__photo__channel_id__in=user_channel_ids,
+              faces__photo__deleted_at__isnull=True) |
             # Photos uploaded by the user even if not assigned to a channel
-            Q(faces__photo__isnull=False, faces__photo__uploaded_by=request.user.username)
+            Q(faces__photo__isnull=False, faces__photo__uploaded_by=request.user.username,
+              faces__photo__deleted_at__isnull=True)
         )
 
         q = request.GET.get('q', '').strip()
@@ -4737,8 +5081,8 @@ def faces_page(request):
                 total=Count('faces', filter=ch_q & has_crop),
                 confirmed=Count('faces', filter=ch_q & has_crop & Q(faces__status=DetectedFace.STATUS_CONFIRMED)),
                 rejected=Count('faces', filter=ch_q & has_crop & Q(faces__status=DetectedFace.STATUS_REJECTED)),
-                video_count=Count('faces__video', filter=Q(faces__video__channel_id__in=user_channel_ids), distinct=True),
-                photo_count=Count('faces__photo', filter=Q(faces__photo__channel_id__in=user_channel_ids), distinct=True),
+                video_count=Count('faces__video', filter=Q(faces__video__channel_id__in=user_channel_ids, faces__video__deleted_at__isnull=True), distinct=True),
+                photo_count=Count('faces__photo', filter=Q(faces__photo__channel_id__in=user_channel_ids, faces__photo__deleted_at__isnull=True), distinct=True),
             )
             .annotate(
                 # Take the most recent appearance across BOTH videos and photos so
@@ -5147,6 +5491,12 @@ def face_identity_rename(request, identity_id):
         .update(name=name, is_auto_named=False)
     )
 
+    log_activity(
+        request, 'rename', target=identity,
+        verb='renamed face identity',
+        changes={'name': {'before': old_name, 'after': name}},
+        metadata={'speakers_synced': synced},
+    )
     return Response({'id': identity.pk, 'name': identity.name, 'speakers_synced': synced})
 
 
@@ -5480,6 +5830,13 @@ def user_management_toggle(request, user_id):
 
     target = get_object_or_404(User, id=user_id)
 
+    try:
+        _old_role = target.profile.role
+    except Exception:
+        _old_role = UserProfile.ROLE_VIEWER
+    _old_active = target.is_active
+    _old_staff  = target.is_staff
+
     if 'is_active' in request.data:
         target.is_active = bool(request.data['is_active'])
     if 'is_staff' in request.data:
@@ -5498,6 +5855,21 @@ def user_management_toggle(request, user_id):
         role = target.profile.role
     except Exception:
         role = UserProfile.ROLE_VIEWER
+
+    diff = {}
+    if _old_role != role:
+        diff['role'] = {'before': _old_role, 'after': role}
+    if _old_active != target.is_active:
+        diff['is_active'] = {'before': _old_active, 'after': target.is_active}
+    if _old_staff != target.is_staff:
+        diff['is_staff'] = {'before': _old_staff, 'after': target.is_staff}
+    if diff:
+        log_activity(
+            request, 'role_change', target=target,
+            target_type='User', target_label=target.username,
+            verb=f'changed user settings for {target.username}',
+            changes=diff,
+        )
 
     return Response({'id': target.id, 'is_active': target.is_active, 'is_staff': target.is_staff, 'role': role})
 
@@ -5654,7 +6026,9 @@ def photo_library_page(request):
         categories = list(Category.objects.all())
         cache.set('all_categories', categories, getattr(django_settings, 'CACHE_TTL_CATEGORIES', 3600))
 
-    named_places = list(NamedPlace.objects.annotate(photo_count=Count('photos')).filter(photo_count__gt=0))
+    named_places = list(NamedPlace.objects.annotate(
+        photo_count=Count('photos', filter=Q(photos__deleted_at__isnull=True))
+    ).filter(photo_count__gt=0))
 
     PAGE = 36
     photos = photos.select_related('channel', 'named_place')
@@ -6122,6 +6496,16 @@ def photo_upload(request):
         queue='processing',
     )
 
+    log_activity(
+        request, 'upload', target=photo, verb='uploaded photo',
+        metadata={
+            'channel_id': channel.id if channel else None,
+            'channel_name': channel.name if channel else None,
+            'original_filename': file_obj.name,
+            'file_size': photo.file_size,
+        },
+    )
+
     return Response({
         'id':     str(photo.id),
         'title':  photo.title,
@@ -6174,6 +6558,9 @@ def photo_detail_api(request, photo_id):
     if request.method == 'PATCH':
         if not _is_editor(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        _audit_fields = ['title', 'description', 'tags', 'visibility',
+                         'latitude', 'longitude', 'named_place_id']
+        _before_snap = snapshot_fields(photo, _audit_fields)
         updatable = ['title', 'description', 'tags', 'visibility']
         for field in updatable:
             if field in request.data:
@@ -6199,20 +6586,34 @@ def photo_detail_api(request, photo_id):
         all_update_fields = [f for f in updatable if f in request.data] + extra_fields
         if all_update_fields:
             photo.save(update_fields=all_update_fields)
+        _after_snap = snapshot_fields(photo, _audit_fields)
+        _diff = diff_snapshots(_before_snap, _after_snap)
+        if _diff:
+            log_activity(request, 'update', target=photo,
+                         verb='updated photo', changes=_diff)
         return Response({'ok': True})
 
     if request.method == 'DELETE':
         if not _is_editor(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
-        # Clean up files
-        for field in (photo.file, photo.thumbnail):
-            if field:
-                try:
-                    import os as _os
-                    _os.remove(field.path)
-                except Exception:
-                    pass
-        photo.delete()
+        # Soft-delete — files stay on disk until an admin purges from Trash.
+        reason = ''
+        try:
+            reason = (request.data.get('reason') or '').strip()[:255]
+        except Exception:
+            reason = ''
+        photo.soft_delete(user=request.user, reason=reason)
+        log_activity(
+            request, 'delete',
+            target=photo,
+            verb='soft-deleted photo (moved to Trash)',
+            metadata={
+                'type': 'soft_delete',
+                'reason': reason,
+                'channel_id': photo.channel_id,
+                'channel_name': photo.channel.name if photo.channel_id else None,
+            },
+        )
         return Response({'ok': True})
 
 
@@ -6228,6 +6629,11 @@ def photo_toggle_archive(request, photo_id):
         raise Http404
     photo.is_archived = not photo.is_archived
     photo.save(update_fields=['is_archived'])
+    log_activity(
+        request, 'archive' if photo.is_archived else 'restore',
+        target=photo,
+        verb='archived photo' if photo.is_archived else 'restored photo',
+    )
     return Response({'is_archived': photo.is_archived})
 
 
@@ -6353,15 +6759,21 @@ def photo_bulk(request):
     photos = Photo.objects.filter(id__in=photo_ids)
     count  = photos.count()
 
+    def _audit_bulk(verb, **extra):
+        log_activity(
+            request, 'bulk',
+            target_type='Photo', target_label=f'{count} photos',
+            verb=verb,
+            metadata={'action': action, 'photo_ids': [str(i) for i in photo_ids][:500],
+                      'count': count, **extra},
+        )
+
     if action == 'delete':
-        for p in photos:
-            for field in (p.file, p.thumbnail):
-                if field:
-                    try:
-                        import os as _os; _os.remove(field.path)
-                    except Exception:
-                        pass
-            p.delete()
+        # Soft-delete — files stay on disk until an admin purges from Trash.
+        from django.utils import timezone as _tz
+        now = _tz.now()
+        photos.update(deleted_at=now, deleted_by=request.user)
+        _audit_bulk(f'bulk soft-deleted {count} photos (moved to Trash)')
         return Response({'ok': True, 'deleted': count})
 
     if action == 'set_visibility':
@@ -6369,6 +6781,7 @@ def photo_bulk(request):
         if vis not in (Photo.VISIBILITY_PUBLIC, Photo.VISIBILITY_PRIVATE):
             return Response({'error': 'Invalid visibility.'}, status=status.HTTP_400_BAD_REQUEST)
         photos.update(visibility=vis)
+        _audit_bulk(f'bulk set visibility={vis} on {count} photos', visibility=vis)
         return Response({'ok': True, 'updated': count})
 
     if action == 'add_to_album':
@@ -6406,10 +6819,12 @@ def photo_bulk(request):
 
     if action == 'archive':
         photos.update(is_archived=True)
+        _audit_bulk(f'bulk archived {count} photos')
         return Response({'ok': True, 'archived': count})
 
     if action == 'unarchive':
         photos.update(is_archived=False)
+        _audit_bulk(f'bulk restored {count} photos')
         return Response({'ok': True, 'unarchived': count})
 
     return Response({'error': f'Unknown action: {action}'}, status=status.HTTP_400_BAD_REQUEST)

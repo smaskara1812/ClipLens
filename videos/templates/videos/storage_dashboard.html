@@ -159,6 +159,30 @@
     </div>
   </div>
 
+  {% if trash and trash.total > 0 %}
+  <div class="sd-cards" style="margin-top:12px;">
+    <div class="sd-card" style="border-color:#c0392b;background:rgba(192,57,43,.06);">
+      <div class="sd-card-label" style="color:#c0392b;">🗑 Trash (recoverable)</div>
+      <div class="sd-card-value">{{ trash.total|filesizeformat }}</div>
+      <div class="sd-card-sub">
+        <a href="{% url 'admin_trash' %}" style="color:var(--accent);text-decoration:none;">
+          Manage trash →
+        </a>
+      </div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Deleted videos</div>
+      <div class="sd-card-value">{{ trash.video_bytes|filesizeformat }}</div>
+      <div class="sd-card-sub">{{ trash.video_count }} video{{ trash.video_count|pluralize }}</div>
+    </div>
+    <div class="sd-card">
+      <div class="sd-card-label">Deleted photos</div>
+      <div class="sd-card-value">{{ trash.photo_bytes|filesizeformat }}</div>
+      <div class="sd-card-sub">{{ trash.photo_count }} photo{{ trash.photo_count|pluralize }}</div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- ── Videos section ────────────────────────────────────────────────── -->
   <div style="font-size:14px;font-weight:800;margin:24px 0 12px;">📹 Videos</div>
 

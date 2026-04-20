@@ -552,7 +552,7 @@ async function _bulkPost(body) {
 
 async function bulkDelete() {
   if (!_selected.size) return;
-  if (!confirm(`Delete ${_selected.size} photo(s)? This cannot be undone.`)) return;
+  if (!confirm(`Move ${_selected.size} photo(s) to Trash? They can be restored by a superadmin.`)) return;
   const deletedCount = _selected.size;   // capture before cancelSelectMode clears _selected
   const res = await _bulkPost({ action: 'delete' });
   if (res.ok) {

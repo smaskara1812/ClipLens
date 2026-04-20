@@ -17,3 +17,6 @@ class VideosConfig(AppConfig):
                 from .models import UserProfile
                 role = UserProfile.ROLE_SUPERADMIN if instance.is_superuser else UserProfile.ROLE_VIEWER
                 UserProfile.objects.get_or_create(user=instance, defaults={'role': role})
+
+        # Wire authentication audit signals (login / logout / login_failed)
+        from . import signals  # noqa: F401

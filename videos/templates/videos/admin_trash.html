@@ -1,0 +1,343 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Deleted Media (Trash) — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .tr-tabs {
+    display: flex; gap: 6px; margin: 0 0 14px;
+    border-bottom: 1px solid var(--border); padding-bottom: 0;
+  }
+  .tr-tabs a {
+    padding: 9px 16px; font-size: 13px; font-weight: 600;
+    color: var(--text-muted); text-decoration: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tr-tabs a.active {
+    color: var(--text); border-bottom-color: var(--accent);
+  }
+  .tr-tabs .count {
+    display: inline-block; margin-left: 6px; padding: 1px 7px;
+    background: var(--surface); color: var(--text-muted);
+    border-radius: 10px; font-size: 11px; font-weight: 700;
+  }
+  .tr-filters {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px 12px; align-items: end;
+  }
+  .tr-filters label { font-size: 11px; color: var(--text-muted); font-weight: 600;
+    display: block; margin-bottom: 3px; text-transform: uppercase; letter-spacing: .05em; }
+  .tr-filters input, .tr-filters select {
+    width: 100%; padding: 7px 9px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text);
+  }
+  .tr-filters .tr-acts {
+    display: flex; gap: 8px; grid-column: 1 / -1; justify-content: flex-end;
+  }
+  .tr-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .tr-table th, .tr-table td {
+    padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .tr-table th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--text-muted); font-weight: 700; background: var(--bg); }
+  .tr-table tr:last-child td { border-bottom: none; }
+  .tr-thumb {
+    width: 96px; height: 54px; border-radius: 4px; object-fit: cover;
+    border: 1px solid var(--border); background: var(--bg);
+  }
+  .tr-thumb-ph {
+    width: 96px; height: 54px; border-radius: 4px;
+    border: 1px dashed var(--border); background: var(--bg);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 10px;
+  }
+  .tr-title { font-weight: 600; color: var(--text); }
+  .tr-meta  { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .tr-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .tr-btn {
+    padding: 5px 10px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text); cursor: pointer; text-decoration: none;
+  }
+  .tr-btn:hover { background: var(--surface-2, var(--surface)); }
+  .tr-btn.restore { color: #22c55e; border-color: rgba(34,197,94,.35); }
+  .tr-btn.purge   { color: #ef4444; border-color: rgba(239,68,68,.35); }
+  .tr-btn.restore:hover { background: rgba(34,197,94,.08); }
+  .tr-btn.purge:hover   { background: rgba(239,68,68,.08); }
+  .tr-btn.view { color: var(--text-muted); }
+  .pager { margin-top: 16px; display: flex; align-items: center; gap: 8px; justify-content: center; }
+  .pager a, .pager span {
+    padding: 6px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 13px; color: var(--text); text-decoration: none;
+  }
+  .pager .cur { background: var(--accent); color: white; border-color: var(--accent); }
+  .pager a:hover { background: var(--surface); }
+  .empty { padding: 40px; text-align: center; color: var(--text-muted); }
+  .tr-banner {
+    background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
+    color: #ef4444; border-radius: var(--radius); padding: 10px 14px;
+    font-size: 12px; margin-bottom: 14px; line-height: 1.5;
+  }
+
+  /* Purge confirm modal */
+  .purge-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .purge-backdrop.open { display: flex; }
+  .purge-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 22px; max-width: 440px; width: 100%;
+  }
+  .purge-modal h3 { margin: 0 0 10px; color: #ef4444; font-size: 16px; }
+  .purge-modal p  { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0 0 12px; }
+  .purge-modal input {
+    width: 100%; padding: 8px 10px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text); box-sizing: border-box;
+  }
+  .purge-modal .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .purge-modal .acts button {
+    padding: 7px 14px; font-size: 13px; font-weight: 600;
+    border-radius: var(--radius-sm); border: 1px solid var(--border); cursor: pointer;
+  }
+  .purge-modal .btn-cancel { background: var(--surface); color: var(--text); }
+  .purge-modal .btn-go     { background: #ef4444; color: #fff; border-color: #ef4444; }
+  .purge-modal .btn-go:disabled { opacity: .4; cursor: not-allowed; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout" style="max-width:1280px;">
+
+  {% include 'videos/_admin_nav.html' with admin_current='admin_trash' %}
+
+  <div class="admin-hero">
+    <div class="admin-hero-info">
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="vertical-align:-4px;">
+          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+        Trash
+      </h1>
+      <p>Soft-deleted media is hidden from every view, search and count — but
+      files remain on disk until an admin permanently purges them here.</p>
+    </div>
+  </div>
+
+  <div class="tr-banner">
+    <strong>⚠ Permanent delete is irreversible</strong> — when you purge a
+    record, its original file, HLS renditions, upscaled MP4s, thumbnails,
+    sprites and face crops are wiped from disk and cannot be recovered.
+  </div>
+
+  <div class="tr-tabs">
+    <a href="?tab=videos" class="{% if tab == 'videos' %}active{% endif %}">
+      Videos <span class="count">{{ videos_total }}</span>
+    </a>
+    <a href="?tab=photos" class="{% if tab == 'photos' %}active{% endif %}">
+      Photos <span class="count">{{ photos_total }}</span>
+    </a>
+  </div>
+
+  <form method="get" class="tr-filters">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <div>
+      <label>Search title</label>
+      <input type="text" name="q" value="{{ f.q }}" placeholder="title…">
+    </div>
+    <div>
+      <label>Deleted from</label>
+      <input type="date" name="deleted_from" value="{{ f.deleted_from }}">
+    </div>
+    <div>
+      <label>Deleted to</label>
+      <input type="date" name="deleted_to" value="{{ f.deleted_to }}">
+    </div>
+    <div>
+      <label>Uploaded from</label>
+      <input type="date" name="uploaded_from" value="{{ f.uploaded_from }}">
+    </div>
+    <div>
+      <label>Uploaded to</label>
+      <input type="date" name="uploaded_to" value="{{ f.uploaded_to }}">
+    </div>
+    <div class="tr-acts">
+      <a href="?tab={{ tab }}" class="btn btn-ghost" style="padding:7px 14px;">Reset</a>
+      <button type="submit" class="btn btn-primary" style="padding:7px 14px;">Apply filters</button>
+    </div>
+  </form>
+
+  <div style="font-size:12px;color:var(--text-muted);margin:8px 0 10px;">
+    {{ total }} {{ tab|slice:":-1" }}{{ total|pluralize:"s" }} in Trash match{{ total|pluralize:"es," }}
+  </div>
+
+  {% if page_obj.object_list %}
+  <table class="tr-table">
+    <thead>
+      <tr>
+        <th style="width:110px;">Preview</th>
+        <th>Title</th>
+        <th style="width:150px;">Deleted</th>
+        <th style="width:140px;">Uploaded</th>
+        <th style="width:220px; text-align:right;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in page_obj.object_list %}
+      <tr>
+        <td>
+          {% if tab == 'videos' %}
+            {% if item.thumbnail %}
+              <img class="tr-thumb" src="{{ item.thumbnail.url }}" alt="">
+            {% else %}
+              <span class="tr-thumb-ph">no thumb</span>
+            {% endif %}
+          {% else %}
+            <img class="tr-thumb" src="{{ item.thumbnail_url }}" alt="" style="height:72px;">
+          {% endif %}
+        </td>
+        <td>
+          <div class="tr-title">{{ item.title|default:"(untitled)" }}</div>
+          <div class="tr-meta">
+            {% if item.channel %}<strong>{{ item.channel.name }}</strong> · {% endif %}
+            {% if tab == 'videos' %}
+              {{ item.duration|default:0|floatformat:0 }}s · {{ item.resolution|default:"—" }}
+            {% else %}
+              {{ item.width|default:"?" }}×{{ item.height|default:"?" }}
+            {% endif %}
+          </div>
+          {% if item.deleted_reason %}
+            <div class="tr-meta" style="color:#ef4444;">Reason: {{ item.deleted_reason }}</div>
+          {% endif %}
+        </td>
+        <td>
+          <div style="font-family:ui-monospace,monospace;font-size:12px;">
+            {{ item.deleted_at|date:"Y-m-d" }}<br>
+            <span class="tr-meta">{{ item.deleted_at|date:"H:i:s" }} UTC</span>
+          </div>
+          {% if item.deleted_by %}
+            <div class="tr-meta">by {{ item.deleted_by.username }}</div>
+          {% endif %}
+        </td>
+        <td>
+          <div style="font-family:ui-monospace,monospace;font-size:12px;">
+            {{ item.created_at|date:"Y-m-d" }}
+          </div>
+          <div class="tr-meta">{{ item.uploaded_by|default:"—" }}</div>
+        </td>
+        <td class="tr-actions">
+          <button type="button" class="tr-btn restore"
+                  onclick="restoreItem('{{ item.id }}', '{{ tab }}')">Restore</button>
+          <button type="button" class="tr-btn purge"
+                  onclick="openPurge('{{ item.id }}', '{{ tab }}', {{ item.title|default:''|escapejs|stringformat:'s'|safe|default:"''" }})"
+                  >Delete forever</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="pager">
+    {% if page_obj.has_previous %}
+      <a href="?{% for k,v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}page={{ page_obj.previous_page_number }}">← prev</a>
+    {% endif %}
+    <span class="cur">page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+      <a href="?{% for k,v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}page={{ page_obj.next_page_number }}">next →</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="empty">
+    <p>Trash is empty for this filter.</p>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Purge confirmation modal -->
+<div class="purge-backdrop" id="purgeBackdrop" onclick="if(event.target===this)closePurge()">
+  <div class="purge-modal">
+    <h3>Permanently delete?</h3>
+    <p>This wipes all files from disk and cannot be undone.<br>
+      To confirm, type <code style="color:var(--accent);">Confirm Delete</code>:</p>
+    <input type="text" id="purgeInput" autocomplete="off" autocorrect="off"
+           autocapitalize="off" spellcheck="false"
+           onpaste="event.preventDefault();return false;"
+           ondrop="event.preventDefault();return false;"
+           oninput="onPurgeInput()" placeholder='Type "Confirm Delete"'>
+    <div class="acts">
+      <button type="button" class="btn-cancel" onclick="closePurge()">Cancel</button>
+      <button type="button" class="btn-go" id="purgeGoBtn" disabled
+              onclick="runPurge()">Delete forever</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function getCsrfToken() {
+    const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  async function restoreItem(id, tab) {
+    const url = (tab === 'videos' ? '/api/videos/' : '/api/photos/') + id + '/restore/';
+    try {
+      const r = await fetch(url, {
+        method: 'POST', credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken(), 'Content-Type': 'application/json' },
+      });
+      if (!r.ok) { alert('Restore failed: HTTP ' + r.status); return; }
+      location.reload();
+    } catch (e) { alert('Restore failed: ' + e.message); }
+  }
+
+  let _purgeId = null, _purgeTab = null;
+  function openPurge(id, tab, _title) {
+    _purgeId = id; _purgeTab = tab;
+    const inp = document.getElementById('purgeInput');
+    inp.value = '';
+    document.getElementById('purgeGoBtn').disabled = true;
+    document.getElementById('purgeBackdrop').classList.add('open');
+    setTimeout(() => inp.focus(), 50);
+  }
+  function closePurge() {
+    _purgeId = null; _purgeTab = null;
+    document.getElementById('purgeBackdrop').classList.remove('open');
+  }
+  function onPurgeInput() {
+    const inp = document.getElementById('purgeInput');
+    document.getElementById('purgeGoBtn').disabled =
+      (inp.value.trim() !== 'Confirm Delete');
+  }
+  async function runPurge() {
+    if (!_purgeId) return;
+    const url = (_purgeTab === 'videos' ? '/api/videos/' : '/api/photos/') + _purgeId + '/purge/';
+    const btn = document.getElementById('purgeGoBtn');
+    btn.disabled = true; btn.textContent = 'Deleting…';
+    try {
+      const r = await fetch(url, {
+        method: 'DELETE', credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      if (!r.ok && r.status !== 204) { alert('Purge failed: HTTP ' + r.status); btn.disabled = false; btn.textContent = 'Delete forever'; return; }
+      closePurge(); location.reload();
+    } catch (e) {
+      alert('Purge failed: ' + e.message);
+      btn.disabled = false; btn.textContent = 'Delete forever';
+    }
+  }
+</script>
+{% endblock %}

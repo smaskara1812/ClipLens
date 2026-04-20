@@ -252,7 +252,7 @@ async function bulkRemoveFromAlbum() {
 
 async function bulkDelete() {
   if (!_selected.size) return;
-  if (!confirm(`Delete ${_selected.size} photo(s)? This cannot be undone.`)) return;
+  if (!confirm(`Move ${_selected.size} photo(s) to Trash? They can be restored by a superadmin.`)) return;
   const res = await fetch('/api/photos/bulk/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
