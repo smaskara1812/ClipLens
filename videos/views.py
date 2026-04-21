@@ -36,7 +36,7 @@ from .models import (
     Playlist, PlaylistItem, WatchHistory, SavedVideo,
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
     FaceIdentity, FaceIdentityNickname, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
-    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event, NamedPlace,
+    SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event, NamedPlace, MomentCategory,
 )
 from .activity import log_activity, snapshot_fields, diff_snapshots
 from .serializers import (
@@ -1718,8 +1718,14 @@ def moments_page(request):
     if video_id:
         qs = qs.filter(video__id=video_id)
 
+    # Build category metadata from DB so custom categories are supported everywhere.
+    _all_cats = list(MomentCategory.objects.all().order_by('sort_order', 'name', 'id'))
+    _cat_map = {c.key: c for c in _all_cats}
+    _category_choices = [('', 'None')] + [(c.key, c.name) for c in _all_cats]
+    _category_colours = {'': '#6b7280', **{c.key: c.color for c in _all_cats}}
+
     cat_filter = request.GET.get('cat', '')
-    if cat_filter != '' and cat_filter in dict(VideoMoment.CATEGORY_CHOICES):
+    if cat_filter != '' and cat_filter in _cat_map:
         qs = qs.filter(category=cat_filter)
 
     vis_filter = request.GET.get('vis', '')
@@ -1735,9 +1741,11 @@ def moments_page(request):
         )
 
     moments = list(qs[:500])
-    # Attach colour to each moment for template use
+    # Attach colour + label to each moment for template use
     for m in moments:
-        m.colour = VideoMoment.CATEGORY_COLOURS.get(m.category or '', '#6b7280')
+        _cat = _cat_map.get(m.category or '')
+        m.colour = _cat.color if _cat else '#6b7280'
+        m.category_label = _cat.name if _cat else 'None'
 
     # Video filter label (for breadcrumb)
     video_obj = None
@@ -1750,8 +1758,8 @@ def moments_page(request):
         'vis_filter':       vis_filter,
         'q':                q,
         'video_obj':        video_obj,
-        'category_choices': VideoMoment.CATEGORY_CHOICES,
-        'category_colours': VideoMoment.CATEGORY_COLOURS,
+        'category_choices': _category_choices,
+        'category_colours': _category_colours,
         'can_tag_team':     _is_editor(request.user),
     })
 
@@ -2159,6 +2167,30 @@ def _haversine_m(lat1, lon1, lat2, lon2) -> float:
     return 2 * R * _math.asin(_math.sqrt(a))
 
 
+def _nearest_named_place(lat, lon, places=None):
+    """
+    Return nearest NamedPlace that contains the point, or None.
+    Tie-break deterministically by smaller radius, then lower id.
+    """
+    if places is None:
+        places = NamedPlace.objects.all()
+    best, best_dist = None, float('inf')
+    for place in places:
+        d = _haversine_m(lat, lon, place.latitude, place.longitude)
+        if d > place.radius_meters:
+            continue
+        if best is None:
+            best, best_dist = place, d
+            continue
+        if d < best_dist:
+            best, best_dist = place, d
+            continue
+        if d == best_dist:
+            if (place.radius_meters, place.id) < (best.radius_meters, best.id):
+                best, best_dist = place, d
+    return best
+
+
 def _assign_named_place(photo) -> None:
     """
     Given a Photo with latitude/longitude set, find the closest NamedPlace
@@ -2168,12 +2200,7 @@ def _assign_named_place(photo) -> None:
     if photo.latitude is None or photo.longitude is None:
         photo.named_place = None
         return
-    best, best_dist = None, float('inf')
-    for place in NamedPlace.objects.all():
-        d = _haversine_m(photo.latitude, photo.longitude, place.latitude, place.longitude)
-        if d <= place.radius_meters and d < best_dist:
-            best, best_dist = place, d
-    photo.named_place = best
+    photo.named_place = _nearest_named_place(photo.latitude, photo.longitude)
 
 
 @superuser_required
@@ -2627,16 +2654,17 @@ def _bulk_assign_named_place(place) -> None:
     Uses Python-level haversine (no PostGIS required).
     """
     from .models import Photo
+    all_places = list(NamedPlace.objects.all())
     photos = Photo.objects.filter(
         latitude__isnull=False, longitude__isnull=False
     ).select_related('named_place')
     updated = []
     for photo in photos:
-        d = _haversine_m(photo.latitude, photo.longitude, place.latitude, place.longitude)
-        if d <= place.radius_meters:
-            if photo.named_place_id != place.id:
-                photo.named_place = place
-                updated.append(photo)
+        best = _nearest_named_place(photo.latitude, photo.longitude, places=all_places)
+        best_id = best.id if best else None
+        if photo.named_place_id != best_id:
+            photo.named_place = best
+            updated.append(photo)
     if updated:
         Photo.objects.bulk_update(updated, ['named_place'])
 
@@ -2645,11 +2673,11 @@ def _bulk_assign_named_place(place) -> None:
     ).select_related('named_place')
     updated_v = []
     for v in videos:
-        d = _haversine_m(v.latitude, v.longitude, place.latitude, place.longitude)
-        if d <= place.radius_meters:
-            if v.named_place_id != place.id:
-                v.named_place = place
-                updated_v.append(v)
+        best = _nearest_named_place(v.latitude, v.longitude, places=all_places)
+        best_id = best.id if best else None
+        if v.named_place_id != best_id:
+            v.named_place = best
+            updated_v.append(v)
     if updated_v:
         Video.objects.bulk_update(updated_v, ['named_place'])
 
@@ -3876,8 +3904,16 @@ def _moments_qs_for_user(user, video=None):
     return qs
 
 
-def _moment_to_dict(m):
-    from .models import VideoMoment as _VM
+def _moment_to_dict(m, category_meta: dict[str, tuple[str, str]] | None = None):
+    if category_meta is None:
+        category_meta = {
+            c.key: (c.name, c.color)
+            for c in MomentCategory.objects.all().only('key', 'name', 'color')
+        }
+    _cat_label, _cat_color = category_meta.get(
+        m.category or '',
+        ('None' if not m.category else m.category, '#6b7280'),
+    )
     creator = m.created_by
     return {
         'id':            m.pk,
@@ -3887,7 +3923,8 @@ def _moment_to_dict(m):
         'description':   m.description,
         'visibility':    m.visibility,
         'category':      m.category,
-        'colour':        _VM.CATEGORY_COLOURS.get(m.category or '', '#6b7280'),
+        'category_label': _cat_label,
+        'colour':        _cat_color,
         'created_at':    m.created_at.isoformat(),
         'added_by':      (creator.get_full_name() or creator.username) if creator else 'Unknown',
         'is_mine':       creator.pk == m.created_by_id if creator else False,
@@ -3908,7 +3945,11 @@ def moment_list_create(request, video_id):
 
     if request.method == 'GET':
         moments = _moments_qs_for_user(request.user, video=video).order_by('timestamp')
-        return Response([_moment_to_dict(m) for m in moments])
+        _cat_meta = {
+            c.key: (c.name, c.color)
+            for c in MomentCategory.objects.all().only('key', 'name', 'color')
+        }
+        return Response([_moment_to_dict(m, _cat_meta) for m in moments])
 
     # POST — create
     title = (request.data.get('title') or '').strip()
@@ -3936,7 +3977,7 @@ def moment_list_create(request, video_id):
         visibility = VideoMoment.VISIBILITY_PRIVATE
 
     category = (request.data.get('category') or '')
-    if category not in dict(VideoMoment.CATEGORY_CHOICES):
+    if category and not MomentCategory.objects.filter(key=category).exists():
         category = ''
 
     moment = VideoMoment.objects.create(
@@ -3983,7 +4024,7 @@ def moment_detail(request, moment_id):
         update_fields.append('description')
     if 'category' in request.data:
         cat = (request.data['category'] or '')
-        if cat not in dict(VideoMoment.CATEGORY_CHOICES):
+        if cat and not MomentCategory.objects.filter(key=cat).exists():
             cat = ''
         moment.category = cat
         update_fields.append('category')
@@ -4728,6 +4769,12 @@ def subtitle_cues(request, video_id, subtitle_id):
     old_name = subtitle.file.name.split('/')[-1]
     subtitle.file.delete(save=False)
     subtitle.file.save(old_name, ContentFile(content.encode('utf-8')), save=True)
+    # Keep in-video speech search in sync with subtitle text edits.
+    try:
+        from .tasks import reindex_segments_task
+        reindex_segments_task.apply_async(args=[subtitle.id], queue='default')
+    except Exception:
+        pass
     return Response({'ok': True, 'cue_count': len(cues)})
 
 
@@ -4971,12 +5018,12 @@ def photo_face_remove(request, photo_id, identity_id):
     """
     DELETE /api/photos/<photo_id>/faces/<identity_id>/remove/
     Removes all DetectedFace rows for this identity in this photo.
-    Uploader of the photo only. Cleans up orphaned identities.
+    Editors/superadmins only. Cleans up orphaned identities.
     """
     photo    = get_object_or_404(Photo, id=photo_id)
     identity = get_object_or_404(FaceIdentity, id=identity_id)
 
-    if photo.uploaded_by and photo.uploaded_by != request.user.username:
+    if not _is_editor(request.user):
         return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
     DetectedFace.objects.filter(photo=photo, identity=identity).delete()

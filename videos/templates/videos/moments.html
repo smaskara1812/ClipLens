@@ -346,7 +346,7 @@
           {% if m.category %}
           <span class="mom-cat-pill" style="background:color-mix(in srgb, {{ m.colour }} 12%, transparent);color:{{ m.colour }};">
             <span class="dot" style="background:{{ m.colour }};"></span>
-            {{ m.get_category_display }}
+            {{ m.category_label }}
           </span>
           {% endif %}
           <span class="mom-vis-badge {{ m.visibility }}">{{ m.visibility }}</span>
@@ -592,7 +592,7 @@
         // Update category pill
         const catPillEl = row.querySelector('.mom-cat-pill');
         if (m.category) {
-          const catLabel = {'important':'Important','celebration':'Celebration','watch_again':'Watch Again','highlight':'Highlight','note':'Note','question':'Question'}[m.category] || '';
+          const catLabel = m.category_label || m.category || '';
           const catHtml = `<span class="mom-cat-pill" style="background:color-mix(in srgb, ${m.colour} 12%, transparent);color:${m.colour};"><span class="dot" style="background:${m.colour};"></span>${catLabel}</span>`;
           if (catPillEl) catPillEl.outerHTML = catHtml;
           else {

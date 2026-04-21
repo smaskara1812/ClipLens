@@ -240,7 +240,7 @@
           <button type="button" class="tr-btn restore"
                   onclick="restoreItem('{{ item.id }}', '{{ tab }}')">Restore</button>
           <button type="button" class="tr-btn purge"
-                  onclick="openPurge('{{ item.id }}', '{{ tab }}', {{ item.title|default:''|escapejs|stringformat:'s'|safe|default:"''" }})"
+                  onclick="openPurge('{{ item.id }}', '{{ tab }}')"
                   >Delete forever</button>
         </td>
       </tr>
@@ -305,7 +305,7 @@
   }
 
   let _purgeId = null, _purgeTab = null;
-  function openPurge(id, tab, _title) {
+  function openPurge(id, tab) {
     _purgeId = id; _purgeTab = tab;
     const inp = document.getElementById('purgeInput');
     inp.value = '';

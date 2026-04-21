@@ -11,10 +11,10 @@ These specs let you run Django, Celery, PostgreSQL, Redis, and all AI inference 
 (YOLO, BLIP/Florence-2, CLIP, InsightFace) simultaneously without bottlenecks.
 
 
-| Component   | Sufficient Spec                                               | Notes                                                                     |
+| Component   | Spec Required                                                 | Notes                                                                     |
 | ----------- | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | **CPU**     | AMD Ryzen 9 7900X / Intel Core i9-13900K (16+ physical cores) | Celery uses multiprocessing; more cores = more parallel video/photo tasks |
-| **GPU**     | NVIDIA RTX 4080 16 GB VRAM (or RTX 3090 24 GB)                | See VRAM breakdown below. 16 GB is the comfortable floor for one worker   |
+| **GPU**     | NVIDIA RTX 4080 16 GB VRAM                                    | See VRAM breakdown below. 16 GB is the comfortable floor for one worker   |
 | **RAM**     | 32 GB DDR5                                                    | OS + Postgres shared_buffers + Django + model weights that spill to RAM   |
 | **Storage** | 2 TB NVMe SSD (PCIe 4.0)                                      | HuggingFace cache alone can reach 20 GB; media files grow quickly         |
 | **OS**      | Ubuntu 22.04 LTS (preferred) or Windows 11 with WSL2          | Native CUDA support, no WSL VRAM overhead                                 |
@@ -34,7 +34,6 @@ These specs let you run Django, Celery, PostgreSQL, Redis, and all AI inference 
 | **Total (worst case)**          | **~9–10 GB** |
 
 
-A 12 GB card (RTX 3080 / RTX 4070 Ti) works with a single worker.
 A 16 GB card (RTX 4080 / RTX 3090) gives comfortable headroom.
 
 ---
@@ -46,15 +45,15 @@ A 16 GB card (RTX 4080 / RTX 3090) gives comfortable headroom.
 Suitable for a team of up to ~50 concurrent users with moderate upload volume.
 
 
-| Component         | Minimum Spec                                   | Recommended                                                      |
-| ----------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
-| **CPU**           | 16 cores / 32 threads (AMD EPYC or Intel Xeon) | 32 cores for heavier concurrent processing                       |
-| **GPU**           | NVIDIA RTX A4000 16 GB or Tesla T4 16 GB       | NVIDIA A5000 24 GB for 2 concurrent AI workers                   |
-| **RAM**           | 64 GB ECC DDR4                                 | 128 GB if pgvector HNSW index exceeds 1M vector                  |
-| **OS Storage**    | 500 GB NVMe SSD (OS + code + model cache)      | 1 TB NVMe                                                        |
-| **Media Storage** | 4 TB NVMe or NAS (RAID-10) — or S3/MinIO       | Object storage recommended for scale; local NVMe for low latency |
-| **OS**            | Ubuntu 22.04 LTS                               | CUDA 12, cuDNN 9                                                 |
-| **Network**       | 1 Gbps dedicated                               | 10 Gbps if serving HLS to many concurrent viewers                |
+| Component         | Minimum Spec                                                                      | Recommended                                                      |
+| ----------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **CPU**           | 16 cores / 32 threads (AMD EPYC or Intel Xeon)                                    | 32 cores for heavier concurrent processing                       |
+| **GPU**           | NVIDIA RTX A4000 16 GB                                                            | NVIDIA A5000 24 GB for 2 concurrent AI workers                   |
+| **RAM**           | 64 GB ECC DDR4                                                                    | 128 GB if pgvector HNSW index exceeds 1M vector                  |
+| **OS Storage**    | 250 GB NVMe SSD (OS + code + model cache)                                         | 250 GB NVMe                                                      |
+| **Media Storage** | 4 TB NVMe or NAS (RAID-10) — or S3/MinIO (depends on media size 3X size of media) | Object storage recommended for scale; local NVMe for low latency |
+| **OS**            | Ubuntu 22.04 LTS                                                                  | Ubuntu 22.04 LTS                                                 |
+| **Network**       | 100 Mbps dedicated                                                                | 100 Mbps if no multiple concurrent streaming is required         |
 
 
 ### 2b. Distributed Deployment (recommended for production scale)
