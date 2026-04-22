@@ -271,3 +271,21 @@ CELERY_BROKER_URL=redis://:yourStrongPassword@localhost:6379/0
 ```
 
 For your initial deploy: install Redis, confirm `redis-cli ping` returns `PONG`, and your existing `.env` values work as-is.
+
+
+
+
+
+
+
+<!-- 
+
+python manage.py seed_scale_data \                          
+  --users 10 \
+  --frames-per-video 100 \
+  --segments-per-video 100 \
+  --faces-per-video 50 \
+  --watch-history-per-user 10 \
+  --identity-count 120 \
+  --places 15 \
+  --with-vectors -->
