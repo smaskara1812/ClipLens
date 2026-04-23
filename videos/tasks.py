@@ -2113,7 +2113,28 @@ def run_diarization_task(self, video_id: str):
 
     segments = list(VideoSegment.objects.filter(video=video).order_by('start_seconds'))
     if not segments:
-        return {'error': 'No transcript segments found. Run Whisper first.'}
+        # Keep diarization semantics clear (needs transcript), but still trigger
+        # audio-event detection so non-speech clips (applause/music-only) can
+        # populate the X-ray audio lane.
+        audio_queued = False
+        if getattr(settings, 'AUDIO_EVENTS_ENABLED', True):
+            try:
+                queue = getattr(settings, 'AUDIO_EVENTS_QUEUE', 'audio')
+                detect_audio_events_task.apply_async(args=[str(video.id)], queue=queue)
+                audio_queued = True
+                logger.info(
+                    f'run_diarization_task: no transcript segments for {video.id}; '
+                    f'queued detect_audio_events_task on queue "{queue}"'
+                )
+            except Exception as ae_exc:
+                logger.warning(
+                    f'run_diarization_task: could not enqueue audio-event task '
+                    f'for {video.id} after no-segment diarization skip — {ae_exc}'
+                )
+        return {
+            'error': 'No transcript segments found. Diarization skipped.',
+            'audio_events_queued': audio_queued,
+        }
 
     # ── Prepare audio file ────────────────────────────────────────────────────
     audio_dir  = Path(settings.MEDIA_ROOT) / 'audio'
@@ -2414,6 +2435,23 @@ def run_diarization_task(self, video_id: str):
     except Exception as sugg_exc:
         logger.warning(f'run_diarization_task: suggestion generation skipped — {sugg_exc}')
 
+    # ── Kick off non-speech audio event detection (applause/laughter/music…) ──
+    # Runs on its own queue so heavy PANNs inference doesn't block the caller.
+    # Guarded so any failure here never breaks the diarization result payload.
+    if getattr(settings, 'AUDIO_EVENTS_ENABLED', True):
+        try:
+            queue = getattr(settings, 'AUDIO_EVENTS_QUEUE', 'audio')
+            detect_audio_events_task.apply_async(args=[str(video.id)], queue=queue)
+            logger.info(
+                f'run_diarization_task: queued detect_audio_events_task '
+                f'for {video.id} on queue "{queue}"'
+            )
+        except Exception as ae_exc:
+            logger.warning(
+                f'run_diarization_task: could not enqueue audio-event task '
+                f'for {video.id} — {ae_exc}'
+            )
+
     return {
         'ok':               True,
         'segments_updated': updated,
@@ -2430,3 +2468,431 @@ def run_diarization_task(self, video_id: str):
             for lbl, si in label_to_identity.items()
         ],
     }
+
+
+# ── Audio event detection (non-speech) ───────────────────────────────────────
+# Detects applause, laughter, music, cheering, crowd noise, booing, generic
+# "speech" windows via PANNs CNN14 (AudioSet tagger) and silent spans via
+# FFmpeg's built-in `silencedetect` filter.
+#
+# Stored in the `AudioEvent` table.  Powers the third lane on the video X-ray
+# page alongside Crowd / Overlap.  Runs on a dedicated `audio` Celery queue so
+# it doesn't block diarization or caption jobs (see start.sh).
+
+# AudioSet class name → our short label.  Keys are exact PANNs / AudioSet
+# English names; anything not in this map is ignored.
+_PANNS_CLASS_MAP = {
+    'Applause':                           'applause',
+    'Laughter':                           'laughter',
+    'Giggle':                             'laughter',
+    'Chuckle, chortle':                   'laughter',
+    'Cheering':                           'cheering',
+    'Crowd':                              'crowd',
+    'Hubbub, speech noise, speech babble':'crowd',
+    'Booing':                             'booing',
+    'Music':                              'music',
+    'Speech':                             'speech',
+}
+
+
+def _detect_silence_spans_ffmpeg(wav_path: str, silence_db: float,
+                                 min_silence_sec: float) -> list[tuple[float, float]]:
+    """
+    Run `ffmpeg -af silencedetect` on the WAV and parse stderr for
+    `silence_start` / `silence_end` lines.  Returns a list of (start, end)
+    tuples in seconds.  Non-fatal on failure: returns [] and logs a warning.
+    """
+    import re
+
+    cmd = [
+        settings.FFMPEG_PATH or 'ffmpeg',
+        '-hide_banner', '-nostats',
+        '-i', wav_path,
+        '-af', f'silencedetect=noise={silence_db}dB:d={min_silence_sec}',
+        '-f', 'null', '-',
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except Exception as exc:
+        logger.warning(f'_detect_silence_spans_ffmpeg: subprocess failed — {exc}')
+        return []
+
+    stderr = proc.stderr or ''
+    starts = [float(m.group(1)) for m in re.finditer(r'silence_start:\s*(-?\d+\.?\d*)', stderr)]
+    ends   = [float(m.group(1)) for m in re.finditer(r'silence_end:\s*(-?\d+\.?\d*)',   stderr)]
+
+    spans: list[tuple[float, float]] = []
+    for i, s in enumerate(starts):
+        e = ends[i] if i < len(ends) else None
+        if e is not None and e > s:
+            spans.append((max(0.0, s), e))
+    return spans
+
+
+def _extract_audio_wav_at_rate(source_path: str, out_path: str, sample_rate: int) -> bool:
+    """
+    Mono WAV extractor with configurable sample rate.  PANNs needs 32 kHz;
+    Whisper needs 16 kHz.  We keep them separate so neither pipeline
+    accidentally resamples the other's file.
+    """
+    cmd = [
+        settings.FFMPEG_PATH or 'ffmpeg',
+        '-i', str(source_path),
+        '-vn',
+        '-acodec', 'pcm_s16le',
+        '-ar', str(sample_rate),
+        '-ac', '1',
+        '-y',
+        str(out_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    return result.returncode == 0
+
+
+def _ensure_panns_assets() -> dict[str, str]:
+    """
+    Make panns_inference assets available without relying on shell `wget`.
+
+    The upstream package downloads both class labels and model checkpoint via
+    `os.system('wget ...')`, which fails on systems where wget is not installed
+    (common on macOS). We pre-download those files with Python stdlib so
+    `import panns_inference` and `AudioTagging(...)` can proceed normally.
+    """
+    import shutil
+    import time
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    def _download_with_retries(url: str, out_path: Path, *, min_size: int,
+                               attempts: int = 4, timeout_sec: int = 90) -> None:
+        """
+        Download a file with retry/backoff and atomic replace.
+        Raises RuntimeError if all attempts fail or size is too small.
+        """
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        last_err = None
+        tmp_path = out_path.with_suffix(out_path.suffix + '.part')
+        for i in range(1, attempts + 1):
+            try:
+                req = Request(url, headers={'User-Agent': 'ClipLens/1.0'})
+                with urlopen(req, timeout=timeout_sec) as r, open(tmp_path, 'wb') as f:
+                    shutil.copyfileobj(r, f, length=1024 * 1024)
+                size = tmp_path.stat().st_size if tmp_path.exists() else 0
+                if size < min_size:
+                    raise RuntimeError(
+                        f'download too small ({size} bytes, expected >= {min_size})'
+                    )
+                tmp_path.replace(out_path)
+                return
+            except (HTTPError, URLError, TimeoutError, RuntimeError, OSError) as exc:
+                last_err = exc
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except Exception:
+                    pass
+                if i < attempts:
+                    sleep_s = min(30, 2 ** i)
+                    logger.warning(
+                        f'_ensure_panns_assets: download retry {i}/{attempts} failed for '
+                        f'{out_path.name}: {exc} (sleep {sleep_s}s)'
+                    )
+                    time.sleep(sleep_s)
+        raise RuntimeError(f'failed downloading {out_path.name}: {last_err}')
+
+    # Use MEDIA_ROOT as HOME for panns_inference so its internal hardcoded
+    # `Path.home()/panns_data/...` paths stay writable across environments
+    # where the process home directory may be read-only.
+    media_home = str(Path(settings.MEDIA_ROOT).resolve())
+    os.environ['HOME'] = media_home
+
+    data_dir = Path(media_home) / 'panns_data'
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    labels_path = data_dir / 'class_labels_indices.csv'
+    ckpt_path = data_dir / 'Cnn14_mAP=0.431.pth'
+
+    if not labels_path.exists() or labels_path.stat().st_size < 10_000:
+        labels_url = (
+            'https://storage.googleapis.com/us_audioset/'
+            'youtube_corpus/v1/csv/class_labels_indices.csv'
+        )
+        logger.info(f'_ensure_panns_assets: downloading labels to {labels_path}')
+        _download_with_retries(labels_url, labels_path, min_size=10_000)
+
+    # Upstream checks for ~300 MB minimum; mirror that so partial files are repaired.
+    if not ckpt_path.exists() or ckpt_path.stat().st_size < 300_000_000:
+        ckpt_url = 'https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth?download=1'
+        logger.info(f'_ensure_panns_assets: downloading checkpoint to {ckpt_path}')
+        _download_with_retries(ckpt_url, ckpt_path, min_size=300_000_000)
+
+    return {'labels_path': str(labels_path), 'checkpoint_path': str(ckpt_path)}
+
+
+def _collapse_same_label_windows(windows: list[tuple[float, float, str, float]],
+                                 merge_gap: float) -> list[tuple[float, float, str, float]]:
+    """
+    Merge consecutive windows that share the same label.  `windows` is a
+    list of (start, end, label, confidence) sorted by start.  Gaps ≤ `merge_gap`
+    seconds between same-label windows are bridged; confidence is the mean of
+    the merged windows.
+    """
+    if not windows:
+        return []
+    merged: list[list] = []
+    for start, end, label, conf in windows:
+        if merged and merged[-1][2] == label and start - merged[-1][1] <= merge_gap:
+            prev = merged[-1]
+            prev[1] = max(prev[1], end)
+            prev[3] = (prev[3] * prev[4] + conf) / (prev[4] + 1)
+            prev[4] += 1
+        else:
+            merged.append([start, end, label, conf, 1])
+    return [(s, e, lbl, c) for s, e, lbl, c, _n in merged]
+
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.detect_audio_events_task',
+    queue='audio',
+    max_retries=3,
+    default_retry_delay=120,
+    acks_late=True,
+)
+def detect_audio_events_task(self, video_id: str):
+    """
+    Detect non-speech audio events and silence spans for a video.
+
+    Pipeline:
+        1. Skip if feature disabled, no video, no audio stream.
+        2. Wipe any existing AudioEvent rows for this video (idempotent re-runs).
+        3. Extract a 32 kHz mono WAV to temp.
+        4. FFmpeg silencedetect → 'silence' spans.
+        5. PANNs CNN14 sliding-window tagging → applause/laughter/music/etc.
+        6. Bulk-create AudioEvent rows.
+        7. Delete temp WAV.
+
+    Never raises on library/weight errors — logs and returns an error dict so
+    diarization results stay intact.  Re-queues once on transient exceptions.
+    """
+    import tempfile
+    from .models import Video, AudioEvent
+
+    if not getattr(settings, 'AUDIO_EVENTS_ENABLED', True):
+        logger.info(f'detect_audio_events_task: AUDIO_EVENTS_ENABLED=False; skipping {video_id}')
+        return {'ok': False, 'skipped': 'disabled'}
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        logger.warning(f'detect_audio_events_task: video {video_id} not found')
+        return {'ok': False, 'error': 'video-not-found'}
+
+    source_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+    if not video.original_file or not video.original_file.name or not source_path.exists():
+        logger.warning(f'detect_audio_events_task: source file missing for {video_id}')
+        return {'ok': False, 'error': 'source-missing'}
+
+    if not _has_audio_stream(str(source_path)):
+        logger.info(f'detect_audio_events_task: no audio stream in {video_id}; skipping')
+        return {'ok': False, 'skipped': 'no-audio'}
+
+    min_conf        = float(getattr(settings, 'AUDIO_EVENTS_MIN_CONFIDENCE',   0.30))
+    min_dur         = float(getattr(settings, 'AUDIO_EVENTS_MIN_DURATION_SEC', 0.50))
+    window_sec      = float(getattr(settings, 'AUDIO_EVENTS_WINDOW_SEC',       1.0))
+    hop_sec         = float(getattr(settings, 'AUDIO_EVENTS_HOP_SEC',          0.5))
+    silence_db      = float(getattr(settings, 'AUDIO_EVENTS_SILENCE_DB',       -30))
+    min_silence_sec = float(getattr(settings, 'AUDIO_EVENTS_SILENCE_MIN_SEC',  1.0))
+    device          = str(getattr(settings,   'AUDIO_EVENTS_DEVICE',           'cpu'))
+    # Music is noisier than speech in AudioSet on real-world dialog videos.
+    # Keep a stricter floor so incidental background tones don't flood the lane.
+    music_min_conf  = max(min_conf + 0.12, 0.34)
+
+    logger.info(f'detect_audio_events_task: starting for {video_id}')
+
+    tmp_wav = None
+    try:
+        tmp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        tmp_wav.close()
+
+        # ── Step 3: extract 32 kHz mono WAV ───────────────────────────────────
+        # 32 kHz is PANNs CNN14's native sample rate.  Keeping a dedicated
+        # extraction here avoids disturbing the 16 kHz WAV used by Whisper
+        # and pyannote in `run_diarization_task`.
+        if not _extract_audio_wav_at_rate(str(source_path), tmp_wav.name, sample_rate=32000):
+            logger.error(f'detect_audio_events_task: ffmpeg 32 kHz extraction failed for {video_id}')
+            return {'ok': False, 'error': 'ffmpeg-failed'}
+
+        # ── Step 4: silence spans (FFmpeg, deterministic, no ML) ──────────────
+        silence_spans = _detect_silence_spans_ffmpeg(tmp_wav.name, silence_db, min_silence_sec)
+        logger.info(f'detect_audio_events_task: {len(silence_spans)} silence span(s) for {video_id}')
+
+        # ── Step 5: PANNs tagging for non-speech events ───────────────────────
+        panns_spans: list[tuple[float, float, str, float]] = []
+        try:
+            assets = _ensure_panns_assets()
+            import numpy as np
+            import soundfile as sf
+            from panns_inference import AudioTagging, labels as panns_labels  # first run downloads ~150 MB
+        except ImportError as imp_exc:
+            logger.warning(
+                f'detect_audio_events_task: panns_inference unavailable — '
+                f'silence-only mode for {video_id}: {imp_exc}'
+            )
+            panns_labels = None
+        except Exception as assets_exc:
+            # Asset download failures are usually transient network issues (e.g. 503).
+            # Raise so the task-level retry policy can recover automatically.
+            raise RuntimeError(f'PANNs asset bootstrap failed: {assets_exc}') from assets_exc
+        else:
+            try:
+                waveform, sr = sf.read(tmp_wav.name, dtype='float32', always_2d=False)
+                if waveform.ndim > 1:
+                    waveform = waveform.mean(axis=1)
+
+                # PANNs expects 32 kHz float32 mono.  We extracted at 32 kHz, but
+                # guard against odd inputs just in case.
+                if sr != 32000:
+                    logger.warning(
+                        f'detect_audio_events_task: expected 32kHz WAV, got {sr}Hz — '
+                        f'skipping PANNs pass for {video_id}'
+                    )
+                else:
+                    win_samples = max(1, int(window_sec * sr))
+                    hop_samples = max(1, int(hop_sec    * sr))
+                    total       = len(waveform)
+
+                    # Build the PANNs class → our-label lookup once.  PANNs ships
+                    # `labels` as a list of 527 strings aligned with the output.
+                    class_to_label: dict[int, str] = {}
+                    for i, cls_name in enumerate(panns_labels):
+                        if cls_name in _PANNS_CLASS_MAP:
+                            class_to_label[i] = _PANNS_CLASS_MAP[cls_name]
+                    if not class_to_label:
+                        logger.warning(
+                            f'detect_audio_events_task: no PANNs classes matched our label map '
+                            f'— PANNs version changed? Skipping model for {video_id}'
+                        )
+                    else:
+                        tagger = AudioTagging(
+                            checkpoint_path=assets['checkpoint_path'],
+                            device=device,
+                        )
+
+                        raw_windows: list[tuple[float, float, str, float]] = []
+                        pos = 0
+                        # Batch windows to keep RAM under ~1 GB on CPU.
+                        BATCH = 32
+                        batch_chunks: list[np.ndarray] = []
+                        batch_times: list[tuple[float, float]] = []
+
+                        def _flush(batch_chunks, batch_times):
+                            if not batch_chunks:
+                                return
+                            batch = np.stack(batch_chunks, axis=0)
+                            clipwise, _ = tagger.inference(batch)  # (N, 527)
+                            for row_i, probs in enumerate(clipwise):
+                                # Multi-label mode: keep every mapped label above
+                                # threshold, not just top-1. This improves recall
+                                # for short transition music and mixed scenes.
+                                # If multiple AudioSet classes map to same label
+                                # (e.g. Giggle + Laughter), keep the best prob.
+                                per_label_best: dict[str, float] = {}
+                                for cls_i, lbl in class_to_label.items():
+                                    p = float(probs[cls_i])
+                                    threshold = music_min_conf if lbl == 'music' else min_conf
+                                    if p < threshold:
+                                        continue
+                                    prev = per_label_best.get(lbl)
+                                    if prev is None or p > prev:
+                                        per_label_best[lbl] = p
+                                # Prevent speech/music co-tagging in the same window.
+                                # Keep whichever class is stronger for this window.
+                                if 'speech' in per_label_best and 'music' in per_label_best:
+                                    if per_label_best['speech'] >= per_label_best['music']:
+                                        per_label_best.pop('music', None)
+                                    else:
+                                        per_label_best.pop('speech', None)
+                                if per_label_best:
+                                    s, e = batch_times[row_i]
+                                    for lbl, p in per_label_best.items():
+                                        raw_windows.append((s, e, lbl, p))
+
+                        while pos < total:
+                            end = pos + win_samples
+                            chunk = waveform[pos:end]
+                            if len(chunk) < win_samples:
+                                chunk = np.pad(chunk, (0, win_samples - len(chunk)), mode='constant')
+                            batch_chunks.append(chunk)
+                            batch_times.append((pos / sr, min(end, total) / sr))
+                            if len(batch_chunks) >= BATCH:
+                                _flush(batch_chunks, batch_times)
+                                batch_chunks, batch_times = [], []
+                            pos += hop_samples
+                        _flush(batch_chunks, batch_times)
+
+                        # Merge neighbouring same-label windows (≤ 1 hop gap).
+                        panns_spans = _collapse_same_label_windows(
+                            sorted(raw_windows, key=lambda w: w[0]),
+                            merge_gap=hop_sec * 1.5,
+                        )
+                        panns_spans = [s for s in panns_spans if (s[1] - s[0]) >= min_dur]
+                        logger.info(
+                            f'detect_audio_events_task: PANNs produced {len(panns_spans)} span(s) '
+                            f'for {video_id}'
+                        )
+            except Exception as panns_exc:
+                logger.error(
+                    f'detect_audio_events_task: PANNs inference failed for {video_id} — '
+                    f'{panns_exc}', exc_info=True,
+                )
+                panns_spans = []
+
+        # ── Step 6: wipe old events and bulk-insert new ones ──────────────────
+        AudioEvent.objects.filter(video=video).delete()
+
+        to_create: list[AudioEvent] = []
+        for s, e in silence_spans:
+            if (e - s) < min_dur:
+                continue
+            to_create.append(AudioEvent(
+                video=video,
+                start_seconds=float(s),
+                end_seconds=float(e),
+                label=AudioEvent.LABEL_SILENCE,
+                confidence=0.0,
+                source=AudioEvent.SOURCE_FFMPEG,
+            ))
+        for s, e, lbl, conf in panns_spans:
+            to_create.append(AudioEvent(
+                video=video,
+                start_seconds=float(s),
+                end_seconds=float(e),
+                label=lbl,
+                confidence=float(conf),
+                source=AudioEvent.SOURCE_PANNS,
+            ))
+
+        if to_create:
+            AudioEvent.objects.bulk_create(to_create, batch_size=500)
+
+        counts: dict[str, int] = {}
+        for ev in to_create:
+            counts[ev.label] = counts.get(ev.label, 0) + 1
+        logger.info(
+            f'detect_audio_events_task: stored {len(to_create)} event(s) for {video_id} — {counts}'
+        )
+        return {'ok': True, 'total': len(to_create), 'by_label': counts}
+
+    except Exception as exc:
+        logger.error(f'detect_audio_events_task failed for {video_id}: {exc}', exc_info=True)
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            return {'ok': False, 'error': str(exc)[:300]}
+    finally:
+        if tmp_wav and os.path.exists(tmp_wav.name):
+            try:
+                os.unlink(tmp_wav.name)
+            except Exception:
+                pass

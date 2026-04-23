@@ -847,6 +847,50 @@
       <pre class="cmd-output" id="out-run_diarization"></pre>
     </div>
 
+    <!-- ── run_audio_events ─────────────────────────────────────────────── -->
+    <div class="cmd-card" id="card-run_audio_events">
+      <div class="cmd-card-head">
+        <div class="cmd-icon" style="background:rgba(14,165,233,.12);">🔊</div>
+        <div style="flex:1;min-width:0;">
+          <div class="cmd-title">Audio Events (No Diarization)</div>
+          <div class="cmd-desc">Runs non-speech audio tagging only (silence, speech, music, applause, laughter, cheering, crowd, booing). Useful when you want X-ray audio lanes without speaker diarization.</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="cmd-model-tag tag-diar">PANNs CNN14 + FFmpeg silencedetect</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-fields">
+        <div class="field-row">
+          <label class="field-label">Video <span style="font-weight:400;text-transform:none;">(optional — blank = all matching statuses)</span></label>
+          <select class="form-select" id="run_audio_events-video_id">
+            <option value="">— all matching videos —</option>
+            {% for v in videos %}
+            <option value="{{ v.id }}">{{ v.title|default:v.id }} ({{ v.status }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Statuses <span style="font-weight:400;text-transform:none;">(comma-separated)</span></label>
+          <input class="form-input" id="run_audio_events-include_status" value="ready" placeholder="ready,processing" />
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="run_audio_events-dry_run" /> Dry Run (list candidates, no processing)</label>
+        <label class="toggle-row"><input type="checkbox" id="run_audio_events-sync" /> Sync (run immediately in command process)</label>
+      </div>
+      <div class="cmd-footer">
+        <button class="cmd-run-btn" onclick="runCommand('run_audio_events', {
+          video_id: document.getElementById('run_audio_events-video_id').value || undefined,
+          include_status: document.getElementById('run_audio_events-include_status').value || 'ready',
+          dry_run: document.getElementById('run_audio_events-dry_run').checked,
+          sync: document.getElementById('run_audio_events-sync').checked
+        })">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Run Audio Events
+        </button>
+        <span class="cmd-dryrun-hint">Does not run speaker diarization.</span>
+      </div>
+      <pre class="cmd-output" id="out-run_audio_events"></pre>
+    </div>
+
     <!-- ═══ 5. Faces, speakers & identity ═════════════════════════════════════ -->
     <div class="cmd-section-heading">👤 Faces, speakers &amp; identity</div>
 

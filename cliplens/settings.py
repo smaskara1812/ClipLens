@@ -363,6 +363,23 @@ HF_TOKEN = os.getenv('HF_TOKEN', '')
 if os.getenv('HF_HUB_OFFLINE', '0') == '1':
     os.environ['HF_HUB_OFFLINE'] = '1'
 
+# ── Audio event detection (PANNs + FFmpeg silencedetect) ──────────────────────
+# Detects non-speech audio events (applause, laughter, music, cheering, crowd,
+# booing) plus silence spans. Triggered automatically as a follow-up to speaker
+# diarization. Results power the third "Audio events" lane on the video X-ray
+# page. Weights (~150 MB for PANNs CNN14) are downloaded to ~/panns_data/ on
+# the first task run.
+AUDIO_EVENTS_ENABLED          = os.getenv('AUDIO_EVENTS_ENABLED', 'true').lower() == 'true'
+AUDIO_EVENTS_QUEUE            = os.getenv('AUDIO_EVENTS_QUEUE', 'audio')
+# Slightly lower defaults improve recall for short montage transitions/music.
+AUDIO_EVENTS_MIN_CONFIDENCE   = float(os.getenv('AUDIO_EVENTS_MIN_CONFIDENCE', '0.22'))
+AUDIO_EVENTS_MIN_DURATION_SEC = float(os.getenv('AUDIO_EVENTS_MIN_DURATION_SEC', '0.35'))
+AUDIO_EVENTS_WINDOW_SEC       = float(os.getenv('AUDIO_EVENTS_WINDOW_SEC', '1.0'))
+AUDIO_EVENTS_HOP_SEC          = float(os.getenv('AUDIO_EVENTS_HOP_SEC', '0.5'))
+AUDIO_EVENTS_SILENCE_DB       = float(os.getenv('AUDIO_EVENTS_SILENCE_DB', '-30'))
+AUDIO_EVENTS_SILENCE_MIN_SEC  = float(os.getenv('AUDIO_EVENTS_SILENCE_MIN_SEC', '1.0'))
+AUDIO_EVENTS_DEVICE           = os.getenv('AUDIO_EVENTS_DEVICE', 'cpu')
+
 # HLS segment duration in seconds
 HLS_SEGMENT_DURATION = int(os.getenv('HLS_SEGMENT_DURATION', 6))
 

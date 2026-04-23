@@ -28,7 +28,7 @@ from django.core.management.base import BaseCommand
 from django.db.models import Count, Q
 
 from videos.models import Video, VideoSegment
-from videos.tasks import run_diarization_task
+from videos.tasks import run_diarization_task, detect_audio_events_task
 
 
 class Command(BaseCommand):
@@ -90,7 +90,9 @@ class Command(BaseCommand):
         else:
             qs = Video.objects.filter(status__in=statuses).order_by('created_at')
 
-        # Always require transcript segments; default excludes already diarized videos.
+        # By default we require transcript segments for diarization candidate
+        # discovery.  For an explicit --video-id run, keep the row even when
+        # segments=0 so the task can still queue audio-event detection.
         qs = qs.annotate(
             total_segments=Count('segments', distinct=True),
             labelled_segments=Count(
@@ -98,7 +100,9 @@ class Command(BaseCommand):
                 filter=Q(segments__speaker_label__isnull=False) & ~Q(segments__speaker_label=''),
                 distinct=True,
             ),
-        ).filter(total_segments__gt=0)
+        )
+        if not video_id:
+            qs = qs.filter(total_segments__gt=0)
         if not force:
             qs = qs.filter(labelled_segments=0)
         qs = qs.distinct()
@@ -133,6 +137,28 @@ class Command(BaseCommand):
                 processed += 1
             except Exception as exc:
                 self.stderr.write(self.style.ERROR(f'    -> ERROR: {exc}\n'))
+                continue
+
+            # Audio events follow diarization.  In async mode the diarization
+            # task already enqueues this; for --sync we enqueue it here so a
+            # worker (on queue=AUDIO_EVENTS_QUEUE) will still pick it up.
+            if getattr(settings, 'AUDIO_EVENTS_ENABLED', True) and not run_sync:
+                # `apply_async` is already triggered from inside run_diarization_task
+                # when running via Celery; no double-enqueue here.
+                pass
+            elif getattr(settings, 'AUDIO_EVENTS_ENABLED', True) and run_sync:
+                try:
+                    audio_queue = getattr(settings, 'AUDIO_EVENTS_QUEUE', 'audio')
+                    detect_audio_events_task.apply_async(
+                        args=[str(video.id)], queue=audio_queue,
+                    )
+                    self.stdout.write(self.style.SUCCESS(
+                        f'    -> audio-events queued on "{audio_queue}"\n'
+                    ))
+                except Exception as ae_exc:
+                    self.stderr.write(self.style.WARNING(
+                        f'    -> audio-events enqueue skipped: {ae_exc}\n'
+                    ))
 
         if dry_run:
             self.stdout.write(

@@ -211,6 +211,43 @@
     background: rgba(245, 158, 11, .92);
   }
 
+  /* ── Audio events lane (non-speech tagger + silence) ──────────────────── */
+  .xr-segment.audio            { height: 10px; box-shadow: 0 0 0 1px rgba(255,255,255,.08) inset; }
+  .xr-segment.audio-silence    { background: #64748b; }
+  .xr-segment.audio-speech     { background: #0ea5e9; }
+  .xr-segment.audio-music      { background: #8b5cf6; }
+  .xr-segment.audio-applause   { background: #f59e0b; }
+  .xr-segment.audio-laughter   { background: #22c55e; }
+  .xr-segment.audio-cheering   { background: #ec4899; }
+  .xr-segment.audio-crowd      { background: #06b6d4; }
+  .xr-segment.audio-booing     { background: #ef4444; }
+
+  .xr-audio-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .xr-audio-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .xr-audio-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+  .xr-audio-empty {
+    padding: 6px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
   .xr-scale {
     position: relative;
     height: 20px;
@@ -528,7 +565,7 @@
     <div class="xr-overlap">
       <div class="xr-overlap-header">
         <div class="xr-overlap-title">Cumulative overlap</div>
-        <div class="xr-filter-note">{{ xray.summary.overlap_count }} overlap region{{ xray.summary.overlap_count|pluralize }} · {{ xray.summary.crowd_range_count }} crowd region{{ xray.summary.crowd_range_count|pluralize }}</div>
+        <div class="xr-filter-note">{{ xray.summary.overlap_count }} overlap region{{ xray.summary.overlap_count|pluralize }} · {{ xray.summary.crowd_range_count }} crowd region{{ xray.summary.crowd_range_count|pluralize }} · {{ xray.summary.audio_event_count }} audio event{{ xray.summary.audio_event_count|pluralize }}</div>
       </div>
       <div class="xr-lane-row">
         <div class="xr-lane-label">Crowd</div>
@@ -561,6 +598,62 @@
           {% endfor %}
         </div>
       </div>
+      <div style="height:10px;"></div>
+      <div class="xr-lane-row">
+        <div class="xr-lane-label">Audio</div>
+        <div class="xr-lane" data-seek-lane="1" onclick="seekOnLane(event)">
+          {% if xray.audio_event_lanes %}
+            {% for lane in xray.audio_event_lanes %}
+              {% for seg in lane.segments %}
+              <button
+                type="button"
+                class="xr-segment audio audio-{{ lane.label }}"
+                data-start="{{ seg.start|floatformat:6 }}"
+                data-end="{{ seg.end|floatformat:6 }}"
+                style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%;"
+                onclick="seekOnSegment(event)"
+                title="{{ lane.display }}: {{ seg.start_label }} - {{ seg.end_label }}{% if seg.confidence_pct %} ({{ seg.confidence_pct }}%){% endif %}"></button>
+              {% endfor %}
+            {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+      <div style="height:10px;"></div>
+      <div class="xr-lane-row">
+        <div class="xr-lane-label">Speech</div>
+        <div class="xr-lane" data-seek-lane="1" onclick="seekOnLane(event)">
+          {% for seg in xray.speech_segments %}
+          <button
+            type="button"
+            class="xr-segment audio audio-speech"
+            data-start="{{ seg.start|floatformat:6 }}"
+            data-end="{{ seg.end|floatformat:6 }}"
+            style="left: {{ seg.left_pct }}%; width: {{ seg.width_pct }}%;"
+            onclick="seekOnSegment(event)"
+            title="Speech: {{ seg.start_label }} - {{ seg.end_label }}{% if seg.confidence_pct %} ({{ seg.confidence_pct }}%){% endif %}"></button>
+          {% endfor %}
+        </div>
+      </div>
+      {% if xray.audio_event_lanes or xray.speech_segments %}
+      <div class="xr-audio-legend">
+        {% if xray.speech_segments %}
+        <span class="xr-audio-legend-item" title="{{ xray.summary.speech_event_count }} speech event{{ xray.summary.speech_event_count|pluralize }}">
+          <span class="xr-audio-legend-dot" style="background:#0ea5e9;"></span>
+          Speech <span style="opacity:.7;">· {{ xray.summary.speech_event_count }}</span>
+        </span>
+        {% endif %}
+        {% for lane in xray.audio_event_lanes %}
+        <span class="xr-audio-legend-item" title="{{ lane.count }} {{ lane.display|lower }} event{{ lane.count|pluralize }}">
+          <span class="xr-audio-legend-dot" style="background: {{ lane.color }};"></span>
+          {{ lane.display }} <span style="opacity:.7;">· {{ lane.count }}</span>
+        </span>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="xr-audio-empty">
+        No audio events found yet. Run speaker diarization to trigger detection; some videos may still produce zero detectable events.
+      </div>
+      {% endif %}
       <div class="xr-scale">
         <span>0:00</span>
         <span style="left:25%;">25%</span>

@@ -1853,7 +1853,7 @@ def admin_commands_run(request):
         'assign_role', 'reanalyse_videos', 'rename_auto_identities',
         'ingest_videos', 'regenerate_captions', 'propagate_identities',
         'auto_confirm_similar', 'patch_master_playlists', 'fill_blip_descriptions',
-        'run_diarization', 'rebuild_speaker_face_suggestions',
+        'run_diarization', 'run_audio_events', 'rebuild_speaker_face_suggestions',
         'generate_seek_sprites',
         # Individual AI step commands
         'run_yolo', 'run_blip', 'run_clip', 'run_insightface',
@@ -4620,6 +4620,61 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
     overlap_segments = _xray_serialise_windows(overlap_ranges, duration)
     crowd_segments = _xray_serialise_windows(crowd_ranges, duration)
 
+    # ── Audio event lanes (non-speech tagging + silence) ─────────────────────
+    # Populated by `videos.tasks.detect_audio_events_task`, which runs as a
+    # follow-up to speaker diarization.  We render them as a single "Audio"
+    # strip on the X-ray page (below Crowd + Overlap) with each label color-
+    # coded.  Order matters for legend display only.
+    from .models import AudioEvent
+    _AUDIO_LANE_ORDER = [
+        ('silence',  'Silence',     '#64748b'),
+        ('music',    'Music',       '#8b5cf6'),
+        ('applause', 'Applause',    '#f59e0b'),
+        ('laughter', 'Laughter',    '#22c55e'),
+        ('cheering', 'Cheering',    '#ec4899'),
+        ('crowd',    'Crowd noise', '#06b6d4'),
+        ('booing',   'Booing',      '#ef4444'),
+    ]
+    audio_events_by_label: dict[str, list[dict]] = {}
+    audio_event_total = 0
+    for ev in (
+        AudioEvent.objects
+        .filter(video=video)
+        .order_by('label', 'start_seconds')
+    ):
+        rows = audio_events_by_label.setdefault(ev.label, [])
+        left_pct = _xray_pct(ev.start_seconds, duration)
+        if duration > 0:
+            width_pct = max(0.6, _xray_pct(ev.end_seconds, duration) - left_pct)
+        else:
+            width_pct = 100.0
+        rows.append({
+            'start': float(ev.start_seconds),
+            'end': float(ev.end_seconds),
+            'start_label': _fmt_seconds_display(ev.start_seconds),
+            'end_label': _fmt_seconds_display(ev.end_seconds),
+            'left_pct': left_pct,
+            'width_pct': min(100.0, width_pct),
+            'confidence': float(ev.confidence or 0.0),
+            'confidence_pct': int(round(float(ev.confidence or 0.0) * 100)),
+            'source': ev.source,
+        })
+        audio_event_total += 1
+
+    audio_event_lanes = []
+    for label, display, color in _AUDIO_LANE_ORDER:
+        segs = audio_events_by_label.get(label) or []
+        if not segs:
+            continue
+        audio_event_lanes.append({
+            'label': label,
+            'display': display,
+            'color': color,
+            'segments': segs,
+            'count': len(segs),
+        })
+    speech_segments = audio_events_by_label.get('speech') or []
+
     summary = {
         'track_count': len(tracks),
         'face_track_count': sum(1 for track in tracks if track['face_windows']),
@@ -4633,6 +4688,9 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
         'crowd_min_area_px': crowd_min_area_px,
         'min_appearances': min_appearances,
         'min_face_seconds': min_face_seconds,
+        'audio_event_count': audio_event_total,
+        'audio_event_label_count': len(audio_event_lanes),
+        'speech_event_count': len(speech_segments),
     }
 
     return {
@@ -4640,6 +4698,8 @@ def _build_video_xray_context(video, filter_mode: str) -> dict:
         'summary': summary,
         'overlap_segments': overlap_segments,
         'crowd_segments': crowd_segments,
+        'audio_event_lanes': audio_event_lanes,
+        'speech_segments': speech_segments,
         'duration': duration,
         'duration_label': _fmt_seconds_display(duration),
     }
@@ -4856,16 +4916,17 @@ def run_diarization(request, video_id):
         )
 
     segment_count = VideoSegment.objects.filter(video=video).count()
-    if segment_count == 0:
-        return Response(
-            {'error': 'No transcript segments found. Run Whisper auto-generate first.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
 
     try:
         from .tasks import run_diarization_task
         task = run_diarization_task.apply_async(args=[str(video_id)], queue='captions')
-        return Response({'task_id': task.id, 'segment_count': segment_count})
+        payload = {'task_id': task.id, 'segment_count': segment_count}
+        if segment_count == 0:
+            payload['warning'] = (
+                'No transcript segments found, so diarization labels will be skipped. '
+                'Audio-event detection will still run.'
+            )
+        return Response(payload)
     except Exception as exc:
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 

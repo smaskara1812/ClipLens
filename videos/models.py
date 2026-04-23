@@ -894,6 +894,67 @@ class Subtitle(models.Model):
         return self.file.url if self.file else None
 
 
+# ── Audio Events (non-speech audio tagging + silence) ────────────────────────
+
+class AudioEvent(models.Model):
+    """
+    One non-speech audio span detected on a video.
+
+    Populated by `videos.tasks.detect_audio_events_task`, which runs as a
+    follow-up to speaker diarization.  Drives the third lane ("Audio events")
+    on the video X-ray page.  Speech segments live in `VideoSegment`, not
+    here — this table intentionally has no text/speaker fields.
+
+    Sources:
+        - 'panns'  → PANNs CNN14 multi-label tagger over sliding windows
+        - 'ffmpeg' → FFmpeg `silencedetect` (used only for `label='silence'`)
+    """
+    LABEL_SILENCE  = 'silence'
+    LABEL_APPLAUSE = 'applause'
+    LABEL_LAUGHTER = 'laughter'
+    LABEL_MUSIC    = 'music'
+    LABEL_CHEERING = 'cheering'
+    LABEL_CROWD    = 'crowd'
+    LABEL_BOOING   = 'booing'
+    LABEL_SPEECH   = 'speech'
+    LABEL_CHOICES  = [
+        (LABEL_SILENCE,  'Silence'),
+        (LABEL_APPLAUSE, 'Applause'),
+        (LABEL_LAUGHTER, 'Laughter'),
+        (LABEL_MUSIC,    'Music'),
+        (LABEL_CHEERING, 'Cheering'),
+        (LABEL_CROWD,    'Crowd noise'),
+        (LABEL_BOOING,   'Booing'),
+        (LABEL_SPEECH,   'Speech'),
+    ]
+
+    SOURCE_PANNS  = 'panns'
+    SOURCE_FFMPEG = 'ffmpeg'
+    SOURCE_CHOICES = [
+        (SOURCE_PANNS,  'PANNs'),
+        (SOURCE_FFMPEG, 'FFmpeg silencedetect'),
+    ]
+
+    video         = models.ForeignKey(Video, on_delete=models.CASCADE, related_name='audio_events')
+    start_seconds = models.FloatField()
+    end_seconds   = models.FloatField()
+    label         = models.CharField(max_length=32, choices=LABEL_CHOICES)
+    confidence    = models.FloatField(default=0.0,
+                                      help_text='Mean softmax probability for PANNs; 0.0 for FFmpeg-derived silence')
+    source        = models.CharField(max_length=16, choices=SOURCE_CHOICES, default=SOURCE_PANNS)
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['start_seconds']
+        indexes  = [
+            models.Index(fields=['video', 'start_seconds']),
+            models.Index(fields=['video', 'label']),
+        ]
+
+    def __str__(self):
+        return f'{self.video.title} [{self.label} {self.start_seconds:.1f}–{self.end_seconds:.1f}s]'
+
+
 # ── Audio Tracks ──────────────────────────────────────────────────────────────
 
 class AudioTrack(models.Model):
