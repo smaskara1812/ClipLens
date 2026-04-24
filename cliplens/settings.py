@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.postgres',
     'rest_framework',
+    'drf_spectacular',
     'corsheaders',
     'django_celery_results',
     'videos',
@@ -242,6 +243,7 @@ REST_FRAMEWORK = {
         'videos.authentication.CsrfExemptSessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
@@ -252,6 +254,12 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'FreeStream API',
+    'DESCRIPTION': 'OpenAPI schema for FreeStream API endpoints.',
+    'VERSION': '1.0.0',
 }
 
 # FFmpeg — must be installed and on PATH (or set FFMPEG_PATH env var)
