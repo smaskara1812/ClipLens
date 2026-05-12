@@ -1910,14 +1910,28 @@
               <div style="font-size:11px;color:var(--text-muted);line-height:1.5;">
                 Uses <strong>NLLB-200</strong> to translate existing captions into other languages. Select languages and click Generate — runs in the background.
               </div>
+
+              <!-- Default language checkboxes -->
               <div style="display:flex;flex-wrap:wrap;gap:6px;" id="translateLangPills">
-                {% for lang_code in translation_languages %}
+                {% for lang_code, lang_name in translation_languages %}
                 <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:4px 9px;cursor:pointer;user-select:none;">
                   <input type="checkbox" class="translate-lang-cb" value="{{ lang_code }}" style="accent-color:var(--accent);" checked />
-                  {{ lang_code|upper }}
+                  {{ lang_name }}<span style="color:var(--text-subtle);font-size:10px;margin-left:2px;">{{ lang_code }}</span>
                 </label>
                 {% endfor %}
               </div>
+
+              <!-- Custom language picker -->
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <select id="customLangSelect" class="form-select" style="font-size:12px;padding:4px 8px;flex:1;min-width:0;max-width:200px;">
+                  <option value="">Add a language…</option>
+                  {% for lang_code, lang_name in translation_all_languages %}
+                  <option value="{{ lang_code }}">{{ lang_name }} ({{ lang_code }})</option>
+                  {% endfor %}
+                </select>
+                <button class="btn btn-ghost btn-sm" onclick="addTranslationLanguage()" type="button">Add</button>
+              </div>
+
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <button class="btn btn-primary btn-sm" onclick="generateTranslations()" id="translateBtn">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
@@ -4176,6 +4190,24 @@
       const err = await res.json().catch(() => ({}));
       showToast('error', 'Could not queue analysis', err.error || '');
     }
+  }
+
+  function addTranslationLanguage() {
+    const sel = document.getElementById('customLangSelect');
+    const code = sel.value;
+    if (!code) return;
+    const label = sel.options[sel.selectedIndex].text;
+    // Don't add if already present
+    if (document.querySelector(`.translate-lang-cb[value="${code}"]`)) {
+      showToast('info', `${label} already in the list`);
+      sel.value = '';
+      return;
+    }
+    const pill = document.createElement('label');
+    pill.style.cssText = 'display:inline-flex;align-items:center;gap:5px;font-size:12px;background:var(--surface-3);border:1px solid var(--accent);border-radius:6px;padding:4px 9px;cursor:pointer;user-select:none;';
+    pill.innerHTML = `<input type="checkbox" class="translate-lang-cb" value="${code}" style="accent-color:var(--accent);" checked />${label.split(' (')[0]}<span style="color:var(--text-subtle);font-size:10px;margin-left:2px;">${code}</span>`;
+    document.getElementById('translateLangPills').appendChild(pill);
+    sel.value = '';
   }
 
   async function generateTranslations() {

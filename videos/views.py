@@ -1446,7 +1446,10 @@ def watch_page(request, video_id):
         'playlist_total':  playlist_total,
         # Translation
         'translation_enabled':   getattr(settings, 'TRANSLATION_ENABLED', True),
-        'translation_languages': getattr(settings, 'TRANSLATION_LANGUAGES', ['fr', 'es', 'de', 'hi', 'ar']),
+        'translation_languages': _build_translation_language_list(
+            getattr(settings, 'TRANSLATION_LANGUAGES', ['fr', 'es', 'de', 'hi', 'ar'])
+        ),
+        'translation_all_languages': _build_all_translation_languages(),
     })
 
 
@@ -4118,6 +4121,22 @@ def playlist_video(request, playlist_id, video_id):
 
     PlaylistItem.objects.filter(playlist=playlist, video=video).delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Translation language helpers ────────────────────────────────────────────
+
+def _build_translation_language_list(codes):
+    """Convert a list of BCP-47 codes into [(code, label)] pairs for the UI."""
+    from .tasks import _lang_label
+    return [(code, _lang_label(code)) for code in codes]
+
+def _build_all_translation_languages():
+    """Return all NLLB-supported languages as sorted [(code, label)] pairs (excl. English)."""
+    from .tasks import _lang_label, _BCP47_TO_FLORES
+    return sorted(
+        [(code, _lang_label(code)) for code in _BCP47_TO_FLORES if code != 'en'],
+        key=lambda x: x[1],
+    )
 
 
 # ─── Subtitles API ───────────────────────────────────────────────────────────
