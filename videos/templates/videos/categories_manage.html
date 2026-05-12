@@ -44,6 +44,15 @@
   tr.editing .edit-inline { display: flex; }
 
   .empty-state { text-align: center; padding: 40px 24px; color: var(--text-subtle); font-size: 14px; }
+
+  @media (max-width: 640px) {
+    .add-row { flex-direction: column; align-items: stretch; }
+    .cat-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: var(--radius); }
+    table { min-width: 480px; }
+    thead th, td { padding: 9px 12px; font-size: 12px; }
+    .row-actions { gap: 4px; }
+    .btn-rename, .btn-delete { font-size: 11px; padding: 4px 8px; }
+  }
 </style>
 {% endblock %}
 

@@ -63,7 +63,18 @@
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 20px;
   }
-  @media (max-width: 640px) { .video-grid { grid-template-columns: 1fr 1fr; gap: 12px; } }
+  @media (max-width: 640px) {
+    .video-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .vcard-body { padding: 8px 9px 10px; }
+    .vcard-title { font-size: 12px; -webkit-line-clamp: 2; }
+    .vcard-meta { font-size: 11px; }
+    .vcard-dur { font-size: 10px; padding: 2px 5px; }
+  }
+  @media (max-width: 480px) {
+    .video-grid { grid-template-columns: 1fr; }
+    .vcard-body { padding: 10px 11px 12px; }
+    .vcard-title { font-size: 13px; }
+  }
 
   /* Video card */
   .vcard {

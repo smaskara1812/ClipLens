@@ -35,7 +35,16 @@
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 16px;
   }
-  @media (max-width: 640px) { .photo-grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+  @media (max-width: 640px) {
+    .photo-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .filter-bar { gap: 6px; margin-bottom: 14px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
+    .filter-select { flex-shrink: 0; font-size: 12px; padding: 5px 26px 5px 10px; }
+    .bulk-bar { flex-wrap: wrap; gap: 6px; }
+    .bulk-count { font-size: 12px; }
+  }
+  @media (max-width: 380px) {
+    .photo-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+  }
 
   .pcard {
     background: var(--surface); border: 1px solid var(--border);

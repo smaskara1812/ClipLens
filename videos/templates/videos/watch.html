@@ -23,6 +23,26 @@
     align-items: start;
   }
   @media (max-width: 900px) { .watch-layout { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) {
+    .watch-layout { padding: 0 0 60px; gap: 16px; }
+    .video-wrap { border-radius: 0; }
+    .watch-main { padding: 12px 14px 0; }
+    .watch-main h1 { font-size: 16px !important; line-height: 1.4; }
+    .meta-row { gap: 8px; margin-top: 8px; }
+    .meta-item { font-size: 12px; }
+    .action-row { gap: 6px; margin-top: 12px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
+    .action-row .btn { flex-shrink: 0; font-size: 12px; padding: 7px 12px; }
+    .action-row .btn svg { width: 13px; height: 13px; }
+    .channel-card { margin-top: 12px; padding: 10px 12px; }
+    .ch-info .ch-name { font-size: 14px; }
+    .tags { gap: 5px; margin-top: 10px; }
+    .tag { font-size: 11px; padding: 3px 10px; }
+    /* Ctrl bar touch targets */
+    .wc-btn { padding: 6px; }
+    .wc-btn svg { width: 20px; height: 20px; }
+    .wc-time { font-size: 11px !important; }
+    .wc-vol { display: none; }
+  }
 
   /* ── Player ── */
   .video-wrap {
@@ -324,6 +344,25 @@
   .wc-skip-flash.r { right: 10%; }
   .wc-skip-flash.show { opacity: 1; }
 
+  /* ── Draggable caption overlay ── */
+  .caption-overlay {
+    position: absolute; bottom: 12%; left: 50%; transform: translateX(-50%);
+    max-width: 80%; text-align: center; z-index: 20;
+    cursor: grab; user-select: none; display: none; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .caption-overlay.active { display: flex; }
+  .caption-overlay.dragging { cursor: grabbing; }
+  .caption-overlay.dragging .caption-drag-hint { opacity: 0; }
+  #captionText {
+    font-size: 100%; color: #fff; background: rgba(0,0,0,0.75);
+    padding: 3px 8px; border-radius: 3px; white-space: pre-wrap; display: inline-block; line-height: 1.5;
+  }
+  .caption-drag-hint {
+    font-size: 10px; color: rgba(255,255,255,0.35); letter-spacing: 0.3px;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  .caption-overlay:hover .caption-drag-hint { opacity: 1; }
+
   /* ── Video info ── */
   .video-info { margin-top: 18px; }
   .video-title { font-size: 22px; font-weight: 800; line-height: 1.3; letter-spacing: -0.3px; }
@@ -384,24 +423,26 @@
   .ch-info .ch-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
   /* Description */
-  .description-wrap { margin-top: 18px; }
-  .description-box {
+  .description-wrap {
+    margin-top: 12px;
     background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 16px;
-    font-size: 14px; color: var(--text-muted); line-height: 1.7;
-    white-space: pre-wrap; max-height: 120px; overflow: hidden;
-    position: relative; transition: max-height .3s;
+    border-radius: var(--radius); padding: 14px 16px;
   }
-  .description-box.expanded { max-height: 1000px; }
+  .description-box {
+    font-size: 13px; color: var(--text-muted); line-height: 1.75;
+    white-space: pre-wrap; max-height: 72px; overflow: hidden;
+    position: relative; transition: max-height .35s ease;
+  }
+  .description-box.expanded { max-height: 2000px; }
   .desc-fade {
-    position: absolute; bottom: 0; left: 0; right: 0; height: 48px;
+    position: absolute; bottom: 0; left: 0; right: 0; height: 36px;
     background: linear-gradient(transparent, var(--surface-2));
-    display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px;
+    display: flex; align-items: flex-end; justify-content: flex-start;
   }
   .desc-fade.hidden { display: none; }
   .desc-expand-btn {
     background: none; border: none; color: var(--accent);
-    font-size: 12px; font-weight: 600; cursor: pointer;
+    font-size: 12px; font-weight: 700; cursor: pointer; padding: 0;
   }
 
   /* Tags */
@@ -471,7 +512,19 @@
   .modal-close:hover { background: var(--surface-3); color: var(--text); }
   .modal-close svg { width: 20px; height: 20px; }
   .modal-body { flex: 1; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
-  @media (max-width: 640px) { .modal-body { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) {
+    .modal-backdrop { padding: 0; align-items: flex-end; }
+    .modal {
+      max-width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      max-height: 92vh;
+    }
+    .modal-header { padding: 16px 18px; }
+    .modal-title { font-size: 15px; }
+    .modal-body { grid-template-columns: 1fr; }
+    .modal-footer { padding: 12px 18px; }
+    .wizard-options { padding: 16px 18px; }
+    .wizard-preview-panel { padding: 16px 18px; }
+  }
 
   /* Wizard left panel — options */
   .wizard-options {
@@ -561,34 +614,80 @@
   }
   .r-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
-  /* ── Subtitle style panel ── */
+  /* ── Settings gear — YouTube-style drill-down ── */
   .sub-style-btn {
-    background: none; border: none; color: var(--text-muted);
-    display: flex; align-items: center; padding: 5px 7px; cursor: pointer;
-    border-radius: 4px; transition: color .15s;
+    background: none; border: none; color: rgba(255,255,255,.75);
+    display: flex; align-items: center; padding: 4px; cursor: pointer;
+    border-radius: 4px; transition: color .12s, background .12s;
   }
-  .sub-style-btn:hover { color: var(--accent); }
+  .sub-style-btn:hover { color: #fff; background: rgba(255,255,255,.12); }
+  .sub-style-btn svg { width: 18px; height: 18px; }
   .sub-style-panel {
     position: absolute; bottom: calc(100% + 10px); right: 0;
-    background: var(--surface); border: 1px solid var(--border-2);
-    border-radius: var(--radius); padding: 14px 16px;
-    min-width: 240px; z-index: 60; box-shadow: var(--shadow);
-    display: none; flex-direction: column; gap: 12px;
+    background: #1a1a26; border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px; width: 280px; z-index: 60;
+    box-shadow: 0 8px 40px rgba(0,0,0,.85);
+    display: none; flex-direction: column; overflow: hidden;
   }
   .sub-style-panel.open { display: flex; }
-  .sub-style-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .sub-style-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
-  .sub-style-control { display: flex; align-items: center; gap: 6px; }
-  .sub-style-panel select, .sub-style-panel input[type=range] { font-size: 12px; }
-  .sub-style-panel select {
-    background: var(--surface-2); border: 1px solid var(--border-2);
-    border-radius: var(--radius-sm); padding: 4px 8px; color: var(--text);
-    outline: none; cursor: pointer;
+
+  /* Main menu */
+  .ss-main { display: flex; flex-direction: column; }
+  .ss-menu-item {
+    display: flex; align-items: center; gap: 0;
+    width: 100%; padding: 14px 18px;
+    background: none; border: none; border-bottom: 1px solid rgba(255,255,255,.06);
+    color: #fff; cursor: pointer; text-align: left; font-family: inherit;
+    transition: background .12s;
   }
-  .sub-style-panel input[type=range] { width: 90px; accent-color: var(--accent); }
-  .sub-style-panel input[type=color] { width: 32px; height: 24px; border: 1px solid var(--border-2); border-radius: 4px; padding: 2px; cursor: pointer; background: none; }
-  .sub-val-label { font-size: 11px; color: var(--text-muted); min-width: 30px; text-align: right; }
-  .sub-style-title { font-size: 12px; font-weight: 700; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 2px; }
+  .ss-menu-item:last-child { border-bottom: none; }
+  .ss-menu-item:hover { background: rgba(255,255,255,.06); }
+  .ss-menu-label { flex: 1; font-size: 14px; font-weight: 400; }
+  .ss-menu-value { font-size: 13px; color: rgba(255,255,255,.45); margin-right: 6px; }
+  .ss-menu-chev { color: rgba(255,255,255,.3); font-size: 18px; line-height: 1; }
+
+  /* Sub-pane */
+  .ss-pane { display: none; flex-direction: column; }
+  .ss-pane.active { display: flex; }
+  .ss-back {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 13px 16px 12px;
+    background: none; border: none; border-bottom: 1px solid rgba(255,255,255,.1);
+    color: #fff; cursor: pointer; font-size: 14px; font-weight: 600;
+    font-family: inherit; text-align: left; transition: background .12s;
+  }
+  .ss-back:hover { background: rgba(255,255,255,.05); }
+  .ss-back svg { width: 16px; height: 16px; flex-shrink: 0; color: rgba(255,255,255,.5); }
+  .ss-pane-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
+  .ss-pane-opt {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; padding: 12px 20px;
+    background: none; border: none; color: rgba(255,255,255,.7);
+    cursor: pointer; font-size: 14px; font-family: inherit;
+    transition: background .12s; text-align: left;
+  }
+  .ss-pane-opt:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .ss-pane-opt.active { color: #fff; font-weight: 600; }
+  .ss-check { font-size: 13px; color: var(--accent); opacity: 0; flex-shrink: 0; }
+  .ss-pane-opt.active .ss-check { opacity: 1; }
+
+  /* Subtitle style form */
+  .ss-substyle-form {
+    padding: 14px 18px; display: flex; flex-direction: column; gap: 13px;
+    max-height: 320px; overflow-y: auto;
+  }
+  .sub-style-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .sub-style-label { font-size: 12px; color: rgba(255,255,255,.5); white-space: nowrap; }
+  .sub-style-control { display: flex; align-items: center; gap: 6px; }
+  .ss-substyle-form select {
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15);
+    border-radius: 6px; padding: 5px 8px; color: #fff;
+    outline: none; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  .ss-substyle-form select option { background: #1a1a26; }
+  .ss-substyle-form input[type=range] { width: 80px; accent-color: var(--accent); }
+  .ss-substyle-form input[type=color] { width: 32px; height: 24px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; padding: 2px; cursor: pointer; background: none; }
+  .sub-val-label { font-size: 11px; color: rgba(255,255,255,.4); min-width: 32px; text-align: right; }
 </style>
 {% endblock %}
 
@@ -624,6 +723,12 @@
         </div>
         <div class="wc-skip-flash r" id="wcSkipR">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>5s
+        </div>
+
+        <!-- Draggable caption overlay -->
+        <div id="captionOverlay" class="caption-overlay">
+          <span id="captionText"></span>
+          <div class="caption-drag-hint">drag to reposition</div>
         </div>
 
         <!-- End Screen Overlay (inside video-wrap so position:absolute works) -->
@@ -689,101 +794,142 @@
                    oninput="watchSetVol(this.value)" title="Volume  (↑↓)"/>
           </div>
 
-          <!-- Speed -->
-          <div class="quality-wrap" id="speedPickerWrap">
-            <button class="quality-btn" onclick="toggleSpeedMenu(event)" title="Playback speed">
-              <span id="speedLabel">1×</span>
-            </button>
-            <div class="quality-menu" id="speedMenu" style="min-width:96px;"></div>
-          </div>
-
-          <!-- Quality -->
-          <div class="quality-wrap" id="qualityPickerWrap" style="display:none;">
-            <button class="quality-btn" onclick="toggleQualityMenu(event)">
-              <span id="qualityLabel">Auto</span>
-              <span style="font-size:8px;opacity:.5;margin-left:1px;">▲</span>
-            </button>
-            <div class="quality-menu" id="qualityMenu"></div>
-          </div>
-
-          <!-- Subtitles / Captions -->
-          {% if subtitles %}
-          <div class="quality-wrap" id="ccPickerWrap">
-            <button class="quality-btn" onclick="toggleCcMenu(event)" title="Subtitles / Captions">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                <rect x="2" y="5" width="20" height="14" rx="2"/>
-                <line x1="6" y1="10" x2="10" y2="10"/><line x1="12" y1="10" x2="18" y2="10"/>
-                <line x1="6" y1="14" x2="12" y2="14"/><line x1="14" y1="14" x2="18" y2="14"/>
-              </svg>
-            </button>
-            <div class="quality-menu" id="ccMenu" style="min-width:140px;">
-              <button class="quality-option" onclick="selectCc(-1)">Off</button>
-              {% for sub in subtitles %}
-              <button class="quality-option" onclick="selectCc({{ forloop.counter0 }})">{{ sub.language_label }}{% if sub.is_auto_generated %} (auto){% endif %}</button>
-              {% endfor %}
-            </div>
-          </div>
-
-          <!-- Subtitle style button -->
+          <!-- Settings gear — speed + quality + captions + subtitle style -->
           <div style="position:relative;" id="subStyleWrap">
-            <button class="sub-style-btn" onclick="toggleSubStylePanel(event)" title="Subtitle style">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <button class="sub-style-btn" onclick="toggleSubStylePanel(event)" title="Settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="3"/>
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
-                <path d="M12 2v2M12 20v2M2 12h2M20 12h2"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
               </svg>
             </button>
             <div class="sub-style-panel" id="subStylePanel">
-              <div class="sub-style-title">Subtitle Style</div>
-              <div class="sub-style-row">
-                <span class="sub-style-label">Position</span>
-                <div class="sub-style-control">
-                  <select id="subPosition" onchange="applySubStyle()">
-                    <option value="bottom">Bottom</option>
-                    <option value="top">Top</option>
-                    <option value="middle">Middle</option>
-                  </select>
+
+              <!-- Main menu -->
+              <div class="ss-main" id="ssMain">
+                <button class="ss-menu-item" onclick="openSettingsPane('speed')">
+                  <span class="ss-menu-label">Speed</span>
+                  <span class="ss-menu-value" id="ssSpeedLabel">Normal</span>
+                  <span class="ss-menu-chev">›</span>
+                </button>
+                <button class="ss-menu-item" id="ssQualityMenuItem" style="display:none;" onclick="openSettingsPane('quality')">
+                  <span class="ss-menu-label">Quality</span>
+                  <span class="ss-menu-value" id="qualityLabel">Auto</span>
+                  <span class="ss-menu-chev">›</span>
+                </button>
+                {% if subtitles %}
+                <button class="ss-menu-item" onclick="openSettingsPane('captions')">
+                  <span class="ss-menu-label">Captions</span>
+                  <span class="ss-menu-value" id="ssCcLabel">Off</span>
+                  <span class="ss-menu-chev">›</span>
+                </button>
+                <button class="ss-menu-item" style="border-bottom:none;" onclick="openSettingsPane('substyle')">
+                  <span class="ss-menu-label">Subtitle Style</span>
+                  <span class="ss-menu-chev">›</span>
+                </button>
+                {% endif %}
+              </div>
+
+              <!-- Speed pane -->
+              <div class="ss-pane" id="ssPaneSpeed">
+                <button class="ss-back" onclick="backToSettingsMain()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                  Speed
+                </button>
+                <div class="ss-pane-list">
+                  <button class="ss-pane-opt" data-speed="0.25" onclick="setWatchSpeed(0.25)"><span>0.25×</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt" data-speed="0.5"  onclick="setWatchSpeed(0.5)"><span>0.5×</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt" data-speed="0.75" onclick="setWatchSpeed(0.75)"><span>0.75×</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt active" data-speed="1" onclick="setWatchSpeed(1)"><span>Normal</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt" data-speed="1.25" onclick="setWatchSpeed(1.25)"><span>1.25×</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt" data-speed="1.5"  onclick="setWatchSpeed(1.5)"><span>1.5×</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt" data-speed="1.75" onclick="setWatchSpeed(1.75)"><span>1.75×</span><span class="ss-check">✓</span></button>
+                  <button class="ss-pane-opt" data-speed="2"    onclick="setWatchSpeed(2)"><span>2×</span><span class="ss-check">✓</span></button>
                 </div>
               </div>
-              <div class="sub-style-row">
-                <span class="sub-style-label">Font Size</span>
-                <div class="sub-style-control">
-                  <input type="range" id="subFontSize" min="60" max="200" value="100" oninput="applySubStyle(); document.getElementById('subFontSizeVal').textContent=this.value+'%'"/>
-                  <span class="sub-val-label" id="subFontSizeVal">100%</span>
+
+              <!-- Quality pane (populated dynamically by buildQualityMenu) -->
+              <div class="ss-pane" id="ssPaneQuality">
+                <button class="ss-back" onclick="backToSettingsMain()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                  Quality
+                </button>
+                <div class="ss-pane-list" id="qualityMenu"></div>
+              </div>
+
+              {% if subtitles %}
+              <!-- Captions pane -->
+              <div class="ss-pane" id="ssPaneCaptions">
+                <button class="ss-back" onclick="backToSettingsMain()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                  Captions
+                </button>
+                <div class="ss-pane-list">
+                  <button class="ss-pane-opt active" data-cc="-1" onclick="selectCc(-1)"><span>Off</span><span class="ss-check">✓</span></button>
+                  {% for sub in subtitles %}
+                  <button class="ss-pane-opt" data-cc="{{ forloop.counter0 }}" onclick="selectCc({{ forloop.counter0 }})"><span>{{ sub.language_label }}{% if sub.is_auto_generated %} (auto){% endif %}</span><span class="ss-check">✓</span></button>
+                  {% endfor %}
                 </div>
               </div>
-              <div class="sub-style-row">
-                <span class="sub-style-label">Text Color</span>
-                <div class="sub-style-control">
-                  <input type="color" id="subColor" value="#ffffff" oninput="applySubStyle()"/>
+
+              <!-- Subtitle Style pane -->
+              <div class="ss-pane" id="ssPaneSubstyle">
+                <button class="ss-back" onclick="backToSettingsMain()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                  Subtitle Style
+                </button>
+                <div class="ss-substyle-form">
+                  <div class="sub-style-row">
+                    <span class="sub-style-label">Position</span>
+                    <div class="sub-style-control">
+                      <select id="subPosition" onchange="applySubStyle()">
+                        <option value="bottom">Bottom</option>
+                        <option value="top">Top</option>
+                        <option value="middle">Middle</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="sub-style-row">
+                    <span class="sub-style-label">Font Size</span>
+                    <div class="sub-style-control">
+                      <input type="range" id="subFontSize" min="60" max="200" value="100" oninput="applySubStyle(); document.getElementById('subFontSizeVal').textContent=this.value+'%'"/>
+                      <span class="sub-val-label" id="subFontSizeVal">100%</span>
+                    </div>
+                  </div>
+                  <div class="sub-style-row">
+                    <span class="sub-style-label">Text Color</span>
+                    <div class="sub-style-control">
+                      <input type="color" id="subColor" value="#ffffff" oninput="applySubStyle()"/>
+                    </div>
+                  </div>
+                  <div class="sub-style-row">
+                    <span class="sub-style-label">Background</span>
+                    <div class="sub-style-control">
+                      <select id="subBg" onchange="applySubStyle()">
+                        <option value="rgba(0,0,0,0.75)">Dark</option>
+                        <option value="rgba(0,0,0,0)">None</option>
+                        <option value="rgba(0,0,0,0.4)">Subtle</option>
+                        <option value="rgba(255,255,255,0.85)">Light</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="sub-style-row">
+                    <span class="sub-style-label">Font</span>
+                    <div class="sub-style-control">
+                      <select id="subFont" onchange="applySubStyle()">
+                        <option value="inherit">Default</option>
+                        <option value="sans-serif">Sans-serif</option>
+                        <option value="serif">Serif</option>
+                        <option value="monospace">Monospace</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button onclick="resetSubStyle()" style="font-size:11px;color:rgba(255,255,255,.35);background:none;border:none;cursor:pointer;align-self:flex-start;padding:0;">Reset to defaults</button>
                 </div>
               </div>
-              <div class="sub-style-row">
-                <span class="sub-style-label">Background</span>
-                <div class="sub-style-control">
-                  <select id="subBg" onchange="applySubStyle()">
-                    <option value="rgba(0,0,0,0.75)">Dark</option>
-                    <option value="rgba(0,0,0,0)">None</option>
-                    <option value="rgba(0,0,0,0.4)">Subtle</option>
-                    <option value="rgba(255,255,255,0.85)">Light</option>
-                  </select>
-                </div>
-              </div>
-              <div class="sub-style-row">
-                <span class="sub-style-label">Font</span>
-                <div class="sub-style-control">
-                  <select id="subFont" onchange="applySubStyle()">
-                    <option value="inherit">Default</option>
-                    <option value="sans-serif">Sans-serif</option>
-                    <option value="serif">Serif</option>
-                    <option value="monospace">Monospace</option>
-                  </select>
-                </div>
-              </div>
-              <button onclick="resetSubStyle()" style="font-size:11px;color:var(--text-subtle);background:none;border:none;cursor:pointer;align-self:flex-start;padding:0;margin-top:2px;">Reset to defaults</button>
+              {% endif %}
+
             </div>
           </div>
-          {% endif %}
 
           <!-- Audio Track Switcher -->
           {% if audio_tracks|length > 1 %}
@@ -2195,6 +2341,8 @@
       watchHls.on(Hls.Events.MANIFEST_PARSED, () => {
         loader.style.display = 'none';
         document.getElementById('bigPlay').classList.remove('hidden');
+        // Suppress native track rendering — we use a custom draggable overlay
+        for (let i = 0; i < videoEl.textTracks.length; i++) videoEl.textTracks[i].mode = 'hidden';
         if (!_playerInited && _hlsSeekTo != null) {
           videoEl.currentTime = _hlsSeekTo;
           showToast('info', 'Jumped to {{ seek_to|default:"0"|floatformat:0 }}s', 'from search result');
@@ -2891,7 +3039,7 @@
   });
   // Keep visible while a menu is open
   document.addEventListener('click', () => {
-    if (document.querySelector('#qualityMenu.open, #speedMenu.open')) {
+    if (document.getElementById('subStylePanel')?.classList.contains('open')) {
       clearTimeout(_wcHideTimer); videoWrap.classList.add('sc');
     }
   });
@@ -2912,23 +3060,24 @@
   }
 
   function buildQualityMenu(hls) {
+    if (hls.levels.length < 2) return;
     const menu = document.getElementById('qualityMenu');
     menu.innerHTML = '';
-    const autoOpt = document.createElement('div');
-    autoOpt.className = 'quality-opt active';
-    autoOpt.innerHTML = `<span>Auto</span><span class="q-check">✓</span>`;
+    const autoOpt = document.createElement('button');
+    autoOpt.className = 'ss-pane-opt active';
+    autoOpt.innerHTML = `<span>Auto</span><span class="ss-check">✓</span>`;
     autoOpt.onclick = () => setQuality(-1);
     menu.appendChild(autoOpt);
     hls.levels.forEach((lvl, idx) => {
-      const label = lvl.name || (lvl.height ? lvl.height+'p' : 'Level '+idx);
-      const opt = document.createElement('div');
-      opt.className = 'quality-opt';
+      const label = lvl.name || (lvl.height ? lvl.height + 'p' : 'Level ' + idx);
+      const opt = document.createElement('button');
+      opt.className = 'ss-pane-opt';
       opt.dataset.level = idx;
-      opt.innerHTML = `<span>${label}</span><span class="q-check">✓</span>`;
+      opt.innerHTML = `<span>${label}</span><span class="ss-check">✓</span>`;
       opt.onclick = () => setQuality(idx);
       menu.appendChild(opt);
     });
-    document.getElementById('qualityPickerWrap').style.display = 'block';
+    document.getElementById('ssQualityMenuItem').style.display = '';
   }
 
   function setQuality(idx) {
@@ -2936,27 +3085,20 @@
     watchHls.currentLevel = idx;
     const lvl = watchHls.levels[idx];
     document.getElementById('qualityLabel').textContent =
-      idx === -1 ? 'Auto' : (lvl ? (lvl.name || lvl.height+'p') : '?');
+      idx === -1 ? 'Auto' : (lvl ? (lvl.name || lvl.height + 'p') : '?');
     refreshQualityMenu();
-    document.getElementById('qualityMenu').classList.remove('open');
   }
 
   function refreshQualityMenu() {
     if (!watchHls) return;
-    document.querySelectorAll('#qualityMenu .quality-opt').forEach((opt, i) => {
+    document.querySelectorAll('#qualityMenu .ss-pane-opt').forEach((opt, i) => {
       opt.classList.toggle('active',
         i === 0 ? watchHls.autoLevelEnabled
                 : (!watchHls.autoLevelEnabled && watchHls.currentLevel === parseInt(opt.dataset.level)));
     });
   }
 
-  function toggleQualityMenu(e) {
-    e.stopPropagation();
-    document.getElementById('qualityMenu').classList.toggle('open');
-  }
   document.addEventListener('click', () => {
-    document.getElementById('qualityMenu')?.classList.remove('open');
-    document.getElementById('speedMenu')?.classList.remove('open');
     document.getElementById('dlMenu')?.classList.remove('open');
   });
 
@@ -2966,33 +3108,29 @@
     document.getElementById('dlMenu')?.classList.toggle('open');
   }
 
-  // ── Speed picker ─────────────────────────────────────────────────────────────
-  const WATCH_SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-  (function buildSpeedMenu() {
-    const menu = document.getElementById('speedMenu');
-    WATCH_SPEEDS.forEach(s => {
-      const opt = document.createElement('div');
-      opt.className = 'quality-opt' + (s === 1 ? ' active' : '');
-      opt.dataset.speed = s;
-      opt.innerHTML = `<span>${s}×</span><span class="q-check">✓</span>`;
-      opt.onclick = () => setWatchSpeed(s);
-      menu.appendChild(opt);
-    });
-  })();
-
-  function setWatchSpeed(s) {
-    videoEl.playbackRate = s;
-    document.getElementById('speedLabel').textContent = s + '×';
-    document.querySelectorAll('#speedMenu .quality-opt').forEach(o => {
-      o.classList.toggle('active', parseFloat(o.dataset.speed) === s);
-    });
-    document.getElementById('speedMenu').classList.remove('open');
+  // ── Settings panel navigation ─────────────────────────────────────────────────
+  function openSettingsPane(name) {
+    document.getElementById('ssMain').style.display = 'none';
+    document.querySelectorAll('#subStylePanel .ss-pane').forEach(p => p.classList.remove('active'));
+    const paneMap = { speed: 'ssPaneSpeed', quality: 'ssPaneQuality', captions: 'ssPaneCaptions', substyle: 'ssPaneSubstyle' };
+    const pane = document.getElementById(paneMap[name]);
+    if (pane) pane.classList.add('active');
+  }
+  function backToSettingsMain() {
+    document.querySelectorAll('#subStylePanel .ss-pane').forEach(p => p.classList.remove('active'));
+    document.getElementById('ssMain').style.display = '';
   }
 
-  function toggleSpeedMenu(e) {
-    e.stopPropagation();
-    document.getElementById('qualityMenu')?.classList.remove('open');
-    document.getElementById('speedMenu').classList.toggle('open');
+  // ── Speed picker ─────────────────────────────────────────────────────────────
+  const WATCH_SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+  function setWatchSpeed(s) {
+    videoEl.playbackRate = s;
+    document.querySelectorAll('#ssPaneSpeed .ss-pane-opt').forEach(btn => {
+      btn.classList.toggle('active', parseFloat(btn.dataset.speed) === s);
+    });
+    const label = s === 1 ? 'Normal' : s + '×';
+    const el = document.getElementById('ssSpeedLabel');
+    if (el) el.textContent = label;
   }
 
   // ── Keyboard shortcuts (5 s seek, space, m, f) ───────────────────────────────
@@ -4164,29 +4302,112 @@
     }
   }
 
-  // ── Subtitle (CC) picker ──────────────────────────────────────────────────────
-  function toggleCcMenu(e) {
-    e.stopPropagation();
-    const menu = document.getElementById('ccMenu');
-    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
-  }
+  // ── Subtitle (CC) picker — custom draggable overlay ─────────────────────────
+  let _activeCcTrack = null, _cueChangeHandler = null;
+
   function selectCc(trackIndex) {
     const vid = document.getElementById('videoEl');
     if (!vid) return;
-    for (let i = 0; i < vid.textTracks.length; i++) {
-      vid.textTracks[i].mode = (i === trackIndex) ? 'showing' : 'hidden';
+
+    // Remove previous cuechange listener
+    if (_activeCcTrack && _cueChangeHandler) {
+      _activeCcTrack.removeEventListener('cuechange', _cueChangeHandler);
+      _activeCcTrack = null; _cueChangeHandler = null;
     }
-    document.getElementById('ccMenu').style.display = 'none';
-    // Update active state in menu
-    document.querySelectorAll('#ccMenu .quality-option').forEach((btn, i) => {
-      // i=0 is "Off" (trackIndex -1), i=1+ are tracks 0,1,2...
-      btn.classList.toggle('active', i - 1 === trackIndex);
+
+    // Keep all tracks hidden — we render ourselves
+    for (let i = 0; i < vid.textTracks.length; i++) {
+      vid.textTracks[i].mode = 'hidden';
+    }
+
+    const overlay = document.getElementById('captionOverlay');
+    const textEl  = document.getElementById('captionText');
+
+    if (trackIndex === -1 || !overlay) {
+      if (overlay) overlay.classList.remove('active');
+    } else {
+      const track = vid.textTracks[trackIndex];
+      if (!track) return;
+      track.mode = 'hidden'; // hidden so browser doesn't render natively
+      _activeCcTrack = track;
+      _cueChangeHandler = () => {
+        const cues = track.activeCues;
+        if (cues && cues.length > 0) {
+          textEl.textContent = Array.from(cues).map(c => c.text.replace(/<[^>]+>/g, '')).join('\n');
+          overlay.classList.add('active');
+        } else {
+          overlay.classList.remove('active');
+        }
+      };
+      track.addEventListener('cuechange', _cueChangeHandler);
+    }
+
+    document.querySelectorAll('#ssPaneCaptions .ss-pane-opt').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.cc) === trackIndex);
     });
+    const labelEl = document.getElementById('ssCcLabel');
+    if (labelEl) {
+      if (trackIndex === -1) {
+        labelEl.textContent = 'Off';
+      } else {
+        const btn = document.querySelector(`#ssPaneCaptions .ss-pane-opt[data-cc="${trackIndex}"] span`);
+        labelEl.textContent = btn ? btn.textContent : 'On';
+      }
+    }
   }
-  document.addEventListener('click', () => {
-    const m = document.getElementById('ccMenu');
-    if (m) m.style.display = 'none';
-  });
+
+  // ── Caption overlay drag (mouse + touch) ─────────────────────────────────────
+  (function initCaptionDrag() {
+    const overlay = document.getElementById('captionOverlay');
+    const wrap    = document.getElementById('videoWrap');
+    if (!overlay || !wrap) return;
+
+    let dragging = false, startX, startY, startLeft, startTopPct, startBottomMode;
+
+    function getCenter() {
+      const wRect = wrap.getBoundingClientRect();
+      const oRect = overlay.getBoundingClientRect();
+      return {
+        leftPct: (oRect.left - wRect.left + oRect.width / 2) / wRect.width * 100,
+        topPct:  (oRect.top  - wRect.top  + oRect.height / 2) / wRect.height * 100,
+      };
+    }
+
+    function startDrag(clientX, clientY) {
+      dragging = true;
+      const c = getCenter();
+      startX = clientX; startY = clientY;
+      startLeft = c.leftPct; startTopPct = c.topPct;
+      // Switch to top-based positioning for free drag
+      overlay.style.bottom = 'auto';
+      overlay.style.top    = startTopPct + '%';
+      overlay.style.left   = startLeft + '%';
+      overlay.style.transform = 'translate(-50%, -50%)';
+      overlay.classList.add('dragging');
+    }
+
+    function moveDrag(clientX, clientY) {
+      if (!dragging) return;
+      const wRect = wrap.getBoundingClientRect();
+      const dx = (clientX - startX) / wRect.width  * 100;
+      const dy = (clientY - startY) / wRect.height * 100;
+      overlay.style.left = Math.max(10, Math.min(90, startLeft   + dx)) + '%';
+      overlay.style.top  = Math.max(5,  Math.min(92, startTopPct + dy)) + '%';
+    }
+
+    function endDrag() {
+      dragging = false;
+      overlay.classList.remove('dragging');
+    }
+
+    overlay.addEventListener('mousedown', e => { e.preventDefault(); startDrag(e.clientX, e.clientY); });
+    document.addEventListener('mousemove', e => moveDrag(e.clientX, e.clientY));
+    document.addEventListener('mouseup', endDrag);
+
+    overlay.addEventListener('touchstart', e => { e.preventDefault(); const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
+    document.addEventListener('touchmove',  e => { if (dragging) { e.preventDefault(); const t = e.touches[0]; moveDrag(t.clientX, t.clientY); } }, { passive: false });
+    document.addEventListener('touchend', endDrag);
+  })();
 
   // ── Subtitle style panel ──────────────────────────────────────────────────────
   (function initSubStyle() {
@@ -4201,7 +4422,10 @@
 
   function toggleSubStylePanel(e) {
     e.stopPropagation();
-    document.getElementById('subStylePanel').classList.toggle('open');
+    const panel = document.getElementById('subStylePanel');
+    const opening = !panel.classList.contains('open');
+    panel.classList.toggle('open');
+    if (opening) backToSettingsMain();
   }
   document.addEventListener('click', e => {
     const wrap = document.getElementById('subStyleWrap');
@@ -4211,6 +4435,21 @@
     }
   });
 
+  function snapCaptionPosition(position) {
+    const overlay = document.getElementById('captionOverlay');
+    if (!overlay) return;
+    overlay.style.transform = 'translateX(-50%)';
+    overlay.style.left = '50%';
+    if (position === 'top') {
+      overlay.style.top = '8%'; overlay.style.bottom = 'auto';
+    } else if (position === 'middle') {
+      overlay.style.top = '45%'; overlay.style.bottom = 'auto';
+      overlay.style.transform = 'translate(-50%, -50%)';
+    } else {
+      overlay.style.top = 'auto'; overlay.style.bottom = '12%';
+    }
+  }
+
   function applySubStyle() {
     const fontSize = document.getElementById('subFontSize')?.value || '100';
     const color    = document.getElementById('subColor')?.value    || '#ffffff';
@@ -4218,24 +4457,14 @@
     const font     = document.getElementById('subFont')?.value     || 'inherit';
     const position = document.getElementById('subPosition')?.value || 'bottom';
 
-    // Apply via dynamic <style> tag using ::cue
-    let styleEl = document.getElementById('subCueStyle');
-    if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = 'subCueStyle'; document.head.appendChild(styleEl); }
-    styleEl.textContent = `::cue { font-size: ${fontSize}%; color: ${color}; background: ${bg}; font-family: ${font}; }`;
-
-    // Position via track line property
-    const vid = document.getElementById('videoEl');
-    if (vid) {
-      const lineVal = position === 'top' ? 5 : position === 'middle' ? 50 : 90;
-      for (let i = 0; i < vid.textTracks.length; i++) {
-        const track = vid.textTracks[i];
-        if (track.mode === 'showing' && track.cues) {
-          for (let j = 0; j < track.cues.length; j++) {
-            try { track.cues[j].line = lineVal; track.cues[j].snapToLines = true; } catch(e) {}
-          }
-        }
-      }
+    const textEl = document.getElementById('captionText');
+    if (textEl) {
+      textEl.style.fontSize   = fontSize + '%';
+      textEl.style.color      = color;
+      textEl.style.background = bg;
+      textEl.style.fontFamily = font;
     }
+    snapCaptionPosition(position);
 
     localStorage.setItem('fs-sub-style', JSON.stringify({ fontSize, color, bg, font, position }));
   }
@@ -4246,8 +4475,7 @@
     el('subFont', 'inherit'); el('subPosition', 'bottom');
     document.getElementById('subFontSizeVal').textContent = '100%';
     localStorage.removeItem('fs-sub-style');
-    const styleEl = document.getElementById('subCueStyle');
-    if (styleEl) styleEl.textContent = '';
+    applySubStyle();
   }
 
   // ── Audio track switcher ──────────────────────────────────────────────────────
@@ -4278,7 +4506,15 @@
     if (m) m.style.display = 'none';
   });
 
-  // Description expand
+  // Description expand — hide button if content fits without truncation
+  (function() {
+    const box = document.getElementById('descBox');
+    const fade = document.getElementById('descFade');
+    if (box && fade && box.scrollHeight <= box.clientHeight + 4) {
+      fade.classList.add('hidden');
+      box.classList.add('expanded');
+    }
+  })();
   function expandDesc() {
     document.getElementById('descBox').classList.add('expanded');
     document.getElementById('descFade').classList.add('hidden');

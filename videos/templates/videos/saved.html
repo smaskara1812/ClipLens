@@ -35,6 +35,11 @@
   .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
 
   @media (max-width: 640px) { .saved-thumb { width: 110px; } .saved-title { font-size: 13px; } }
+  @media (max-width: 480px) {
+    .saved-row { flex-direction: column; gap: 10px; }
+    .saved-thumb { width: 100%; aspect-ratio: 16/9; }
+    .saved-actions { flex-direction: row; }
+  }
 </style>
 {% endblock %}
 

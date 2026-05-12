@@ -62,6 +62,15 @@
   .empty-state svg { width: 56px; height: 56px; color: var(--text-subtle); }
   .empty-state h3 { font-size: 18px; font-weight: 700; }
   .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+
+  @media (max-width: 640px) {
+    .playlist-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+    .pl-body { padding: 10px 10px 8px; }
+    .pl-title { font-size: 13px; }
+  }
+  @media (max-width: 480px) {
+    .playlist-grid { grid-template-columns: 1fr; }
+  }
 </style>
 {% endblock %}
 

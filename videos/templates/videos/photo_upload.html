@@ -82,6 +82,12 @@
   .analysis-label { color: var(--text-muted); font-weight: 500; min-width: 100px; flex-shrink: 0; }
   .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
   .tag { background: var(--accent-soft); color: var(--accent); padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .form-grid-2 { grid-template-columns: 1fr; }
+    .result-table-wrap { overflow-x: auto; }
+    .result-table { min-width: 320px; }
+  }
 </style>
 {% endblock %}
 
@@ -179,11 +185,13 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       Photo uploaded — AI analysis queued
     </div>
+    <div class="result-table-wrap">
     <table class="result-table">
       <tr><td>Title</td><td id="resTitle"></td></tr>
       <tr><td>View</td><td><a id="resLink" href="#" target="_blank">Open photo</a></td></tr>
       <tr><td>Status</td><td id="resStatus">Processing…</td></tr>
     </table>
+    </div>
     <div class="analysis-card" id="analysisCard">
       <div class="analysis-row"><span class="analysis-label">Objects</span><div class="tag-list" id="labelsOut"></div></div>
       <div class="analysis-row"><span class="analysis-label">Scene</span><span id="sceneOut" style="color:var(--text-muted);"></span></div>

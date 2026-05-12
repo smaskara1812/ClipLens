@@ -32,6 +32,11 @@
   .action-btns { display: flex; gap: 6px; }
 
   @media (max-width: 768px) { .hide-sm { display: none; } }
+  @media (max-width: 640px) {
+    .user-table-wrap { overflow-x: auto; }
+    table { min-width: 480px; }
+    .action-btns { gap: 4px; }
+  }
 </style>
 {% endblock %}
 
@@ -76,6 +81,7 @@
   </div>
 
   <!-- Table -->
+  <div class="user-table-wrap">
   <table id="userTable">
     <thead>
       <tr>
@@ -142,6 +148,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
 </div>
 {% endblock %}

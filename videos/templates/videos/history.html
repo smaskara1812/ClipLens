@@ -87,6 +87,12 @@
   .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
 
   @media (max-width: 640px) { .hist-thumb { width: 110px; } .hist-title { font-size: 13px; } }
+  @media (max-width: 480px) {
+    .hist-thumb { width: 88px; }
+    .hist-item { gap: 10px; padding: 10px 0; }
+    .hist-title { font-size: 12px; }
+    .hist-meta { font-size: 11px; }
+  }
 </style>
 {% endblock %}
 

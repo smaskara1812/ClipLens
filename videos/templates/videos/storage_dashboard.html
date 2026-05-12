@@ -119,6 +119,12 @@
   @media (max-width: 700px) {
     .sd-cards { grid-template-columns: repeat(2, 1fr); }
   }
+  @media (max-width: 640px) {
+    .sd-cards { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .sd-card { padding: 14px 16px; }
+    .sd-table { min-width: 480px; font-size: 12px; }
+    .sd-table th, .sd-table td { padding: 8px 10px; }
+  }
 </style>
 {% endblock %}
 

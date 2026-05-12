@@ -103,6 +103,13 @@
   .poll-badge.ready    { background: var(--green-bg); color: var(--green); }
   .poll-badge.failed   { background: var(--red-bg); color: var(--red); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+  @media (max-width: 640px) {
+    .upload-wrap { padding: 16px 14px; }
+    .result-table-wrap { overflow-x: auto; }
+    .result-table { min-width: 360px; }
+    .form-grid-2 { grid-template-columns: 1fr; }
+  }
 </style>
 {% endblock %}
 
@@ -250,6 +257,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
         Upload successful — HLS conversion started
       </div>
+      <div class="result-table-wrap">
       <table class="result-table">
         <tr><td>Video ID</td><td id="rId">—</td></tr>
         <tr>
@@ -270,6 +278,7 @@
         </tr>
         <tr><td>HLS URL</td><td id="rHlsUrl" style="color:var(--text-muted);">— processing…</td></tr>
       </table>
+      </div>
 
       <!-- Chapters editor -->
       <div class="chapters-section">

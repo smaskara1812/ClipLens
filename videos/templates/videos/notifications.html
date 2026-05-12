@@ -39,6 +39,12 @@
   .empty-state svg { width: 56px; height: 56px; color: var(--text-subtle); }
   .empty-state h3 { font-size: 18px; font-weight: 700; }
   .empty-state p { font-size: 14px; color: var(--text-muted); max-width: 320px; }
+
+  @media (max-width: 480px) {
+    .notif-item { padding: 10px 12px; gap: 10px; }
+    .notif-msg { font-size: 13px; }
+    .notif-icon { width: 32px; height: 32px; }
+  }
 </style>
 {% endblock %}
 

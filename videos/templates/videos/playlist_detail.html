@@ -7,6 +7,9 @@
 <style>
   .pl-layout { max-width: 1200px; margin: 0 auto; padding: 28px 24px; display: grid; grid-template-columns: 340px 1fr; gap: 28px; align-items: start; }
   @media (max-width: 900px) { .pl-layout { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) {
+    .pl-layout { padding: 16px 14px; gap: 16px; }
+  }
 
   /* Sidebar info panel */
   .pl-info-panel { position: sticky; top: calc(var(--header-h) + 16px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }

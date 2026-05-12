@@ -276,6 +276,18 @@
   .bulk-bar-btn.primary { background: var(--accent); color: #fff; }
   .bulk-bar-btn.danger  { background: var(--red); color: #fff; }
   .bulk-bar-btn.ghost   { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
+
+  @media (max-width: 640px) {
+    .faces-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .faces-header-actions { flex-wrap: wrap; }
+    .faces-tabs { gap: 0; overflow-x: auto; }
+    .identity-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .bulk-bar { flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+    .bulk-bar-btn { font-size: 11px; padding: 5px 10px; }
+  }
+  @media (max-width: 400px) {
+    .identity-grid { grid-template-columns: 1fr 1fr; }
+  }
 </style>
 {% endblock %}
 

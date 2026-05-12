@@ -493,6 +493,15 @@
   .fi-page-info {
     font-size: 13px; color: var(--text-muted);
   }
+
+  @media (max-width: 640px) {
+    .crop-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+    .crop-card { border-radius: var(--radius-sm); }
+    .crop-footer { padding: 5px; font-size: 10px; }
+  }
+  @media (max-width: 480px) {
+    .crop-grid { grid-template-columns: repeat(3, 1fr); }
+  }
 </style>
 {% endblock %}
 

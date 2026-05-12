@@ -201,6 +201,16 @@
     background: var(--surface-3); display: flex; align-items: center; justify-content: center;
   }
   .thumb-preview-placeholder svg { width: 24px; height: 24px; color: var(--text-subtle); }
+
+  @media (max-width: 640px) {
+    .stats-row { grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat-card { padding: 16px 18px; }
+    .stat-value { font-size: 24px; }
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { min-width: 540px; }
+    .table-header { padding: 14px 16px 12px; flex-wrap: wrap; gap: 8px; }
+    .thumb-preview-img, .thumb-preview-placeholder { width: 80px; height: 45px; }
+  }
 </style>
 {% endblock %}
 

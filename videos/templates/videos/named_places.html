@@ -226,6 +226,14 @@
   }
   #np-toast.success { border-color: var(--green, #22c55e); color: var(--green, #22c55e); }
   #np-toast.error   { border-color: var(--red, #ef4444);   color: var(--red, #ef4444); }
+
+  @media (max-width: 640px) {
+    .np-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table.np-table { min-width: 540px; }
+    table.np-table th, table.np-table td { padding: 8px 10px; font-size: 12px; }
+    .np-table-head { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+    .np-table-head h2 { font-size: 13px; }
+  }
 </style>
 {% endblock %}
 

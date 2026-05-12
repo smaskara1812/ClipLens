@@ -113,6 +113,16 @@
   .purge-modal .btn-cancel { background: var(--surface); color: var(--text); }
   .purge-modal .btn-go     { background: #ef4444; color: #fff; border-color: #ef4444; }
   .purge-modal .btn-go:disabled { opacity: .4; cursor: not-allowed; }
+
+  @media (max-width: 640px) {
+    .tr-filters { grid-template-columns: 1fr; gap: 8px; }
+    .tr-filters .tr-acts { justify-content: flex-start; }
+    .tr-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tr-table { min-width: 600px; }
+    .tr-thumb, .tr-thumb-ph { width: 64px; height: 36px; }
+    .tr-table th, .tr-table td { padding: 8px 10px; }
+    .purge-modal { margin: 0 12px; }
+  }
 </style>
 {% endblock %}
 
@@ -183,6 +193,7 @@
   </div>
 
   {% if page_obj.object_list %}
+  <div class="tr-table-wrap">
   <table class="tr-table">
     <thead>
       <tr>
@@ -247,6 +258,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   {% if page_obj.paginator.num_pages > 1 %}
   <div class="pager">

@@ -295,8 +295,30 @@
       height: 1px; background: var(--border); margin: 8px 0;
     }
     @media (max-width: 900px) {
-      .fs-sidebar-col { display: none; }
+      .fs-sidebar-col {
+        position: fixed;
+        top: var(--header-h);
+        left: 0;
+        height: calc(100vh - var(--header-h));
+        width: 260px;
+        z-index: 300;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        background: var(--bg);
+        border-right: 1px solid var(--border);
+        display: flex !important;
+      }
+      .fs-sidebar-col.mobile-open { transform: translateX(0); }
+      .fs-sidebar-col.collapsed { transform: translateX(-100%); width: 260px; padding: 8px 8px 8px 0; }
     }
+    .sidebar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 299;
+    }
+    .sidebar-overlay.active { display: block; }
 
     /* ── Buttons ── */
     .btn {
@@ -454,10 +476,22 @@
 
     /* ── Responsive ── */
     @media (max-width: 640px) {
-      .fs-header { padding: 0 14px; gap: 10px; }
-      .fs-search { max-width: 100%; }
+      .fs-header { padding: 0 10px; gap: 8px; }
+      .fs-search { max-width: 100%; flex: 1; min-width: 0; }
       .hide-mobile { display: none; }
+      .fs-logo { flex-shrink: 1; min-width: 0; max-width: 110px; overflow: hidden; }
+      .fs-logo img { height: 24px; width: auto; }
+      .user-pill { gap: 4px; flex-shrink: 0; }
+      .theme-toggle { padding: 5px; }
+      .notif-bell { padding: 5px !important; }
+      .sidebar-toggle-btn { padding: 5px; }
     }
+    @media (max-width: 480px) {
+      .theme-toggle { display: none; }
+      .notif-bell { display: none !important; }
+      .fs-logo { max-width: 80px; }
+    }
+    body.sidebar-open { overflow: hidden; }
   </style>
   {% block extra_head %}{% endblock %}
   <style>
@@ -574,8 +608,9 @@
   </button>
 </header>
 
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileSidebar()"></div>
 <div class="fs-app-layout">
-  <aside class="fs-sidebar-col">
+  <aside class="fs-sidebar-col" id="fsSidebar">
     {% include 'videos/_sidebar.html' %}
   </aside>
   <main class="fs-main">
@@ -601,17 +636,32 @@
 
   // ── Sidebar collapse ──
   (function() {
-    if (localStorage.getItem('fs-sidebar-collapsed') === '1') {
-      const col = document.querySelector('.fs-sidebar-col');
+    if (window.innerWidth > 900 && localStorage.getItem('fs-sidebar-collapsed') === '1') {
+      const col = document.getElementById('fsSidebar');
       if (col) col.classList.add('collapsed');
     }
   })();
 
   function toggleSidebar() {
-    const col = document.querySelector('.fs-sidebar-col');
+    const col = document.getElementById('fsSidebar');
+    const overlay = document.getElementById('sidebarOverlay');
     if (!col) return;
-    const collapsed = col.classList.toggle('collapsed');
-    localStorage.setItem('fs-sidebar-collapsed', collapsed ? '1' : '0');
+    if (window.innerWidth <= 900) {
+      const open = col.classList.toggle('mobile-open');
+      if (overlay) overlay.classList.toggle('active', open);
+      document.body.classList.toggle('sidebar-open', open);
+    } else {
+      const collapsed = col.classList.toggle('collapsed');
+      localStorage.setItem('fs-sidebar-collapsed', collapsed ? '1' : '0');
+    }
+  }
+
+  function closeMobileSidebar() {
+    const col = document.getElementById('fsSidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (col) col.classList.remove('mobile-open');
+    if (overlay) overlay.classList.remove('active');
+    document.body.classList.remove('sidebar-open');
   }
 
   function toggleTheme() {
