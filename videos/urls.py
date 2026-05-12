@@ -99,6 +99,7 @@ urlpatterns = [
     path('api/videos/<uuid:video_id>/subtitles/',                         views.subtitle_list),
     path('api/videos/<uuid:video_id>/subtitles/upload/',                  views.subtitle_upload),
     path('api/videos/<uuid:video_id>/subtitles/regenerate/',              views.subtitle_regenerate),
+    path('api/videos/<uuid:video_id>/subtitles/translate/',               views.subtitle_translate),
     path('api/videos/<uuid:video_id>/subtitles/<int:subtitle_id>/',       views.subtitle_delete),
     path('api/videos/<uuid:video_id>/subtitles/<int:subtitle_id>/cues/', views.subtitle_cues),
     path('watch/<uuid:video_id>/subtitles/<int:subtitle_id>/edit/',      views.subtitle_editor_page, name='subtitle_editor'),

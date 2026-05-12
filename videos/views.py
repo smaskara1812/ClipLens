@@ -1444,6 +1444,9 @@ def watch_page(request, video_id):
         'playlist_prev':   playlist_prev,
         'playlist_pos':    playlist_pos,
         'playlist_total':  playlist_total,
+        # Translation
+        'translation_enabled':   getattr(settings, 'TRANSLATION_ENABLED', True),
+        'translation_languages': getattr(settings, 'TRANSLATION_LANGUAGES', ['fr', 'es', 'de', 'hi', 'ar']),
     })
 
 
@@ -4213,6 +4216,46 @@ def subtitle_regenerate(request, video_id):
                      verb=f'regenerated captions ({language})',
                      metadata={'language': language})
         return Response({'message': f'Caption generation started for language: {language}'})
+    except Exception as exc:
+        return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+
+@api_view(['POST'])
+@api_login_required
+def subtitle_translate(request, video_id):
+    """
+    POST /api/videos/<id>/subtitles/translate/
+    Body: {"languages": ["fr", "es", "de"], "source_subtitle_id": 42}
+    Queues translate_subtitles_task for each requested target language.
+    """
+    from django.conf import settings as django_settings
+
+    if not getattr(django_settings, 'TRANSLATION_ENABLED', True):
+        return Response({'error': 'Translation is disabled on this server.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    video    = get_object_or_404(Video, id=video_id)
+    is_owner = _is_video_owner(request.user, video)
+    if not is_owner:
+        return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+    target_languages   = request.data.get('languages') or getattr(django_settings, 'TRANSLATION_LANGUAGES', ['fr', 'es', 'de'])
+    source_subtitle_id = request.data.get('source_subtitle_id')
+
+    if not target_languages:
+        return Response({'error': 'No target languages specified.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        from .tasks import translate_subtitles_task
+        translate_subtitles_task.apply_async(
+            args=[str(video_id), list(target_languages)],
+            kwargs={'source_subtitle_id': source_subtitle_id},
+            queue='translation',
+        )
+        log_activity(request, 'translate', target=video,
+                     verb=f'queued subtitle translation ({", ".join(target_languages)})',
+                     metadata={'languages': target_languages, 'source_subtitle_id': source_subtitle_id})
+        return Response({'message': f'Translation queued for: {", ".join(target_languages)}'})
     except Exception as exc:
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 

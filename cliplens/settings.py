@@ -284,6 +284,7 @@ CELERY_TASK_ROUTES = {
     'videos.tasks.extract_audio_tracks_task':   {'queue': 'processing'},
     'videos.tasks.reindex_segments_task':       {'queue': 'default'},
     'videos.tasks.run_diarization_task':        {'queue': 'captions'},
+    'videos.tasks.translate_subtitles_task':    {'queue': 'translation'},
 }
 
 
@@ -361,6 +362,19 @@ WHISPER_MODEL_SIZE  = os.getenv('WHISPER_MODEL_SIZE', 'base')
 WHISPER_DEVICE      = os.getenv('WHISPER_DEVICE', 'cpu')   # 'cuda' if GPU available
 WHISPER_COMPUTE_TYPE= os.getenv('WHISPER_COMPUTE_TYPE', 'int8')
 AUTO_CAPTION_ON_UPLOAD = os.getenv('AUTO_CAPTION_ON_UPLOAD', 'true').lower() == 'true'
+
+# ── Subtitle Translation (NLLB-200) ───────────────────────────────────────────
+# Model: facebook/nllb-200-distilled-600M (~2.4 GB download, supports 200 languages)
+# Languages use BCP-47 codes (en, fr, es, de, hi, ar, zh, ja, ko, ru, pt, ...)
+# Set TRANSLATION_ENABLED=false to disable the translate button entirely.
+TRANSLATION_ENABLED   = os.getenv('TRANSLATION_ENABLED', 'true').lower() == 'true'
+NLLB_MODEL            = os.getenv('NLLB_MODEL', 'facebook/nllb-200-distilled-600M')
+TRANSLATION_DEVICE    = os.getenv('TRANSLATION_DEVICE', 'cpu')  # 'cuda' if GPU available
+TRANSLATION_BATCH_SIZE= int(os.getenv('TRANSLATION_BATCH_SIZE', '32'))
+# Comma-separated list of default target languages shown in the translate UI.
+# Editors can select any subset per video; admins can change this global default.
+_raw_tl = os.getenv('TRANSLATION_LANGUAGES', 'fr,es,de,hi,ar,zh,ja,ko,pt,ru')
+TRANSLATION_LANGUAGES = [l.strip() for l in _raw_tl.split(',') if l.strip()]
 
 # ── Speaker Diarization (pyannote.audio) ──────────────────────────────────────
 # Required for the "Run Diarization" feature on videos.

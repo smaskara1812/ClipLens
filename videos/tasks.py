@@ -1239,8 +1239,224 @@ def _lang_label(code: str) -> str:
         'ko': 'Korean', 'zh': 'Chinese', 'ar': 'Arabic', 'hi': 'Hindi',
         'nl': 'Dutch', 'pl': 'Polish', 'tr': 'Turkish', 'sv': 'Swedish',
         'da': 'Danish', 'fi': 'Finnish', 'nb': 'Norwegian', 'uk': 'Ukrainian',
+        'vi': 'Vietnamese', 'th': 'Thai', 'id': 'Indonesian', 'ms': 'Malay',
+        'cs': 'Czech', 'ro': 'Romanian', 'hu': 'Hungarian', 'bg': 'Bulgarian',
+        'hr': 'Croatian', 'sk': 'Slovak', 'el': 'Greek', 'he': 'Hebrew',
+        'bn': 'Bengali', 'ta': 'Tamil', 'te': 'Telugu', 'ur': 'Urdu',
+        'fa': 'Persian', 'sw': 'Swahili',
     }
     return _MAP.get(code, code.upper())
+
+
+# ── NLLB Translation helpers ───────────────────────────────────────────────────
+
+# BCP-47 → FLORES-200 code mapping for NLLB-200
+_BCP47_TO_FLORES = {
+    'en': 'eng_Latn', 'fr': 'fra_Latn', 'es': 'spa_Latn', 'de': 'deu_Latn',
+    'it': 'ita_Latn', 'pt': 'por_Latn', 'ru': 'rus_Cyrl', 'ja': 'jpn_Jpan',
+    'ko': 'kor_Hang', 'zh': 'zho_Hans', 'ar': 'arb_Arab', 'hi': 'hin_Deva',
+    'nl': 'nld_Latn', 'pl': 'pol_Latn', 'tr': 'tur_Latn', 'sv': 'swe_Latn',
+    'da': 'dan_Latn', 'fi': 'fin_Latn', 'nb': 'nob_Latn', 'uk': 'ukr_Cyrl',
+    'vi': 'vie_Latn', 'th': 'tha_Thai', 'id': 'ind_Latn', 'ms': 'zsm_Latn',
+    'cs': 'ces_Latn', 'ro': 'ron_Latn', 'hu': 'hun_Latn', 'bg': 'bul_Cyrl',
+    'hr': 'hrv_Latn', 'sk': 'slk_Latn', 'el': 'ell_Grek', 'he': 'heb_Hebr',
+    'bn': 'ben_Beng', 'ta': 'tam_Taml', 'te': 'tel_Telu', 'ur': 'urd_Arab',
+    'fa': 'pes_Arab', 'sw': 'swh_Latn',
+}
+
+# Module-level cache so the model loads once per worker process
+_nllb_model     = None
+_nllb_tokenizer = None
+
+
+def _get_nllb():
+    global _nllb_model, _nllb_tokenizer
+    if _nllb_model is None:
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        import torch
+        model_name = getattr(settings, 'NLLB_MODEL', 'facebook/nllb-200-distilled-600M')
+        device     = getattr(settings, 'TRANSLATION_DEVICE', 'cpu')
+        logger.info(f'[translation] loading NLLB model {model_name} on {device}')
+        _nllb_tokenizer = AutoTokenizer.from_pretrained(model_name)
+        _nllb_model     = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        if device != 'cpu':
+            _nllb_model = _nllb_model.to(device)
+        _nllb_model.eval()
+        logger.info('[translation] NLLB model loaded')
+    return _nllb_model, _nllb_tokenizer
+
+
+def _translate_batch(texts, src_flores, tgt_flores, batch_size=32):
+    """Translate a list of strings from src_flores to tgt_flores using NLLB."""
+    import torch
+    model, tokenizer = _get_nllb()
+    device = next(model.parameters()).device
+    results = []
+    for i in range(0, len(texts), batch_size):
+        chunk = texts[i:i + batch_size]
+        tokenizer.src_lang = src_flores
+        encoded = tokenizer(chunk, return_tensors='pt', padding=True,
+                            truncation=True, max_length=512).to(device)
+        with torch.no_grad():
+            generated = model.generate(
+                **encoded,
+                forced_bos_token_id=tokenizer.convert_tokens_to_ids(tgt_flores),
+                max_length=512,
+                num_beams=4,
+            )
+        results.extend(tokenizer.batch_decode(generated, skip_special_tokens=True))
+    return results
+
+
+def _parse_vtt(content):
+    """Parse WebVTT content into list of (start, end, text) tuples."""
+    import re
+    cues = []
+    for block in re.split(r'\n\n+', content.strip()):
+        lines = [l for l in block.strip().splitlines() if l.strip()]
+        ts_idx = next((i for i, l in enumerate(lines) if '-->' in l), None)
+        if ts_idx is None:
+            continue
+        m = re.match(r'(\S+)\s+-->\s+(\S+)', lines[ts_idx])
+        if not m:
+            continue
+        text = '\n'.join(lines[ts_idx + 1:]).strip()
+        if text:
+            cues.append((m.group(1), m.group(2), text))
+    return cues
+
+
+def _build_vtt(cues):
+    """Rebuild WebVTT from (start, end, text) tuples."""
+    lines = ['WEBVTT', '']
+    for i, (start, end, text) in enumerate(cues, 1):
+        lines += [str(i), f'{start} --> {end}', text, '']
+    return '\n'.join(lines)
+
+
+# ── Subtitle translation task (NLLB-200) ──────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.translate_subtitles_task',
+    queue='translation',
+    max_retries=2,
+    acks_late=True,
+    soft_time_limit=1800,
+    time_limit=2100,
+)
+def translate_subtitles_task(self, video_id: str, target_languages: list,
+                              source_subtitle_id: int = None):
+    """
+    Translate the source subtitle of a video into each target language using
+    facebook/nllb-200-distilled-600M.
+
+    Pipeline:
+        1. Load source Subtitle VTT (Whisper-generated, or the specified one)
+        2. Parse VTT cues
+        3. For each target language: batch-translate cue texts via NLLB
+        4. Rebuild VTT and save a new Subtitle record (is_translation=True)
+    """
+    from .models import Video, Subtitle
+    from django.core.files.base import ContentFile
+
+    if not getattr(settings, 'TRANSLATION_ENABLED', True):
+        logger.info('[translation] disabled via settings, skipping')
+        return
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        logger.warning(f'[translation] video {video_id} not found')
+        return
+
+    # ── Step 1: find source subtitle ─────────────────────────────────────────
+    if source_subtitle_id:
+        try:
+            source_sub = Subtitle.objects.get(id=source_subtitle_id, video=video)
+        except Subtitle.DoesNotExist:
+            logger.warning(f'[translation] source subtitle {source_subtitle_id} not found')
+            return
+    else:
+        source_sub = (
+            video.subtitles.filter(is_auto_generated=True, is_translation=False)
+                           .order_by('created_at').first()
+        )
+        if not source_sub:
+            source_sub = video.subtitles.filter(is_translation=False).order_by('created_at').first()
+        if not source_sub:
+            logger.warning(f'[translation] no source subtitle for video {video_id}')
+            return
+
+    src_bcp47  = source_sub.language
+    src_flores = _BCP47_TO_FLORES.get(src_bcp47)
+    if not src_flores:
+        logger.warning(f'[translation] unsupported source language {src_bcp47}')
+        return
+
+    # ── Step 2: parse VTT ────────────────────────────────────────────────────
+    try:
+        with source_sub.file.open('r') as f:
+            vtt_content = f.read()
+    except Exception as exc:
+        logger.error(f'[translation] could not read source subtitle: {exc}')
+        return
+
+    cues = _parse_vtt(vtt_content)
+    if not cues:
+        logger.warning(f'[translation] no cues in source subtitle {source_sub.id}')
+        return
+
+    cue_texts = [text for _, _, text in cues]
+
+    batch_size = getattr(settings, 'TRANSLATION_BATCH_SIZE', 32)
+
+    # ── Step 3 & 4: translate and save per target language ───────────────────
+    for lang in target_languages:
+        if lang == src_bcp47:
+            continue  # skip same-language "translation"
+
+        tgt_flores = _BCP47_TO_FLORES.get(lang)
+        if not tgt_flores:
+            logger.warning(f'[translation] unsupported target language {lang}, skipping')
+            continue
+
+        logger.info(f'[translation] {src_bcp47} → {lang} for video {video_id}')
+        try:
+            translated_texts = _translate_batch(cue_texts, src_flores, tgt_flores, batch_size)
+        except Exception as exc:
+            logger.error(f'[translation] failed {src_bcp47}→{lang} for {video_id}: {exc}')
+            continue
+
+        translated_cues = [
+            (start, end, trans)
+            for (start, end, _), trans in zip(cues, translated_texts)
+        ]
+        translated_vtt = _build_vtt(translated_cues)
+
+        # Delete any existing auto-translated subtitle for this language
+        Subtitle.objects.filter(
+            video=video, language=lang, is_auto_generated=True, is_translation=True
+        ).delete()
+
+        sub = Subtitle(
+            video=video,
+            language=lang,
+            language_label=_lang_label(lang),
+            format=Subtitle.FORMAT_VTT,
+            is_auto_generated=True,
+            is_translation=True,
+            source_language=src_bcp47,
+        )
+        sub.file.save(
+            f'{video_id}_{lang}_translated.vtt',
+            ContentFile(translated_vtt.encode('utf-8')),
+            save=False,
+        )
+        sub.save()
+        logger.info(f'[translation] saved {lang} subtitle for video {video_id} (id={sub.id})')
+
+    logger.info(f'[translation] done for video {video_id}')
 
 
 # ── Audio track extraction ─────────────────────────────────────────────────────

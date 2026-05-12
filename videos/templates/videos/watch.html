@@ -1884,7 +1884,9 @@
               </svg>
               <div style="flex:1;">
                 <div style="font-size:13px;font-weight:600;">{{ sub.language_label }}</div>
-                <div style="font-size:11px;color:var(--text-muted);">{{ sub.language }} · {{ sub.format|upper }}{% if sub.is_auto_generated %} · auto-generated{% endif %}</div>
+                <div style="font-size:11px;color:var(--text-muted);">
+                  {{ sub.language }} · {{ sub.format|upper }}{% if sub.is_translation %} · translated{% elif sub.is_auto_generated %} · auto-generated{% endif %}
+                </div>
               </div>
               <a href="{{ sub.url }}" target="_blank" style="font-size:11px;color:var(--accent);">Download</a>
               <a href="{% url 'subtitle_editor' video.id sub.id %}" style="font-size:11px;color:var(--text-muted);text-decoration:none;" title="Edit subtitles in the cue editor">Edit</a>
@@ -1897,8 +1899,38 @@
             {% endfor %}
           </div>
 
+          {% if translation_enabled %}
+          <!-- Generate Translations -->
+          <details style="margin-top:8px;" id="translateDetails">
+            <summary style="font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
+              Generate Translations
+            </summary>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px;padding:12px;background:var(--surface-2);border-radius:8px;border:1px solid var(--border);">
+              <div style="font-size:11px;color:var(--text-muted);line-height:1.5;">
+                Uses <strong>NLLB-200</strong> to translate existing captions into other languages. Select languages and click Generate — runs in the background.
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;" id="translateLangPills">
+                {% for lang_code in translation_languages %}
+                <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:4px 9px;cursor:pointer;user-select:none;">
+                  <input type="checkbox" class="translate-lang-cb" value="{{ lang_code }}" style="accent-color:var(--accent);" checked />
+                  {{ lang_code|upper }}
+                </label>
+                {% endfor %}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary btn-sm" onclick="generateTranslations()" id="translateBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
+                  Generate
+                </button>
+                <span id="translateStatus" style="font-size:11px;color:var(--text-muted);"></span>
+              </div>
+            </div>
+          </details>
+          {% endif %}
+
           <!-- Upload subtitle file -->
-          <details style="margin-top:12px;">
+          <details style="margin-top:8px;">
             <summary style="font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Upload Subtitle File
@@ -4143,6 +4175,33 @@
     } else {
       const err = await res.json().catch(() => ({}));
       showToast('error', 'Could not queue analysis', err.error || '');
+    }
+  }
+
+  async function generateTranslations() {
+    const btn    = document.getElementById('translateBtn');
+    const statusEl = document.getElementById('translateStatus');
+    const checked = [...document.querySelectorAll('.translate-lang-cb:checked')].map(cb => cb.value);
+    if (!checked.length) { showToast('error', 'Select at least one language'); return; }
+    btn.disabled = true;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="animation:spin .8s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Queuing…`;
+    statusEl.textContent = '';
+    const res = await fetch(`/api/videos/${VIDEO_ID_FOR_SUBS}/subtitles/translate/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({ languages: checked }),
+    });
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg> Generate`;
+    if (res.ok) {
+      statusEl.textContent = `Queued: ${checked.join(', ')}. Subtitles will appear in a few minutes.`;
+      statusEl.style.color = 'var(--green)';
+      showToast('success', 'Translation queued', `${checked.length} language${checked.length > 1 ? 's' : ''} — check back in a few minutes.`);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      statusEl.textContent = err.error || 'Failed to queue translation.';
+      statusEl.style.color = 'var(--red)';
+      showToast('error', 'Translation failed', err.error || '');
     }
   }
 

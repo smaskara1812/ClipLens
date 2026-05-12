@@ -349,8 +349,9 @@ class SubtitleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Subtitle
-        fields = ['id', 'language', 'language_label', 'format', 'is_auto_generated', 'url', 'created_at']
-        read_only_fields = ['id', 'is_auto_generated', 'created_at']
+        fields = ['id', 'language', 'language_label', 'format', 'is_auto_generated',
+                  'is_translation', 'source_language', 'url', 'created_at']
+        read_only_fields = ['id', 'is_auto_generated', 'is_translation', 'source_language', 'created_at']
 
 
 # ── Audio Tracks ──────────────────────────────────────────────────────────────
