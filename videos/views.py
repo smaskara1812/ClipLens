@@ -1502,6 +1502,8 @@ def watch_page(request, video_id):
         'translation_all_languages': _build_all_translation_languages(),
         # Live stream provenance
         'from_live_stream': getattr(video, 'from_live_stream', None),
+        # Ollama AI summary
+        'ollama_enabled': getattr(settings, 'USE_OLLAMA', False),
     })
 
 
@@ -8629,3 +8631,22 @@ def stream_on_unpublish(request):
     live.save(update_fields=['ended_at'])
 
     return JsonResponse({'status': 'ok'})
+
+
+# ── AI Summary (Ollama) ───────────────────────────────────────────────────────
+
+@login_required
+@api_view(['POST'])
+def generate_summary_api(request, video_id):
+    """
+    POST /api/videos/<id>/generate-summary/
+    Queue an Ollama summary generation for the video.
+    Editor/owner only. Works regardless of USE_OLLAMA setting (task self-guards).
+    """
+    video = get_object_or_404(Video, id=video_id)
+    if not _is_video_owner(request.user, video) and not _is_editor(request.user):
+        return Response({'error': 'forbidden'}, status=403)
+
+    from .tasks import generate_video_summary_task
+    generate_video_summary_task.apply_async(args=[str(video_id)], queue='default')
+    return Response({'status': 'queued'})

@@ -81,6 +81,7 @@ urlpatterns = [
     path('api/videos/<uuid:video_id>/view/',               views.record_view),
     path('api/videos/<uuid:video_id>/status/',             views.video_status),
     path('api/videos/<uuid:video_id>/reprocess/',          views.reprocess_video),
+    path('api/videos/<uuid:video_id>/generate-summary/',   views.generate_summary_api),
     path('api/videos/<uuid:video_id>/upscale/presets/',     views.video_upscale_presets),
     path('api/videos/<uuid:video_id>/upscale/',             views.video_upscale_start),
     path('api/videos/<uuid:video_id>/stream/',             views.stream_playlist),

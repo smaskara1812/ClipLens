@@ -120,6 +120,15 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
                 queue='processing',
                 countdown=15,
             )
+
+        # AI summary via Ollama — runs last, after captions + frames are likely done
+        if not skip_ai and getattr(settings, 'USE_OLLAMA', False):
+            generate_video_summary_task.apply_async(
+                args=[video_id],
+                queue='default',
+                countdown=300,   # 5 min head-start so captions/frames finish first
+            )
+
     except Exception as exc:
         logger.error(f'process_video_task failed for {video_id}: {exc}')
         raise self.retry(exc=exc)
@@ -447,6 +456,149 @@ def generate_captions_task(self, video_id: str, language: str = 'en'):
             os.unlink(tmp_wav.name)
         # Always restore ready status regardless of outcome
         Video.objects.filter(id=video_id).update(status=Video.STATUS_READY)
+
+
+# ── AI Video Summary (Ollama) ─────────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.generate_video_summary_task',
+    queue='default',
+    max_retries=2,
+    default_retry_delay=60,
+)
+def generate_video_summary_task(self, video_id: str):
+    """
+    Generate an AI summary for a video using Ollama.
+
+    Reads transcript (VideoSegment) + scene descriptions (VideoFrame), builds a
+    prompt, POSTs to the local Ollama API, and saves the result to video.ai_summary.
+
+    Behaviour when USE_OLLAMA=False: logs and returns immediately (no-op).
+    Existing summaries are never overwritten unless force=True is passed.
+    """
+    import urllib.request
+    import urllib.error
+    import json as _json
+    from django.conf import settings
+    from .models import Video, VideoSegment, VideoFrame
+
+    if not getattr(settings, 'USE_OLLAMA', False):
+        logger.info(f'[summary] USE_OLLAMA=False — skipping summary for {video_id}')
+        return
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        logger.warning(f'[summary] Video {video_id} not found')
+        return
+
+    if video.status != Video.STATUS_READY:
+        logger.info(f'[summary] Video {video_id} not ready yet, skipping')
+        return
+
+    max_words  = getattr(settings, 'OLLAMA_MAX_INPUT_WORDS', 3000)
+    base_url   = getattr(settings, 'OLLAMA_BASE_URL',  'http://localhost:11434')
+    model_name = getattr(settings, 'OLLAMA_MODEL',     'llama3.2')
+
+    # ── Build transcript from VideoSegment rows ───────────────────────────────
+    segments = (
+        VideoSegment.objects
+        .filter(video=video)
+        .order_by('start_time')
+        .values_list('text', flat=True)
+    )
+    transcript_words = []
+    for seg in segments:
+        transcript_words.extend(seg.split())
+        if len(transcript_words) >= max_words:
+            break
+    transcript_text = ' '.join(transcript_words[:max_words]).strip()
+
+    # ── Build scene context from VideoFrame descriptions ──────────────────────
+    scene_budget = max(0, max_words - len(transcript_words))
+    scene_words  = []
+    if scene_budget > 0:
+        frames = (
+            VideoFrame.objects
+            .filter(video=video)
+            .exclude(description='')
+            .order_by('timestamp')
+            .values_list('description', flat=True)
+        )
+        seen = set()
+        for desc in frames:
+            key = desc[:60]   # dedup near-identical descriptions
+            if key not in seen:
+                seen.add(key)
+                scene_words.extend(desc.split())
+                if len(scene_words) >= scene_budget:
+                    break
+
+    scene_text = ' '.join(scene_words[:scene_budget]).strip()
+
+    # ── Build duration string ─────────────────────────────────────────────────
+    dur_str = ''
+    if video.duration:
+        m, s = divmod(int(video.duration), 60)
+        h, m = divmod(m, 60)
+        dur_str = f'{h}h {m}m {s}s' if h else f'{m}m {s}s'
+
+    # ── Compose prompt ────────────────────────────────────────────────────────
+    prompt_parts = [
+        f'Video title: {video.title}',
+    ]
+    if dur_str:
+        prompt_parts.append(f'Duration: {dur_str}')
+    if transcript_text:
+        prompt_parts.append(f'\nTranscript:\n{transcript_text}')
+    if scene_text:
+        prompt_parts.append(f'\nVisual scene descriptions:\n{scene_text}')
+
+    prompt_parts.append(
+        '\n\nBased on the above, write a clear and concise summary of this video in 2–3 short paragraphs. '
+        'Cover the main topic, key points or highlights, and who would find it useful. '
+        'Write in plain English. Do not start with "This video" or "In this video". '
+        'Do not make up information that is not supported by the transcript or descriptions.'
+    )
+    prompt = '\n'.join(prompt_parts)
+
+    # ── Call Ollama API ───────────────────────────────────────────────────────
+    payload = _json.dumps({
+        'model':  model_name,
+        'prompt': prompt,
+        'stream': False,
+        'options': {
+            'temperature': 0.4,
+            'num_predict': 512,
+        },
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        f'{base_url}/api/generate',
+        data=payload,
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+
+    try:
+        logger.info(f'[summary] Calling Ollama ({model_name}) for video {video_id}')
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = _json.loads(resp.read().decode('utf-8'))
+        summary = result.get('response', '').strip()
+    except urllib.error.URLError as exc:
+        logger.error(f'[summary] Ollama unreachable for {video_id}: {exc}')
+        raise self.retry(exc=exc)
+    except Exception as exc:
+        logger.error(f'[summary] Ollama call failed for {video_id}: {exc}')
+        raise self.retry(exc=exc)
+
+    if not summary:
+        logger.warning(f'[summary] Ollama returned empty response for {video_id}')
+        return
+
+    Video.objects.filter(id=video_id).update(ai_summary=summary)
+    logger.info(f'[summary] Saved AI summary for video {video_id} ({len(summary)} chars)')
 
 
 # ── Video frame analysis (YOLOv8 object detection) ───────────────────────────

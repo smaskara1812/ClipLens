@@ -364,6 +364,15 @@ WHISPER_DEVICE      = os.getenv('WHISPER_DEVICE', 'cpu')   # 'cuda' if GPU avail
 WHISPER_COMPUTE_TYPE= os.getenv('WHISPER_COMPUTE_TYPE', 'int8')
 AUTO_CAPTION_ON_UPLOAD = os.getenv('AUTO_CAPTION_ON_UPLOAD', 'true').lower() == 'true'
 
+# ── Ollama (AI summary generation) ───────────────────────────────────────────
+# Set USE_OLLAMA=true on servers where Ollama is running.
+# Defaults to false — all summary code is always present but the task is a no-op.
+USE_OLLAMA       = os.getenv('USE_OLLAMA',       'false').lower() == 'true'
+OLLAMA_BASE_URL  = os.getenv('OLLAMA_BASE_URL',  'http://localhost:11434')
+OLLAMA_MODEL     = os.getenv('OLLAMA_MODEL',     'llama3.2')
+# Approx word budget for transcript + scene text fed to Ollama (to stay within context window)
+OLLAMA_MAX_INPUT_WORDS = int(os.getenv('OLLAMA_MAX_INPUT_WORDS', '3000'))
+
 # ── Subtitle Translation (NLLB-200) ───────────────────────────────────────────
 # Model: facebook/nllb-200-distilled-600M (~2.4 GB download, supports 200 languages)
 # Languages use BCP-47 codes (en, fr, es, de, hi, ar, zh, ja, ko, ru, pt, ...)

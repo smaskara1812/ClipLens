@@ -453,6 +453,44 @@
     font-size: 12px; font-weight: 700; cursor: pointer; padding: 0;
   }
 
+  /* AI Summary */
+  .ai-summary-wrap {
+    margin-top: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .ai-summary-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .ai-summary-header:hover { background: var(--surface-3); }
+  .ai-summary-title {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--accent);
+  }
+  .ai-summary-title svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .ai-summary-chevron { color: var(--text-subtle); transition: transform .2s; }
+  .ai-summary-chevron.open { transform: rotate(180deg); }
+  .ai-summary-body {
+    padding: 14px 16px;
+    font-size: 13px; color: var(--text-muted); line-height: 1.8;
+    white-space: pre-wrap;
+  }
+  .ai-summary-generate {
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .ai-summary-generate p {
+    margin: 0; font-size: 12px; color: var(--text-subtle); flex: 1;
+  }
+
   /* Tags */
   .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
   .tag {
@@ -1150,6 +1188,29 @@
             #{{ tag|cut:"," }}
           </span>
         {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- AI Summary (always shown if generated; generate button shown for owners when Ollama enabled) -->
+      {% if video.ai_summary or ollama_enabled and is_owner %}
+      <div class="ai-summary-wrap" id="aiSummaryWrap">
+        <div class="ai-summary-header" onclick="toggleAiSummary()">
+          <div class="ai-summary-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="19" cy="5" r="3" fill="var(--accent)" stroke="none"/></svg>
+            AI Summary
+            {% if not video.ai_summary %}<span style="font-size:10px;font-weight:600;background:var(--surface-3);border:1px solid var(--border-2);padding:1px 7px;border-radius:999px;color:var(--text-subtle);text-transform:none;letter-spacing:0;">Not yet generated</span>{% endif %}
+          </div>
+          <svg class="ai-summary-chevron {% if video.ai_summary %}open{% endif %}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+
+        {% if video.ai_summary %}
+        <div class="ai-summary-body" id="aiSummaryBody" {% if not video.ai_summary %}style="display:none"{% endif %}>{{ video.ai_summary }}</div>
+        {% elif ollama_enabled and is_owner %}
+        <div class="ai-summary-generate" id="aiSummaryBody" style="display:none;">
+          <p>No summary yet. Generate one now using AI — this analyses the transcript and scene content.</p>
+          <button class="btn btn-sm btn-primary" id="genSummaryBtn" onclick="generateSummary('{{ video.id }}')">Generate</button>
+        </div>
+        {% endif %}
       </div>
       {% endif %}
 
@@ -4630,6 +4691,38 @@
   function expandDesc() {
     document.getElementById('descBox').classList.add('expanded');
     document.getElementById('descFade').classList.add('hidden');
+  }
+
+  // ── AI Summary ───────────────────────────────────────────────────────────────
+  function toggleAiSummary() {
+    const body = document.getElementById('aiSummaryBody');
+    const chevron = document.querySelector('.ai-summary-chevron');
+    if (!body) return;
+    const isHidden = body.style.display === 'none' || body.style.display === '';
+    body.style.display = isHidden ? '' : 'none';
+    if (chevron) chevron.classList.toggle('open', isHidden);
+  }
+
+  async function generateSummary(videoId) {
+    const btn = document.getElementById('genSummaryBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+      const res = await fetch(`/api/videos/${videoId}/generate-summary/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      if (res.ok) {
+        showToast('success', 'Summary generation queued — refresh in a minute to see it.');
+        if (btn) { btn.textContent = 'Queued'; }
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast('error', data.error || 'Failed to queue summary.');
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
+      }
+    } catch {
+      showToast('error', 'Network error — please try again.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
+    }
   }
 
   // ── End Screens management ────────────────────────────────────────────────────

@@ -206,6 +206,9 @@ class Video(models.Model):
     # Seek / scrub thumbnail sprite (generated post-processing)
     seek_sprite = models.CharField(max_length=500, blank=True)
 
+    # AI-generated summary (Ollama) — persists once written, shown regardless of Ollama setting
+    ai_summary  = models.TextField(blank=True)
+
     # Location
     latitude    = models.FloatField(null=True, blank=True, db_index=True)
     longitude   = models.FloatField(null=True, blank=True, db_index=True)
