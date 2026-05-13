@@ -3183,9 +3183,15 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
 
     logger.info(f'[live-ffmpeg] FFmpeg finished for stream_key={stream_key} (exit={proc.returncode})')
 
-    # Queue recording processing NOW — proc.wait() guarantees FFmpeg has fully
-    # flushed and closed the MP4 (including +faststart moov rewrite).
-    # DO NOT queue this from stream_on_unpublish (race condition: FFmpeg still running).
+    # FFmpeg has fully exited — MP4 is flushed and closed (including +faststart rewrite).
+    # NOW safe to mark stream as processing and queue the recording task.
+    # This is the authoritative status transition: live → processing.
+    # stream_on_unpublish does NOT change status to avoid false "ended" on brief hiccups.
+    from django.utils import timezone as _tz
+    LiveStream.objects.filter(id=live_stream_id, status=LiveStream.STATUS_LIVE).update(
+        status=LiveStream.STATUS_PROCESSING,
+        ended_at=_tz.now(),
+    )
     process_livestream_recording.delay(live_stream_id)
 
 

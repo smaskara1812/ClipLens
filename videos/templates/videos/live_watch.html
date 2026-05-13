@@ -60,6 +60,22 @@
     font-size: 0.85rem;
     color: var(--text-muted, #888);
   }
+  .connecting-overlay {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.65);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: #fff; gap: 0.75rem; z-index: 10;
+  }
+  .connecting-overlay p { margin: 0; font-size: 0.9rem; opacity: 0.85; }
+  .connecting-spinner {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.2);
+    border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   .ended-overlay {
     position: absolute;
     inset: 0;
@@ -133,13 +149,58 @@
   const video    = document.getElementById('liveVideo');
   let   pollInterval = null;
 
+  let hlsInstance = null;
+
+  function showConnecting() {
+    let el = document.getElementById('connectingOverlay');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'connectingOverlay';
+      el.className = 'connecting-overlay';
+      el.innerHTML = '<div class="connecting-spinner"></div><p>Connecting to stream…</p>';
+      document.getElementById('playerBox').appendChild(el);
+    }
+  }
+
+  function hideConnecting() {
+    const el = document.getElementById('connectingOverlay');
+    if (el) el.remove();
+  }
+
   function startPlayer(url) {
     if (!url) return;
     if (Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10 });
+      if (hlsInstance) { hlsInstance.destroy(); }
+      const hls = new Hls({
+        liveSyncDurationCount:      3,
+        liveMaxLatencyDurationCount: 8,
+        // Retry manifest loads — handles the startup gap where FFmpeg hasn't
+        // written the first .m3u8 yet (takes ~2-4s after OBS connects)
+        manifestLoadingTimeOut:     10000,
+        manifestLoadingMaxRetry:    20,
+        manifestLoadingRetryDelay:  2000,
+        // Retry segment loads on brief hiccups
+        fragLoadingMaxRetry:        6,
+        fragLoadingRetryDelay:      1000,
+      });
+      hlsInstance = hls;
       hls.loadSource(url);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        hideConnecting();
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            // Fatal network error — HLS.js will retry via manifestLoadingMaxRetry,
+            // but if it gives up, we restart the player after a pause
+            setTimeout(() => startPlayer(url), 5000);
+          } else {
+            hls.destroy();
+          }
+        }
+      });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari native HLS
       video.src = url;
@@ -148,13 +209,14 @@
   }
 
   function showEndedOverlay() {
+    hideConnecting();
     let ov = document.getElementById('endedOverlay');
     if (!ov) {
       ov = document.createElement('div');
       ov.id = 'endedOverlay';
       ov.className = 'ended-overlay';
       ov.innerHTML = '<h2>Stream has ended</h2><p>The recording is being processed.</p>' +
-                     '<a href="/channel/{{ channel.slug }}/">Back to channel</a>';
+                     '<a href="/channels/{{ channel.slug }}/">Back to channel</a>';
       document.getElementById('playerBox').appendChild(ov);
     }
   }
@@ -163,8 +225,9 @@
     fetch('/api/channels/{{ channel.slug }}/live/')
       .then(r => r.json())
       .then(data => {
-        if (!data.live) {
-          // Stream ended — stop polling, show overlay
+        // Only show ended overlay if the API confirms no live stream AND
+        // we've been watching for at least 15s (avoids false-end on brief hiccup)
+        if (!data.live && (Date.now() - startedAt) > 15000) {
           clearInterval(pollInterval);
           showEndedOverlay();
           video.pause();
@@ -174,7 +237,9 @@
   }
 
   // Kick off
+  const startedAt = Date.now();
   if (STATUS === 'live' && HLS_URL) {
+    showConnecting();
     startPlayer(HLS_URL);
     // Poll every 10s to detect when stream ends
     pollInterval = setInterval(pollStatus, 10000);

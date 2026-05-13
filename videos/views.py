@@ -1519,6 +1519,7 @@ def channel_page(request, slug):
     past_streams = list(
         LiveStream.objects.filter(channel=channel)
         .exclude(status=LiveStream.STATUS_LIVE)
+        .exclude(status=LiveStream.STATUS_READY, video__isnull=True)  # video was deleted
         .select_related('video')
         .order_by('-started_at')[:50]
     )
@@ -8566,12 +8567,12 @@ def stream_on_unpublish(request):
     if not live:
         return JsonResponse({'status': 'no active stream found'})
 
-    live.status = LiveStream.STATUS_PROCESSING
+    # Only record ended_at — do NOT change status here.
+    # Status transitions live → processing → ready are owned by run_live_ffmpeg,
+    # which is the only place we know FFmpeg has truly finished.
+    # Changing status here causes false "stream ended" in the UI on brief OBS
+    # network hiccups that trigger runOnNotReady then immediately runOnReady again.
     live.ended_at = timezone.now()
-    live.save(update_fields=['status', 'ended_at'])
-    # NOTE: process_livestream_recording is queued by run_live_ffmpeg AFTER
-    # proc.wait() returns — i.e. only once FFmpeg has fully flushed the recording.
-    # We do NOT queue it here to avoid the race condition where the task reads
-    # an incomplete MP4 while FFmpeg is still doing its +faststart rewrite.
+    live.save(update_fields=['ended_at'])
 
     return JsonResponse({'status': 'ok'})
