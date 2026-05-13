@@ -3155,23 +3155,20 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
         'ffmpeg', '-y',
         '-loglevel', 'warning',
         '-i', rtmp_url,
-        # ── HLS output — live viewer stream ──────────────────────────────
-        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-        # Time-based keyframes (not frame-count) — tolerates variable/uneven frame delivery
-        '-force_key_frames', 'expr:gte(t,n_forced*2)',
-        '-sc_threshold', '0',
-        '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
-        '-fps_mode', 'passthrough',       # never duplicate frames to fill gaps
+        # ── HLS output — STREAM COPY (no re-encode) ──────────────────────
+        # Assumes OBS sends keyframes every 2s (keyframe interval = 2 in OBS).
+        # Zero CPU overhead, zero encoding-induced stutter, lowest latency.
+        '-c:v', 'copy', '-c:a', 'copy',
         '-f', 'hls',
         '-hls_time', '2',
         '-hls_list_size', '5',
         '-hls_flags', 'delete_segments+append_list+independent_segments',
         '-hls_segment_filename', seg_pattern,
         hls_path,
-        # ── MP4 recording output ──────────────────────────────────────────
-        '-c:v', 'libx264', '-preset', 'veryfast',
+        # ── MP4 recording output — re-encode with reset timestamps ───────
+        '-c:v', 'libx264', '-preset', 'ultrafast',
         '-c:a', 'aac', '-b:a', '128k',
-        '-fps_mode', 'passthrough',       # never duplicate frames
+        '-fps_mode', 'passthrough',
         '-movflags', '+faststart',
         rec_path,
     ]
