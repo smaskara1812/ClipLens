@@ -575,7 +575,7 @@ def generate_video_summary_task(self, video_id: str):
 
     try:
         logger.info(f'[summary] Calling Ollama ({model_name}) for video {video_id}')
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=600) as resp:
             result = _json.loads(resp.read().decode('utf-8'))
         summary = result.get('response', '').strip()
     except urllib.error.URLError as exc:
