@@ -8527,10 +8527,12 @@ def stream_on_publish(request):
         channel=sk.channel,
         stream_key=sk,
         status=LiveStream.STATUS_LIVE,
-        hls_path=f'live/{raw_key}/live.m3u8',
-        recording_path=f'live/{raw_key}/recording.mp4',
         title=f'Live — {sk.channel.name}',
     )
+    # Each stream gets its own directory keyed by its DB id — never reuses old files
+    live.hls_path = f'live/{live.id}/live.m3u8'
+    live.recording_path = f'live/{live.id}/recording.mp4'
+    live.save(update_fields=['hls_path', 'recording_path'])
 
     # Start FFmpeg via Celery (live queue) — portable, no shell scripts needed
     from . import tasks as _tasks

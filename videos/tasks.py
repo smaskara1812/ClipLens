@@ -3142,16 +3142,17 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
         logger.error(f'[live-ffmpeg] LiveStream {live_stream_id} not found')
         return
 
-    media_dir  = os.path.join(settings.LIVE_MEDIA_ROOT, stream_key)
-    hls_path   = os.path.join(media_dir, 'live.m3u8')
+    # Each stream uses its own directory (live_stream_id) — never collides with past streams
+    media_dir   = os.path.join(settings.LIVE_MEDIA_ROOT, str(live_stream_id))
+    hls_path    = os.path.join(media_dir, 'live.m3u8')
     seg_pattern = os.path.join(media_dir, 'seg%03d.ts')
-    rec_path   = os.path.join(media_dir, 'recording.mp4')
-    rtmp_url   = f'rtmp://127.0.0.1:1935/live/{stream_key}'
+    rec_path    = os.path.join(media_dir, 'recording.mp4')
+    rtmp_url    = f'rtmp://127.0.0.1:1935/live/{stream_key}'
 
     os.makedirs(media_dir, exist_ok=True)
 
     cmd = [
-        'ffmpeg',
+        'ffmpeg', '-y',                   # overwrite outputs without prompting
         '-loglevel', 'warning',           # global — must come before -i
         '-i', rtmp_url,
         # ── HLS output — live viewer stream ──────────────────────────────
