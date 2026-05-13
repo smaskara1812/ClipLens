@@ -1519,7 +1519,11 @@ def channel_page(request, slug):
     past_streams = list(
         LiveStream.objects.filter(channel=channel)
         .exclude(status=LiveStream.STATUS_LIVE)
-        .exclude(status=LiveStream.STATUS_READY, video__isnull=True)  # video was deleted
+        # Hide finished streams with no video (video deleted, or recording failed)
+        # Keep PROCESSING+null so the "processing" state still shows briefly
+        .exclude(video__isnull=True, status__in=[
+            LiveStream.STATUS_READY, LiveStream.STATUS_ENDED
+        ])
         .select_related('video')
         .order_by('-started_at')[:50]
     )

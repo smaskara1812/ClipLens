@@ -21,6 +21,9 @@ srt: no
 api: yes
 apiAddress: 127.0.0.1:9997
 
+# Increase packet queue to absorb B-frame reordering from OBS
+writeQueueSize: 2048
+
 paths:
   # Matches: live/STREAM_KEY  — G1 captures the key after "live/"
   "~^live/(.+)$":
