@@ -3152,28 +3152,26 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
     os.makedirs(media_dir, exist_ok=True)
 
     cmd = [
-        'ffmpeg', '-y',                   # overwrite outputs without prompting
-        '-loglevel', 'warning',           # global — must come before -i
-        '-use_wallclock_as_timestamps', '1',  # anchor frame timing to wall clock, not RTMP DTS
+        'ffmpeg', '-y',
+        '-loglevel', 'warning',
         '-i', rtmp_url,
         # ── HLS output — live viewer stream ──────────────────────────────
         '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-        '-g', '48', '-keyint_min', '48',  # keyframe every 2s (matches segment duration)
-        '-sc_threshold', '0',             # no scene-cut keyframes — keeps segments clean
+        # Time-based keyframes (not frame-count) — tolerates variable/uneven frame delivery
+        '-force_key_frames', 'expr:gte(t,n_forced*2)',
+        '-sc_threshold', '0',
         '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+        '-vsync', '0',                    # passthrough — never duplicate frames to fill gaps
         '-f', 'hls',
-        '-hls_time', '2',                 # 2-second segments — lower live latency
-        '-hls_list_size', '5',            # keep last 5 segments (~10s) in playlist
+        '-hls_time', '2',
+        '-hls_list_size', '5',
         '-hls_flags', 'delete_segments+append_list+independent_segments',
         '-hls_segment_filename', seg_pattern,
         hls_path,
         # ── MP4 recording output ──────────────────────────────────────────
-        # Re-encode (not stream-copy) so timestamps are reset to 0 and the
-        # duration in the moov atom matches actual content length.
-        # RTMP timestamps reflect OBS uptime, not stream duration — stream-copy
-        # would preserve those raw timestamps, causing duration mismatches.
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-c:a', 'aac', '-b:a', '128k',
+        '-vsync', '0',                    # passthrough — never duplicate frames
         '-movflags', '+faststart',
         rec_path,
     ]
