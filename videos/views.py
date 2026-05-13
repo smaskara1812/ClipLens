@@ -8569,10 +8569,9 @@ def stream_on_unpublish(request):
     live.status = LiveStream.STATUS_PROCESSING
     live.ended_at = timezone.now()
     live.save(update_fields=['status', 'ended_at'])
+    # NOTE: process_livestream_recording is queued by run_live_ffmpeg AFTER
+    # proc.wait() returns — i.e. only once FFmpeg has fully flushed the recording.
+    # We do NOT queue it here to avoid the race condition where the task reads
+    # an incomplete MP4 while FFmpeg is still doing its +faststart rewrite.
 
-    # Delay 20s to let FFmpeg finish writing the final MP4 segments before processing
-    from . import tasks as _tasks
-    _tasks.process_livestream_recording.apply_async(args=[live.id], countdown=20)
-
-    return JsonResponse({'status': 'processing queued'})
-    return Response(data)
+    return JsonResponse({'status': 'ok'})

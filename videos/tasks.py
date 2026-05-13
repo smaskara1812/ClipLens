@@ -3166,17 +3166,27 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
         '-hls_flags', 'delete_segments+append_list+independent_segments',
         '-hls_segment_filename', seg_pattern,
         hls_path,
-        # ── MP4 recording output — stream-copy for zero CPU overhead ─────
-        '-c:v', 'copy', '-c:a', 'copy',
-        '-movflags', '+faststart',        # write moov atom at start → correct duration + seekable
+        # ── MP4 recording output ──────────────────────────────────────────
+        # Re-encode (not stream-copy) so timestamps are reset to 0 and the
+        # duration in the moov atom matches actual content length.
+        # RTMP timestamps reflect OBS uptime, not stream duration — stream-copy
+        # would preserve those raw timestamps, causing duration mismatches.
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart',
         rec_path,
     ]
 
     logger.info(f'[live-ffmpeg] Starting FFmpeg for stream_key={stream_key}')
     proc = subprocess.Popen(cmd)
-    proc.wait()   # blocks here until OBS disconnects → FFmpeg exits
+    proc.wait()   # blocks here until OBS disconnects → FFmpeg exits naturally
 
     logger.info(f'[live-ffmpeg] FFmpeg finished for stream_key={stream_key} (exit={proc.returncode})')
+
+    # Queue recording processing NOW — proc.wait() guarantees FFmpeg has fully
+    # flushed and closed the MP4 (including +faststart moov rewrite).
+    # DO NOT queue this from stream_on_unpublish (race condition: FFmpeg still running).
+    process_livestream_recording.delay(live_stream_id)
 
 
 @shared_task(bind=True, name='videos.tasks.process_livestream_recording',
