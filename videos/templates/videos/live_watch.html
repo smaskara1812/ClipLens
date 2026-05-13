@@ -1,0 +1,184 @@
+{% extends "videos/base.html" %}
+{% load static %}
+
+{% block title %}{{ live.title|default:"Live Stream" }} — {{ channel.name }}{% endblock %}
+
+{% block extra_head %}
+<style>
+  .live-wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.5rem 1rem;
+  }
+  .live-player-box {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+    width: 100%;
+  }
+  .live-player-box video {
+    width: 100%; height: 100%;
+    object-fit: contain;
+  }
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #e53e3e;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .live-badge .dot {
+    width: 7px; height: 7px;
+    background: #fff;
+    border-radius: 50%;
+    animation: blink 1.2s infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+  .live-meta {
+    margin-top: 1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  .live-meta-text h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0 0 4px;
+  }
+  .live-meta-text .sub {
+    font-size: 0.85rem;
+    color: var(--text-muted, #888);
+  }
+  .ended-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    gap: 0.75rem;
+  }
+  .ended-overlay h2 { margin: 0; font-size: 1.4rem; }
+  .ended-overlay p  { margin: 0; opacity: 0.75; font-size: 0.9rem; }
+  .ended-overlay a  {
+    margin-top: 0.5rem;
+    background: var(--accent, #e53e3e);
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="live-wrap">
+
+  <div class="live-player-box" id="playerBox">
+    <video id="liveVideo" controls playsinline autoplay muted></video>
+
+    {% if live.status != 'live' %}
+    <div class="ended-overlay" id="endedOverlay">
+      <h2>Stream has ended</h2>
+      {% if live.video %}
+        <p>The recording is being processed — it will appear in the channel shortly.</p>
+        <a href="{% url 'channel' channel.slug %}">Back to channel</a>
+      {% else %}
+        <p>This stream has finished.</p>
+        <a href="{% url 'channel' channel.slug %}">Back to channel</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="live-meta">
+    <div class="live-meta-text">
+      <h1>
+        {{ live.title|default:"Live Stream" }}
+        {% if live.status == 'live' %}
+        <span class="live-badge"><span class="dot"></span> Live</span>
+        {% endif %}
+      </h1>
+      <div class="sub">
+        <a href="{% url 'channel' channel.slug %}">{{ channel.name }}</a>
+        &nbsp;·&nbsp; Started {{ live.started_at|date:"N j, Y · g:i A" }}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
+<script>
+(function () {
+  const STATUS   = '{{ live.status }}';
+  const HLS_URL  = '{{ hls_url|default:"" }}';
+  const STREAM_ID = {{ live.id }};
+  const video    = document.getElementById('liveVideo');
+  let   pollInterval = null;
+
+  function startPlayer(url) {
+    if (!url) return;
+    if (Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10 });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS
+      video.src = url;
+      video.play().catch(() => {});
+    }
+  }
+
+  function showEndedOverlay() {
+    let ov = document.getElementById('endedOverlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'endedOverlay';
+      ov.className = 'ended-overlay';
+      ov.innerHTML = '<h2>Stream has ended</h2><p>The recording is being processed.</p>' +
+                     '<a href="/channel/{{ channel.slug }}/">Back to channel</a>';
+      document.getElementById('playerBox').appendChild(ov);
+    }
+  }
+
+  function pollStatus() {
+    fetch('/api/channels/{{ channel.slug }}/live/')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.live) {
+          // Stream ended — stop polling, show overlay
+          clearInterval(pollInterval);
+          showEndedOverlay();
+          video.pause();
+        }
+      })
+      .catch(() => {});
+  }
+
+  // Kick off
+  if (STATUS === 'live' && HLS_URL) {
+    startPlayer(HLS_URL);
+    // Poll every 10s to detect when stream ends
+    pollInterval = setInterval(pollStatus, 10000);
+  }
+})();
+</script>
+{% endblock %}

@@ -102,6 +102,66 @@
   }
   .vcard-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
 
+  /* WAS LIVE badge on video cards */
+  .vcard-was-live-badge {
+    position: absolute; top: 7px; left: 8px;
+    background: rgba(220,38,38,.92); color: #fff;
+    font-size: 10px; font-weight: 800; letter-spacing: .06em;
+    padding: 2px 7px; border-radius: 4px;
+    text-transform: uppercase; pointer-events: none;
+  }
+
+  /* Live streams list */
+  .ch-live-list { display: flex; flex-direction: column; gap: 16px; }
+  .ch-live-row {
+    display: flex; gap: 16px; align-items: flex-start;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; transition: border-color .15s;
+  }
+  .ch-live-row:hover { border-color: var(--accent); }
+  .ch-live-thumb-wrap {
+    position: relative; flex-shrink: 0; width: 180px; height: 101px;
+    border-radius: 6px; overflow: hidden; background: var(--surface-3);
+    display: block; text-decoration: none;
+  }
+  .ch-live-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ch-live-thumb-ph {
+    width: 100%; height: 100%; display: flex; align-items: center;
+    justify-content: center; color: var(--text-muted);
+  }
+  .ch-live-thumb-no-vod { cursor: default; }
+  .ch-live-thumb-badge {
+    position: absolute; bottom: 5px; left: 6px;
+    background: rgba(220,38,38,.92); color: #fff;
+    font-size: 9px; font-weight: 800; letter-spacing: .06em;
+    padding: 2px 6px; border-radius: 3px; text-transform: uppercase;
+  }
+  .ch-live-thumb-dur {
+    position: absolute; bottom: 5px; right: 6px;
+    background: rgba(0,0,0,.78); color: #fff;
+    font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 3px;
+  }
+  .ch-live-info { flex: 1; min-width: 0; }
+  .ch-live-title {
+    font-size: 14px; font-weight: 700; line-height: 1.4; margin-bottom: 6px;
+  }
+  .ch-live-title a { color: var(--text); text-decoration: none; }
+  .ch-live-title a:hover { color: var(--accent); }
+  .ch-live-meta {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 6px; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;
+  }
+  .ch-live-views { font-size: 12px; color: var(--text-muted); }
+  .ch-live-status-processing {
+    color: var(--accent); font-weight: 600;
+    display: inline-flex; align-items: center;
+  }
+  @media (max-width: 600px) {
+    .ch-live-thumb-wrap { width: 120px; height: 68px; }
+    .ch-live-row { padding: 10px; gap: 10px; }
+    .ch-live-title { font-size: 13px; }
+  }
+
   /* Links */
   .ch-links {
     display: flex; flex-wrap: wrap; gap: 8px;
@@ -250,6 +310,10 @@
         </svg>
         Upload
       </a>
+      <button class="btn btn-secondary btn-sm" onclick="openStreamPanel()" style="background:#e53e3e;color:#fff;border-color:#e53e3e;">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><circle cx="12" cy="12" r="6"/></svg>
+        Go Live
+      </button>
       {% elif request.user.is_authenticated %}
       <button id="subscribeBtn"
         class="btn btn-sm {% if is_subscribed %}btn-secondary{% else %}btn-primary{% endif %}"
@@ -290,6 +354,45 @@
   </div>
   {% endif %}
 
+  <!-- Live indicator (visible to all if channel is live) -->
+  <div id="liveIndicator" style="display:none;margin-bottom:1rem;">
+    <a id="liveIndicatorLink" href="#" style="display:inline-flex;align-items:center;gap:8px;background:#e53e3e;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:0.9rem;">
+      <span style="width:8px;height:8px;background:#fff;border-radius:50%;animation:liveDot 1.2s infinite;display:inline-block;"></span>
+      LIVE NOW — Watch
+    </a>
+  </div>
+  <style>@keyframes liveDot{0%,100%{opacity:1}50%{opacity:.2}}</style>
+
+  <!-- Owner: Go Live / Stream Key panel -->
+  {% if is_owner %}
+  <div class="ch-links-edit" id="streamPanel" style="display:none;margin-bottom:1rem;">
+    <div class="ch-links-edit-header">
+      <h3>🔴 Live Streaming</h3>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('streamPanel').style.display='none'">Done</button>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px;">Enter these details in OBS → Settings → Stream → Custom.</p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">RTMP Server</label>
+        <div style="display:flex;gap:8px;">
+          <input id="rtmpServerInput" class="form-input" readonly style="flex:1;font-family:monospace;font-size:13px;" value="Loading…" />
+          <button class="btn btn-secondary btn-sm" onclick="copyField('rtmpServerInput')">Copy</button>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Stream Key</label>
+        <div style="display:flex;gap:8px;">
+          <input id="streamKeyInput" class="form-input" readonly type="password" style="flex:1;font-family:monospace;font-size:13px;" value="Loading…" />
+          <button class="btn btn-secondary btn-sm" onclick="toggleKeyVisibility()">Show</button>
+          <button class="btn btn-secondary btn-sm" onclick="copyField('streamKeyInput')">Copy</button>
+          <button class="btn btn-danger btn-sm" onclick="regenerateKey()" title="Generate a new key (invalidates current OBS config)">Regenerate</button>
+        </div>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">Keep this private. Regenerating will disconnect any active stream.</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Owner: Manage Links -->
   {% if is_owner %}
   <div class="ch-links-edit" id="linksEditPanel" style="display:none;">
@@ -319,8 +422,8 @@
   <!-- Scoped search -->
   {% include 'videos/includes/scoped_search.html' with scope="channel" scope_id=channel.slug %}
 
-  <!-- Tabs — only rendered when both content types exist -->
-  {% if videos and photos %}
+  <!-- Tabs — shown whenever there are 2+ content types or past streams -->
+  {% if videos and photos or past_streams %}
   <div class="ch-tabs" id="chTabs">
     <button class="ch-tab active" id="tab-btn-videos" onclick="switchChTab('videos')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
@@ -329,6 +432,7 @@
       </svg>
       Videos <span class="ch-tab-count">{{ videos|length }}</span>
     </button>
+    {% if photos %}
     <button class="ch-tab" id="tab-btn-photos" onclick="switchChTab('photos')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
         <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
@@ -336,6 +440,16 @@
       </svg>
       Photos <span class="ch-tab-count">{{ photo_count }}</span>
     </button>
+    {% endif %}
+    {% if past_streams %}
+    <button class="ch-tab" id="tab-btn-live" onclick="switchChTab('live')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+        <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+        <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13"/>
+      </svg>
+      Live <span class="ch-tab-count">{{ past_streams|length }}</span>
+    </button>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -356,6 +470,7 @@
             </div>
           {% endif %}
           {% if v.duration %}<div class="vcard-dur">{{ v.duration|duration_fmt }}</div>{% endif %}
+          {% if v.id|stringformat:"s" in live_video_ids %}<div class="vcard-was-live-badge">WAS LIVE</div>{% endif %}
           <div class="vcard-play-overlay">
             <div class="vcard-play-btn">
               <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -387,6 +502,76 @@
     </div>
     {% endif %}
   </div>
+
+  <!-- Live streams tab -->
+  {% if past_streams %}
+  <div id="ch-tab-live" style="display:none;">
+    <div class="ch-live-list">
+      {% for ls in past_streams %}
+      <div class="ch-live-row">
+        {% if ls.video %}
+        <a href="{% url 'watch' ls.video.id %}" class="ch-live-thumb-wrap">
+          {% if ls.video.thumbnail_url %}
+            <img src="{{ ls.video.thumbnail_url }}" alt="{{ ls.video.title }}" loading="lazy" class="ch-live-thumb" />
+          {% else %}
+            <div class="ch-live-thumb-ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+                <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+                <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/>
+              </svg>
+            </div>
+          {% endif %}
+          <div class="ch-live-thumb-badge">WAS LIVE</div>
+          {% if ls.video.duration %}<div class="ch-live-thumb-dur">{{ ls.video.duration|duration_fmt }}</div>{% endif %}
+        </a>
+        {% else %}
+        <div class="ch-live-thumb-wrap ch-live-thumb-no-vod">
+          <div class="ch-live-thumb-ph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+              <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+              <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/>
+            </svg>
+          </div>
+          <div class="ch-live-thumb-badge">WAS LIVE</div>
+        </div>
+        {% endif %}
+        <div class="ch-live-info">
+          <div class="ch-live-title">
+            {% if ls.video %}
+              <a href="{% url 'watch' ls.video.id %}">{{ ls.video.title|default:ls.title|default:"Untitled stream" }}</a>
+            {% elif ls.status == 'processing' %}
+              <span class="text-muted">Processing recording…</span>
+            {% else %}
+              <span class="text-muted">{{ ls.title|default:"Untitled stream" }}</span>
+            {% endif %}
+          </div>
+          <div class="ch-live-meta">
+            <span class="ch-live-date" title="{{ ls.started_at|date:'N j, Y, g:i a' }}">
+              Streamed {{ ls.started_at|timesince }} ago
+            </span>
+            {% if ls.duration_seconds %}
+            <span>·</span>
+            <span>{{ ls.duration_seconds|duration_fmt }}</span>
+            {% endif %}
+            {% if ls.status == 'processing' %}
+            <span>·</span>
+            <span class="ch-live-status-processing">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11" style="margin-right:3px;vertical-align:middle;">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+              </svg>
+              Processing
+            </span>
+            {% endif %}
+          </div>
+          {% if ls.video %}
+          <div class="ch-live-views">{{ ls.video.views_count }} view{{ ls.video.views_count|pluralize }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   <!-- Photos tab (only rendered if channel has photos) -->
   {% if photos %}
@@ -431,9 +616,11 @@ let _chPhotoCursor = null;
 
 function switchChTab(tab) {
   document.getElementById('ch-tab-videos').style.display = tab === 'videos' ? '' : 'none';
-  document.getElementById('ch-tab-photos').style.display = tab === 'photos' ? '' : 'none';
+  document.getElementById('ch-tab-photos') && (document.getElementById('ch-tab-photos').style.display = tab === 'photos' ? '' : 'none');
+  document.getElementById('ch-tab-live')   && (document.getElementById('ch-tab-live').style.display   = tab === 'live'   ? '' : 'none');
   document.getElementById('tab-btn-videos')?.classList.toggle('active', tab === 'videos');
   document.getElementById('tab-btn-photos')?.classList.toggle('active', tab === 'photos');
+  document.getElementById('tab-btn-live')?.classList.toggle('active',   tab === 'live');
 }
 
 function _chPhotoCard(p) {
@@ -591,6 +778,46 @@ function toggleLinksPanel() {
   panel.style.display = isHidden ? 'block' : 'none';
   if (isHidden) loadLinks();
 }
+
+// ── Live stream key panel ──────────────────────────────────────────────────
+const CHANNEL_SLUG_LIVE = '{{ channel.slug }}';
+
+async function openStreamPanel() {
+  document.getElementById('streamPanel').style.display = 'block';
+  const res = await fetch(`/api/channels/${CHANNEL_SLUG_LIVE}/stream-key/`, { credentials: 'include' });
+  if (!res.ok) return;
+  const data = await res.json();
+  document.getElementById('rtmpServerInput').value = data.rtmp_url;
+  document.getElementById('streamKeyInput').value  = data.key;
+}
+
+function toggleKeyVisibility() {
+  const inp = document.getElementById('streamKeyInput');
+  const btn = inp.nextElementSibling;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  btn.textContent = inp.type === 'password' ? 'Show' : 'Hide';
+}
+
+function copyField(id) {
+  const inp = document.getElementById(id);
+  const prevType = inp.type;
+  inp.type = 'text';
+  inp.select();
+  document.execCommand('copy');
+  inp.type = prevType;
+}
+
+async function regenerateKey() {
+  if (!confirm('Regenerate stream key? Your current OBS config will stop working until you update it.')) return;
+  const res = await fetch(`/api/channels/${CHANNEL_SLUG_LIVE}/stream-key/regenerate/`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+    credentials: 'include',
+  });
+  if (!res.ok) return alert('Failed to regenerate key.');
+  const data = await res.json();
+  document.getElementById('streamKeyInput').value = data.key;
+}
 </script>
 {% endif %}
 
@@ -645,4 +872,28 @@ function getCsrfToken() {
 }
 </script>
 {% endif %}
+
+{# Live status polling — runs for ALL visitors #}
+<script>
+(function () {
+  const slug = '{{ channel.slug }}';
+
+  function checkLive() {
+    fetch(`/api/channels/${slug}/live/`)
+      .then(r => r.json())
+      .then(d => {
+        const indicator = document.getElementById('liveIndicator');
+        if (d.live) {
+          document.getElementById('liveIndicatorLink').href = d.watch_url;
+          indicator.style.display = 'block';
+        } else {
+          indicator.style.display = 'none';
+        }
+      }).catch(() => {});
+  }
+
+  checkLive();
+  setInterval(checkLive, 15000);  // re-check every 15s
+})();
+</script>
 {% endblock %}

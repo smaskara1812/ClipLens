@@ -210,4 +210,17 @@ urlpatterns = [
     path('api/events/',                        views.event_list_create),
     path('api/events/<int:event_id>/',         views.event_detail_api),
     path('api/events/<int:event_id>/search/',  views.event_search_api),
+
+    # ── Live Streaming — pages ──
+    path('live/<int:stream_id>/', views.live_watch_page, name='live_watch'),
+
+    # ── Live Streaming — channel APIs ──
+    path('api/channels/<slug:slug>/stream-key/',            views.stream_key_detail),
+    path('api/channels/<slug:slug>/stream-key/regenerate/', views.stream_key_regenerate),
+    path('api/channels/<slug:slug>/live/',                  views.channel_live_status),
+    path('api/streams/',                                    views.live_streams_list),
+
+    # ── Live Streaming — mediamtx webhooks (internal only) ──
+    path('api/streams/on-publish/',   views.stream_on_publish),
+    path('api/streams/on-unpublish/', views.stream_on_unpublish),
 ]

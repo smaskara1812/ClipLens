@@ -1,0 +1,39 @@
+###############################################
+# mediamtx.yml — ClipLens live stream config
+# Compatible with mediamtx v1.9.3
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+# RTMP only — OBS streams here on port 1935
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+
+# Disable everything else
+rtsp: no
+hls: no
+webrtc: no
+srt: no
+
+# Internal API — Django queries this to check active streams
+api: yes
+apiAddress: 127.0.0.1:9997
+
+paths:
+  # Matches: live/STREAM_KEY  — G1 captures the key after "live/"
+  "~^live/(.+)$":
+
+    # OBS starts → Django validates key + starts FFmpeg via Celery
+    runOnReady: >-
+      curl -s -X POST http://127.0.0.1:8000/api/streams/on-publish/
+      -H "Content-Type: application/json"
+      -d "{\"stream_key\":\"$G1\",\"secret\":\"cliplens-mediamtx-secret\"}"
+    runOnReadyRestart: no
+
+    # OBS stops → Django marks ended + queues AI pipeline
+    runOnNotReady: >-
+      curl -s -X POST http://127.0.0.1:8000/api/streams/on-unpublish/
+      -H "Content-Type: application/json"
+      -d "{\"stream_key\":\"$G1\",\"secret\":\"cliplens-mediamtx-secret\"}"

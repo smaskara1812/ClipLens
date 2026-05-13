@@ -37,6 +37,7 @@ from .models import (
     WatchTimeEntry, EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
     FaceIdentity, FaceIdentityNickname, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
     SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event, NamedPlace, MomentCategory,
+    StreamKey, LiveStream,
 )
 from .activity import log_activity, snapshot_fields, diff_snapshots
 from .serializers import (
@@ -1450,6 +1451,8 @@ def watch_page(request, video_id):
             getattr(settings, 'TRANSLATION_LANGUAGES', ['fr', 'es', 'de', 'hi', 'ar'])
         ),
         'translation_all_languages': _build_all_translation_languages(),
+        # Live stream provenance
+        'from_live_stream': getattr(video, 'from_live_stream', None),
     })
 
 
@@ -1512,6 +1515,16 @@ def channel_page(request, slug):
 
     links = channel.links.all()
 
+    # Past live streams — shown in the Live tab
+    past_streams = list(
+        LiveStream.objects.filter(channel=channel)
+        .exclude(status=LiveStream.STATUS_LIVE)
+        .select_related('video')
+        .order_by('-started_at')[:50]
+    )
+    # Set of video IDs that originated from a live stream (for badge on video cards)
+    live_video_ids = {str(ls.video_id) for ls in past_streams if ls.video_id}
+
     unread_count = 0
     if request.user.is_authenticated:
         unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
@@ -1527,6 +1540,8 @@ def channel_page(request, slug):
         'is_subscribed':    is_subscribed,
         'subscriber_count': subscriber_count,
         'unread_count':     unread_count,
+        'past_streams':     past_streams,
+        'live_video_ids':   live_video_ids,
     })
 
 
@@ -8382,4 +8397,180 @@ def video_speakers_list(request, video_id):
             'face_name':     s.face_identity.name if s.face_identity else None,
             'face_thumbnail': s.face_identity.thumbnail_url if s.face_identity else None,
         })
+
+
+# ─── Live Streaming ────────────────────────────────────────────────────────────
+
+import json as _json
+import os as _os
+
+# ── Live watch page ────────────────────────────────────────────────────────────
+
+def live_watch_page(request, stream_id):
+    """Public-facing live player page."""
+    live = get_object_or_404(LiveStream, id=stream_id)
+    return render(request, 'videos/live_watch.html', {
+        'live': live,
+        'channel': live.channel,
+        'hls_url': settings.MEDIA_URL + live.hls_path if live.hls_path else None,
+    })
+
+
+# ── Channel stream key management ─────────────────────────────────────────────
+
+@login_required
+@api_view(['GET'])
+def stream_key_detail(request, slug):
+    """Return stream key for channel owner / editor."""
+    channel = get_object_or_404(Channel, slug=slug)
+    if not (request.user == channel.owner or request.user in channel.editors.all()
+            or request.user.is_superuser):
+        return Response({'error': 'forbidden'}, status=403)
+    sk, _ = StreamKey.objects.get_or_create(channel=channel)
+    return Response({
+        'key': sk.key,
+        'rtmp_url': 'rtmp://' + request.get_host().split(':')[0] + ':1935/live',
+        'stream_url': 'rtmp://' + request.get_host().split(':')[0] + ':1935/live/' + sk.key,
+    })
+
+
+@login_required
+@api_view(['POST'])
+def stream_key_regenerate(request, slug):
+    """Regenerate stream key (invalidates OBS config — must re-enter)."""
+    channel = get_object_or_404(Channel, slug=slug)
+    if not (request.user == channel.owner or request.user in channel.editors.all()
+            or request.user.is_superuser):
+        return Response({'error': 'forbidden'}, status=403)
+    sk, _ = StreamKey.objects.get_or_create(channel=channel)
+    sk.regenerate()
+    return Response({'key': sk.key})
+
+
+# ── Active streams list (for channel page / admin) ─────────────────────────────
+
+@api_view(['GET'])
+def live_streams_list(request):
+    """Return all currently live streams — used by homepage / channel pages."""
+    lives = LiveStream.objects.filter(status=LiveStream.STATUS_LIVE).select_related('channel')
+    data = [{
+        'id': ls.id,
+        'channel_slug': ls.channel.slug,
+        'channel_name': ls.channel.name,
+        'title': ls.title or f'Live — {ls.channel.name}',
+        'started_at': ls.started_at.isoformat(),
+        'hls_url': settings.MEDIA_URL + ls.hls_path if ls.hls_path else None,
+    } for ls in lives]
+    return Response(data)
+
+
+@api_view(['GET'])
+def channel_live_status(request, slug):
+    """Returns current live stream for a channel (or null)."""
+    channel = get_object_or_404(Channel, slug=slug)
+    live = LiveStream.objects.filter(channel=channel, status=LiveStream.STATUS_LIVE).first()
+    if not live:
+        return Response({'live': False})
+    return Response({
+        'live': True,
+        'stream_id': live.id,
+        'title': live.title or f'Live — {channel.name}',
+        'started_at': live.started_at.isoformat(),
+        'hls_url': settings.MEDIA_URL + live.hls_path if live.hls_path else None,
+        'watch_url': f'/live/{live.id}/',
+    })
+
+
+# ── mediamtx webhook handlers ─────────────────────────────────────────────────
+
+from django.views.decorators.csrf import csrf_exempt
+
+def _verify_mediamtx_secret(body):
+    """Ensure the webhook came from our mediamtx instance."""
+    secret = body.get('secret', '')
+    return secret == settings.MEDIAMTX_WEBHOOK_SECRET
+
+
+@csrf_exempt
+def stream_on_publish(request):
+    """
+    Called by mediamtx when OBS starts streaming.
+    Validates the stream key and creates a LiveStream record.
+    Returns HTTP 200 to allow the stream, 4xx to reject it.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    try:
+        body = _json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'invalid json'}, status=400)
+
+    if not _verify_mediamtx_secret(body):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+
+    raw_key = body.get('stream_key', '').strip()
+    if not raw_key:
+        return JsonResponse({'error': 'missing stream_key'}, status=400)
+
+    try:
+        sk = StreamKey.objects.select_related('channel').get(key=raw_key, is_active=True)
+    except StreamKey.DoesNotExist:
+        return JsonResponse({'error': 'invalid stream key'}, status=401)
+
+    # Close any stale live stream for this channel
+    LiveStream.objects.filter(channel=sk.channel, status=LiveStream.STATUS_LIVE).update(
+        status=LiveStream.STATUS_ENDED, ended_at=timezone.now()
+    )
+
+    live = LiveStream.objects.create(
+        channel=sk.channel,
+        stream_key=sk,
+        status=LiveStream.STATUS_LIVE,
+        hls_path=f'live/{raw_key}/live.m3u8',
+        recording_path=f'live/{raw_key}/recording.mp4',
+        title=f'Live — {sk.channel.name}',
+    )
+
+    # Start FFmpeg via Celery (live queue) — portable, no shell scripts needed
+    from . import tasks as _tasks
+    _tasks.run_live_ffmpeg.delay(live.id, raw_key)
+
+    return JsonResponse({'status': 'ok'})
+
+
+@csrf_exempt
+def stream_on_unpublish(request):
+    """
+    Called by mediamtx when OBS stops streaming.
+    Marks stream as ended and queues AI processing on the recording.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    try:
+        body = _json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'invalid json'}, status=400)
+
+    if not _verify_mediamtx_secret(body):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+
+    raw_key = body.get('stream_key', '').strip()
+    live = LiveStream.objects.filter(
+        stream_key__key=raw_key, status=LiveStream.STATUS_LIVE
+    ).select_related('channel', 'stream_key').first()
+
+    if not live:
+        return JsonResponse({'status': 'no active stream found'})
+
+    live.status = LiveStream.STATUS_PROCESSING
+    live.ended_at = timezone.now()
+    live.save(update_fields=['status', 'ended_at'])
+
+    # Delay 20s to let FFmpeg finish writing the final MP4 segments before processing
+    from . import tasks as _tasks
+    _tasks.process_livestream_recording.apply_async(args=[live.id], countdown=20)
+
+    return JsonResponse({'status': 'processing queued'})
     return Response(data)

@@ -285,6 +285,7 @@ CELERY_TASK_ROUTES = {
     'videos.tasks.reindex_segments_task':       {'queue': 'default'},
     'videos.tasks.run_diarization_task':        {'queue': 'captions'},
     'videos.tasks.translate_subtitles_task':    {'queue': 'translation'},
+    'videos.tasks.run_live_ffmpeg':             {'queue': 'live'},
 }
 
 
@@ -375,6 +376,16 @@ TRANSLATION_BATCH_SIZE= int(os.getenv('TRANSLATION_BATCH_SIZE', '32'))
 # Editors can select any subset per video; admins can change this global default.
 _raw_tl = os.getenv('TRANSLATION_LANGUAGES', 'fr,es,de,hi,ar,zh,ja,ko,pt,ru')
 TRANSLATION_LANGUAGES = [l.strip() for l in _raw_tl.split(',') if l.strip()]
+
+# ── Live Streaming ─────────────────────────────────────────────────────────────
+LIVE_STREAMING_ENABLED  = os.getenv('LIVE_STREAMING_ENABLED', 'true').lower() == 'true'
+LIVE_MEDIA_ROOT         = os.path.join(MEDIA_ROOT, 'live')   # where HLS segments + recordings land
+MEDIAMTX_WEBHOOK_SECRET = os.getenv('MEDIAMTX_WEBHOOK_SECRET', 'cliplens-mediamtx-secret')
+MEDIAMTX_API_URL        = os.getenv('MEDIAMTX_API_URL', 'http://127.0.0.1:9997')
+# If True: AI pipeline runs automatically after every stream ends.
+# If False: recording is saved as a Video but NO processing runs automatically.
+#           Editors can trigger each step manually via the edit modal or management commands.
+LIVE_STREAM_AUTO_PROCESS = os.getenv('LIVE_STREAM_AUTO_PROCESS', 'false').lower() == 'true'
 
 # ── Speaker Diarization (pyannote.audio) ──────────────────────────────────────
 # Required for the "Run Diarization" feature on videos.

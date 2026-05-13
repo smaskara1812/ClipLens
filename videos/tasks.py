@@ -84,30 +84,36 @@ def _open_any_photo(img_path: Path, ext: str = ''):
     default_retry_delay=30,
     acks_late=True,
 )
-def process_video_task(self, video_id: str):
+def process_video_task(self, video_id: str, skip_ai: bool = False):
     """
-    Convert uploaded video to HLS (single or multi-quality).
-    Replaces the old threading.Thread approach.
-    On completion, triggers auto-caption generation if enabled.
+    Convert uploaded video to HLS (single or multi-quality) + extract thumbnail.
+    Always runs regardless of skip_ai.
+
+    skip_ai=False (default): also triggers Whisper captions + frame analysis afterwards.
+    skip_ai=True: HLS + thumbnail only — used for live stream recordings when
+                  LIVE_STREAM_AUTO_PROCESS=false. Editor triggers AI manually later.
     """
     from .services import process_video
     try:
         process_video(video_id)
-        # Trigger caption generation if enabled
-        if getattr(settings, 'AUTO_CAPTION_ON_UPLOAD', True):
-            generate_captions_task.apply_async(
-                args=[video_id],
-                queue='captions',
-                countdown=5,
-            )
-        # Trigger frame analysis (object detection) if enabled
-        if getattr(settings, 'FRAME_ANALYSIS_ENABLED', True):
-            analyze_video_frames_task.apply_async(
-                args=[video_id],
-                queue='processing',
-                countdown=10,
-            )
-        # Trigger seek thumbnail sprite generation if enabled
+
+        if not skip_ai:
+            # Trigger caption generation if enabled
+            if getattr(settings, 'AUTO_CAPTION_ON_UPLOAD', True):
+                generate_captions_task.apply_async(
+                    args=[video_id],
+                    queue='captions',
+                    countdown=5,
+                )
+            # Trigger frame analysis (object detection) if enabled
+            if getattr(settings, 'FRAME_ANALYSIS_ENABLED', True):
+                analyze_video_frames_task.apply_async(
+                    args=[video_id],
+                    queue='processing',
+                    countdown=10,
+                )
+
+        # Seek thumbnail sprite always runs — it's lightweight and needed for playback UX
         if getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True):
             generate_seek_thumbnails_task.apply_async(
                 args=[video_id],
@@ -3112,3 +3118,126 @@ def detect_audio_events_task(self, video_id: str):
                 os.unlink(tmp_wav.name)
             except Exception:
                 pass
+
+
+# ─── Live Stream Post-Processing ──────────────────────────────────────────────
+
+@shared_task(bind=True, name='videos.tasks.run_live_ffmpeg',
+             queue='live', time_limit=10800)   # 3hr hard cap; task blocks for stream duration
+def run_live_ffmpeg(self, live_stream_id, stream_key):
+    """
+    Runs FFmpeg for the duration of a live stream.
+    Reads RTMP from mediamtx, outputs HLS segments for viewers + records MP4.
+    This task BLOCKS until the stream ends (OBS disconnects → FFmpeg exits naturally).
+    Runs in the dedicated 'live' Celery queue so it never starves other workers.
+    """
+    import os
+    import subprocess
+    from django.conf import settings
+    from .models import LiveStream
+
+    try:
+        live = LiveStream.objects.get(id=live_stream_id)
+    except LiveStream.DoesNotExist:
+        logger.error(f'[live-ffmpeg] LiveStream {live_stream_id} not found')
+        return
+
+    media_dir  = os.path.join(settings.LIVE_MEDIA_ROOT, stream_key)
+    hls_path   = os.path.join(media_dir, 'live.m3u8')
+    seg_pattern = os.path.join(media_dir, 'seg%03d.ts')
+    rec_path   = os.path.join(media_dir, 'recording.mp4')
+    rtmp_url   = f'rtmp://127.0.0.1:1935/live/{stream_key}'
+
+    os.makedirs(media_dir, exist_ok=True)
+
+    cmd = [
+        'ffmpeg', '-i', rtmp_url,
+        # HLS output — adaptive viewer stream
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-g', '60',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-f', 'hls',
+        '-hls_time', '4',
+        '-hls_list_size', '10',
+        '-hls_flags', 'delete_segments+append_list',
+        '-hls_segment_filename', seg_pattern,
+        hls_path,
+        # MP4 recording output — stream-copy, no re-encode
+        '-c:v', 'copy', '-c:a', 'copy',
+        rec_path,
+        '-loglevel', 'warning',
+    ]
+
+    logger.info(f'[live-ffmpeg] Starting FFmpeg for stream_key={stream_key}')
+    proc = subprocess.Popen(cmd)
+    proc.wait()   # blocks here until OBS disconnects → FFmpeg exits
+
+    logger.info(f'[live-ffmpeg] FFmpeg finished for stream_key={stream_key} (exit={proc.returncode})')
+
+
+@shared_task(bind=True, name='videos.tasks.process_livestream_recording',
+             queue='processing', max_retries=1, soft_time_limit=7200, time_limit=7500)
+def process_livestream_recording(self, live_stream_id):
+    """
+    Called after a live stream ends.
+    Creates a Video record from the recording and runs the full AI pipeline.
+    """
+    import os
+    from django.conf import settings
+    from django.utils import timezone
+    from .models import LiveStream, Video
+
+    logger.info(f'[livestream] Starting post-processing for LiveStream id={live_stream_id}')
+
+    try:
+        live = LiveStream.objects.select_related('channel', 'stream_key').get(id=live_stream_id)
+    except LiveStream.DoesNotExist:
+        logger.error(f'[livestream] LiveStream {live_stream_id} not found')
+        return
+
+    recording_abs = os.path.join(settings.MEDIA_ROOT, live.recording_path)
+
+    # Wait up to 30s for FFmpeg to finish writing the recording
+    import time
+    for _ in range(6):
+        if os.path.exists(recording_abs) and os.path.getsize(recording_abs) > 0:
+            break
+        time.sleep(5)
+    else:
+        logger.error(f'[livestream] Recording file not found: {recording_abs}')
+        live.status = LiveStream.STATUS_ENDED
+        live.save(update_fields=['status'])
+        return
+
+    # Create the Video record
+    channel = live.channel
+    title = live.title or f'Live Stream — {live.started_at.strftime("%Y-%m-%d %H:%M")}'
+
+    file_size = os.path.getsize(recording_abs)
+    recording_filename = os.path.basename(recording_abs)
+
+    video = Video(
+        channel=channel,
+        title=title,
+        status=Video.STATUS_PENDING,
+        original_filename=recording_filename,
+        file_size=file_size,
+        uploaded_by=channel.owner.username if channel.owner else 'livestream',
+    )
+    # Set FileField name directly — path relative to MEDIA_ROOT, no file copy needed
+    video.original_file.name = live.recording_path
+    video.save()
+
+    live.video = video
+    live.status = LiveStream.STATUS_READY
+    live.save(update_fields=['video', 'status'])
+
+    auto_process = getattr(settings, 'LIVE_STREAM_AUTO_PROCESS', True)
+
+    if auto_process:
+        logger.info(f'[livestream] Auto-processing ON — queuing full pipeline for Video id={video.id}')
+        process_video_task.delay(str(video.id), skip_ai=False)
+    else:
+        # HLS encoding + thumbnail always run so the video is watchable.
+        # AI (Whisper, YOLO, CLIP, faces, speakers) is skipped — editor triggers manually.
+        logger.info(f'[livestream] Auto-processing OFF — queuing HLS+thumbnail only for Video id={video.id}')
+        process_video_task.delay(str(video.id), skip_ai=True)

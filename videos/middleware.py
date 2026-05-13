@@ -21,6 +21,11 @@ class LoginRequiredMiddleware:
         r'|/static/'
         r'|/admin/'                # Django admin has its own auth
         r'|/__debug__/'            # Django debug toolbar
+        r'|/api/streams/on-publish/'    # mediamtx webhook — internal, has its own secret auth
+        r'|/api/streams/on-unpublish/'  # mediamtx webhook — internal, has its own secret auth
+        r'|/api/channels/[^/]+/live/'  # live status polling — public (shows LIVE badge)
+        r'|/api/streams/'              # live streams list — public
+        r'|/live/\d+/'                 # live watch page — public
         r')'
     )
 

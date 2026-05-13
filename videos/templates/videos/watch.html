@@ -367,6 +367,14 @@
   .video-info { margin-top: 18px; }
   .video-title { font-size: 22px; font-weight: 800; line-height: 1.3; letter-spacing: -0.3px; }
 
+  .watch-was-live-label {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-top: 7px;
+    font-size: 12px; font-weight: 600; color: #dc2626;
+    background: rgba(220,38,38,.08); border: 1px solid rgba(220,38,38,.2);
+    border-radius: 999px; padding: 3px 10px;
+  }
+
   .meta-row {
     display: flex; align-items: center; flex-wrap: wrap;
     gap: 10px; margin-top: 12px;
@@ -989,6 +997,19 @@
     <!-- Info -->
     <div class="video-info">
       <h1 class="video-title" id="watchVideoTitle">{{ video.title }}</h1>
+
+      {% if from_live_stream %}
+      <div class="watch-was-live-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink:0;">
+          <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+          <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/>
+        </svg>
+        Was live {{ from_live_stream.started_at|timesince }} ago
+        {% if from_live_stream.ended_at %}
+        · {{ from_live_stream.started_at|date:"N j, Y" }}
+        {% endif %}
+      </div>
+      {% endif %}
 
       <div class="meta-row">
         <span class="badge badge-{{ video.status }}">

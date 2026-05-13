@@ -1486,3 +1486,69 @@ class ActivityLog(models.Model):
         who = self.actor_username or 'system'
         tgt = f' {self.target_type}#{self.target_id}' if self.target_type else ''
         return f'[{self.timestamp:%Y-%m-%d %H:%M}] {who} {self.action}{tgt}'
+
+
+# ── Live Streaming ────────────────────────────────────────────────────────────
+
+import secrets as _secrets
+
+def _generate_stream_key():
+    """Generate a short, URL-safe stream key like xK9m-p2Qr-7vNt-Lw3Y."""
+    parts = [_secrets.token_urlsafe(4) for _ in range(4)]
+    return '-'.join(parts)
+
+
+class StreamKey(models.Model):
+    """One stream key per channel. The key is what the streamer enters in OBS."""
+    channel    = models.OneToOneField(Channel, on_delete=models.CASCADE, related_name='stream_key')
+    key        = models.CharField(max_length=64, unique=True, default=_generate_stream_key)
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.channel.name} — {self.key}'
+
+    def regenerate(self):
+        self.key = _generate_stream_key()
+        self.save(update_fields=['key'])
+
+
+class LiveStream(models.Model):
+    """Represents one live streaming session from start to finish."""
+    STATUS_LIVE       = 'live'
+    STATUS_ENDED      = 'ended'
+    STATUS_PROCESSING = 'processing'
+    STATUS_READY      = 'ready'
+    STATUS_CHOICES = [
+        (STATUS_LIVE,       'Live'),
+        (STATUS_ENDED,      'Ended'),
+        (STATUS_PROCESSING, 'Processing'),
+        (STATUS_READY,      'Ready'),
+    ]
+
+    channel        = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='live_streams')
+    stream_key     = models.ForeignKey(StreamKey, on_delete=models.SET_NULL, null=True)
+    status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_LIVE)
+    title          = models.CharField(max_length=200, blank=True, default='')
+    started_at     = models.DateTimeField(auto_now_add=True)
+    ended_at       = models.DateTimeField(null=True, blank=True)
+    # Paths relative to MEDIA_ROOT
+    hls_path       = models.CharField(max_length=500, blank=True, default='',
+                                      help_text='Relative path to live.m3u8 inside MEDIA_ROOT')
+    recording_path = models.CharField(max_length=500, blank=True, default='',
+                                      help_text='Relative path to recording.mp4 inside MEDIA_ROOT')
+    # Set once the VOD is fully processed
+    video          = models.OneToOneField(Video, on_delete=models.SET_NULL,
+                                          null=True, blank=True, related_name='from_live_stream')
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f'{self.channel.name} — {self.started_at:%Y-%m-%d %H:%M} ({self.status})'
+
+    @property
+    def duration_seconds(self):
+        if self.ended_at and self.started_at:
+            return int((self.ended_at - self.started_at).total_seconds())
+        return None
