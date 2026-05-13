@@ -484,6 +484,55 @@ def setup_channel_page(request):
     })
 
 
+# ─── Account / profile ───────────────────────────────────────────────────────
+
+@login_required
+def account_page(request):
+    from django.contrib.auth import update_session_auth_hash
+
+    success_msg = None
+    error_msg   = None
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'profile':
+            email      = request.POST.get('email', '').strip()
+            first_name = request.POST.get('first_name', '').strip()
+            last_name  = request.POST.get('last_name', '').strip()
+            if email and '@' not in email:
+                error_msg = 'Please enter a valid email address.'
+            else:
+                request.user.email      = email
+                request.user.first_name = first_name
+                request.user.last_name  = last_name
+                request.user.save(update_fields=['email', 'first_name', 'last_name'])
+                success_msg = 'Profile updated.'
+
+        elif action == 'password':
+            current = request.POST.get('current_password', '')
+            new1    = request.POST.get('new_password1', '')
+            new2    = request.POST.get('new_password2', '')
+            if not request.user.check_password(current):
+                error_msg = 'Current password is incorrect.'
+            elif not new1:
+                error_msg = 'New password cannot be empty.'
+            elif new1 != new2:
+                error_msg = 'New passwords do not match.'
+            elif len(new1) < 8:
+                error_msg = 'Password must be at least 8 characters.'
+            else:
+                request.user.set_password(new1)
+                request.user.save()
+                update_session_auth_hash(request, request.user)   # keep user logged in
+                success_msg = 'Password changed successfully.'
+
+    return render(request, 'videos/account.html', {
+        'success_msg': success_msg,
+        'error_msg':   error_msg,
+    })
+
+
 # ─── Frontend pages ──────────────────────────────────────────────────────────
 
 @editor_required

@@ -106,14 +106,13 @@
           </div>
         </td>
         <td class="hide-sm">
-          {% with ch=u.channels.first %}
-          {% if ch %}
-          <a href="{% url 'channel' ch.slug %}" style="color:var(--accent);font-weight:600;">{{ ch.name }}</a>
-          <span style="font-size:11px;color:var(--text-muted);display:block;">{{ ch.videos.count }} videos</span>
+          {% if u.channels.all %}
+            {% for ch in u.channels.all %}
+            <a href="{% url 'channel' ch.slug %}" style="color:var(--accent);font-weight:600;display:block;line-height:1.8;">{{ ch.name }}</a>
+            {% endfor %}
           {% else %}
           <span style="color:var(--text-subtle);">—</span>
           {% endif %}
-          {% endwith %}
         </td>
         <td>
           {% with role=u.profile.role %}

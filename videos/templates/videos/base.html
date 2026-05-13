@@ -196,12 +196,15 @@
     .fs-nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
     .fs-nav a svg { width: 16px; height: 16px; }
 
-    /* User pill */
+    /* User pill + dropdown */
     .user-pill {
+      position: relative;
       display: flex; align-items: center; gap: 8px;
       background: var(--surface-2); border: 1px solid var(--border-2);
       border-radius: 999px; padding: 4px 10px 4px 4px; flex-shrink: 0;
+      cursor: pointer; user-select: none;
     }
+    .user-pill:hover { border-color: var(--accent); }
     .user-avatar {
       width: 28px; height: 28px; border-radius: 50%;
       background: var(--accent); color: #fff;
@@ -216,6 +219,33 @@
     }
     .logout-btn:hover { color: #ef4444; }
     .logout-btn svg { width: 15px; height: 15px; }
+
+    /* User dropdown */
+    .user-dropdown {
+      display: none;
+      position: absolute; top: calc(100% + 8px); right: 0;
+      background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      min-width: 170px; z-index: 200; overflow: hidden;
+    }
+    .user-pill.open .user-dropdown { display: block; }
+    .user-dropdown-info {
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .user-dropdown-info .udd-name { font-weight: 700; font-size: 13px; }
+    .user-dropdown-info .udd-role { color: var(--text-subtle); margin-top: 1px; }
+    .user-dropdown a {
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 14px; font-size: 13px; color: var(--text-muted);
+      text-decoration: none; transition: background var(--transition);
+    }
+    .user-dropdown a:hover { background: var(--surface-2); color: var(--text); }
+    .user-dropdown a svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .user-dropdown .udd-divider { height: 1px; background: var(--border); margin: 4px 0; }
+    .user-dropdown a.udd-danger { color: #ef4444; }
+    .user-dropdown a.udd-danger:hover { background: var(--red-bg); }
 
     /* Theme toggle */
     .theme-toggle {
@@ -575,15 +605,25 @@
     </svg>
     {% if unread_count %}<span style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:10px;font-weight:700;border-radius:999px;padding:1px 5px;min-width:16px;text-align:center;">{{ unread_count }}</span>{% endif %}
   </a>
-  <div class="user-pill">
+  <div class="user-pill" id="userPill" onclick="toggleUserMenu(event)">
     <div class="user-avatar">{{ user.username|first|upper }}</div>
     <span class="user-name hide-mobile">{{ user.username }}</span>
-    <a href="{% url 'logout' %}" class="logout-btn" title="Sign out">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-        <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-      </svg>
-    </a>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" style="color:var(--text-subtle);margin-left:-2px;"><polyline points="6 9 12 15 18 9"/></svg>
+    <div class="user-dropdown" id="userDropdown">
+      <div class="user-dropdown-info">
+        <div class="udd-name">{{ user.username }}</div>
+        <div class="udd-role">{{ user.profile.get_role_display }}</div>
+      </div>
+      <a href="{% url 'account' %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        My Account
+      </a>
+      <div class="udd-divider"></div>
+      <a href="{% url 'logout' %}" class="udd-danger">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </a>
+    </div>
   </div>
   {% else %}
   <div style="display:flex;gap:8px;flex-shrink:0;">
@@ -778,6 +818,16 @@
 
     input.addEventListener('blur', () => setTimeout(closeSuggest, 150));
   })();
+
+  // User menu dropdown
+  function toggleUserMenu(e) {
+    e.stopPropagation();
+    document.getElementById('userPill').classList.toggle('open');
+  }
+  document.addEventListener('click', function(e) {
+    const pill = document.getElementById('userPill');
+    if (pill && !pill.contains(e.target)) pill.classList.remove('open');
+  });
 </script>
 {% block extra_scripts %}{% endblock %}
 <script>

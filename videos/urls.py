@@ -14,6 +14,7 @@ urlpatterns = [
     path('playlists/',     views.playlists_page,      name='playlists'),
     path('moments/',       views.moments_page,        name='moments'),
     path('notifications/', views.notifications_page,  name='notifications'),
+    path('account/',      views.account_page,         name='account'),
     path('admin-panel/',             views.user_management_page,    name='user_management'),
     path('admin-panel/categories/',  views.categories_manage_page,  name='categories_manage'),
     path('admin-panel/commands/',    views.admin_commands_page,     name='admin_commands'),
