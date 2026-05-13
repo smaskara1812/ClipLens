@@ -3151,20 +3151,24 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
     os.makedirs(media_dir, exist_ok=True)
 
     cmd = [
-        'ffmpeg', '-i', rtmp_url,
-        # HLS output — adaptive viewer stream
-        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-g', '60',
-        '-c:a', 'aac', '-b:a', '128k',
+        'ffmpeg',
+        '-loglevel', 'warning',           # global — must come before -i
+        '-i', rtmp_url,
+        # ── HLS output — live viewer stream ──────────────────────────────
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+        '-g', '48', '-keyint_min', '48',  # keyframe every 2s (matches segment duration)
+        '-sc_threshold', '0',             # no scene-cut keyframes — keeps segments clean
+        '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
         '-f', 'hls',
-        '-hls_time', '4',
-        '-hls_list_size', '10',
-        '-hls_flags', 'delete_segments+append_list',
+        '-hls_time', '2',                 # 2-second segments — lower live latency
+        '-hls_list_size', '5',            # keep last 5 segments (~10s) in playlist
+        '-hls_flags', 'delete_segments+append_list+independent_segments',
         '-hls_segment_filename', seg_pattern,
         hls_path,
-        # MP4 recording output — stream-copy, no re-encode
+        # ── MP4 recording output — stream-copy for zero CPU overhead ─────
         '-c:v', 'copy', '-c:a', 'copy',
+        '-movflags', '+faststart',        # write moov atom at start → correct duration + seekable
         rec_path,
-        '-loglevel', 'warning',
     ]
 
     logger.info(f'[live-ffmpeg] Starting FFmpeg for stream_key={stream_key}')
