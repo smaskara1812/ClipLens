@@ -497,7 +497,7 @@ def generate_video_summary_task(self, video_id: str):
     segments = (
         VideoSegment.objects
         .filter(video=video)
-        .order_by('start_time')
+        .order_by('start_seconds')
         .values_list('text', flat=True)
     )
     transcript_words = []
