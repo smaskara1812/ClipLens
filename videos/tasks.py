@@ -3154,7 +3154,7 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
     cmd = [
         'ffmpeg', '-y',                   # overwrite outputs without prompting
         '-loglevel', 'warning',           # global — must come before -i
-        '-fflags', '+genpts',                 # regenerate PTS from DTS for reordered RTMP frames
+        '-use_wallclock_as_timestamps', '1',  # anchor frame timing to wall clock, not RTMP DTS
         '-i', rtmp_url,
         # ── HLS output — live viewer stream ──────────────────────────────
         '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
