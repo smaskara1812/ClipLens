@@ -121,14 +121,6 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
                 countdown=15,
             )
 
-        # AI summary via Ollama — runs last, after captions + frames are likely done
-        if not skip_ai and getattr(settings, 'USE_OLLAMA', False):
-            generate_video_summary_task.apply_async(
-                args=[video_id],
-                queue='default',
-                countdown=300,   # 5 min head-start so captions/frames finish first
-            )
-
     except Exception as exc:
         logger.error(f'process_video_task failed for {video_id}: {exc}')
         raise self.retry(exc=exc)
