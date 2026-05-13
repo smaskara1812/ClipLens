@@ -3161,7 +3161,7 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
         '-force_key_frames', 'expr:gte(t,n_forced*2)',
         '-sc_threshold', '0',
         '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
-        '-vsync', '0',                    # passthrough — never duplicate frames to fill gaps
+        '-fps_mode', 'passthrough',       # never duplicate frames to fill gaps
         '-f', 'hls',
         '-hls_time', '2',
         '-hls_list_size', '5',
@@ -3171,7 +3171,7 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
         # ── MP4 recording output ──────────────────────────────────────────
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-c:a', 'aac', '-b:a', '128k',
-        '-vsync', '0',                    # passthrough — never duplicate frames
+        '-fps_mode', 'passthrough',       # never duplicate frames
         '-movflags', '+faststart',
         rec_path,
     ]

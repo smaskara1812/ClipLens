@@ -172,8 +172,8 @@
     if (Hls.isSupported()) {
       if (hlsInstance) { hlsInstance.destroy(); }
       const hls = new Hls({
-        liveSyncDurationCount:      3,
-        liveMaxLatencyDurationCount: 8,
+        liveSyncDurationCount:      2,    // target 4s behind live (2 × 2s segments)
+        liveMaxLatencyDurationCount: 5,   // if >10s behind, snap forward to catch up
         // Retry manifest loads — handles the startup gap where FFmpeg hasn't
         // written the first .m3u8 yet (takes ~2-4s after OBS connects)
         manifestLoadingTimeOut:     10000,
