@@ -1,0 +1,16 @@
+# 1 — Django
+source venv/bin/activate && python manage.py runserver
+
+# 2 — mediamtx (RTMP server)
+cd ~/Desktop/Freestream && ./mediamtx
+
+# 3 — Main Celery worker
+source venv/bin/activate
+celery -A cliplens worker -l info -Q processing,captions,default -n main@%h
+
+# 4 — Live Celery worker (one per simultaneous stream)
+source venv/bin/activate
+celery -A cliplens worker -l info -Q live -n live@%h --concurrency=5
+
+# 5 Flower
+source venv/bin/activate && celery -A cliplens flower --port=5556 --basic_auth="admin:password"
