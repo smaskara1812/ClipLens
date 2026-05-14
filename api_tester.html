@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipLens API Tester</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0f1117;
+    --surface:   #181c27;
+    --surface2:  #1e2335;
+    --border:    #2a2f42;
+    --accent:    #6366f1;
+    --accent-hi: #818cf8;
+    --text:      #e2e8f0;
+    --muted:     #8892a4;
+    --green:     #34d399;
+    --red:       #f87171;
+    --yellow:    #fbbf24;
+    --radius:    10px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  .app { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1rem; padding-bottom: 4px; }
+  .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .logo small { font-weight: 400; color: var(--muted); font-size: 0.78rem; }
+
+  .field-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; margin-bottom: 5px; }
+  input[type=text], input[type=password], textarea, select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.85rem;
+    padding: 8px 10px;
+    outline: none;
+    font-family: inherit;
+    transition: border-color .15s;
+  }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+  textarea { resize: vertical; font-family: monospace; }
+  .toggle-btn {
+    position: absolute; right: 10px; top: 50%;
+    transform: translateY(-50%);
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: .8rem;
+  }
+  .input-wrap { position: relative; }
+
+  .sep { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+  /* endpoint list */
+  .endpoint-section { font-size: 0.72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+  .ep-btn {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 8px 10px;
+    background: none; border: 1px solid transparent;
+    border-radius: 7px; color: var(--text); cursor: pointer; text-align: left; font-size: 0.83rem;
+    transition: all .12s;
+  }
+  .ep-btn:hover { background: var(--surface2); }
+  .ep-btn.active { background: rgba(99,102,241,.15); border-color: rgba(99,102,241,.4); color: var(--accent-hi); }
+  .method-badge {
+    font-size: 0.65rem; font-weight: 800; font-family: monospace;
+    padding: 2px 5px; border-radius: 4px; flex-shrink: 0;
+  }
+  .GET    { background: rgba(52,211,153,.15); color: #34d399; }
+  .POST   { background: rgba(251,191,36,.15);  color: #fbbf24; }
+
+  /* ── Main panel ── */
+  .main { display: flex; flex-direction: column; overflow: hidden; }
+
+  .top-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-wrap: wrap;
+  }
+  .method-pill {
+    font-size: 0.75rem; font-weight: 800; font-family: monospace;
+    padding: 4px 10px; border-radius: 6px; flex-shrink: 0;
+  }
+  .url-display {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-family: monospace;
+    font-size: 0.82rem;
+    color: var(--muted);
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .url-display span { color: var(--text); }
+  .send-btn {
+    padding: 8px 20px;
+    background: var(--accent);
+    border: none; border-radius: 8px;
+    color: #fff; font-weight: 700; font-size: 0.85rem;
+    cursor: pointer; transition: background .15s; flex-shrink: 0;
+  }
+  .send-btn:hover { background: var(--accent-hi); }
+  .send-btn:disabled { background: var(--surface2); color: var(--muted); cursor: default; }
+
+  .panels { display: grid; grid-template-rows: auto 1fr; flex: 1; overflow: hidden; }
+
+  /* params / body area */
+  .params-area {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .param-row { display: grid; grid-template-columns: 140px 1fr; gap: 8px; align-items: center; }
+  .param-row label { font-size: 0.8rem; color: var(--muted); }
+
+  /* file upload */
+  .file-label {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border); border-radius: 8px;
+    cursor: pointer; font-size: 0.82rem; color: var(--muted);
+    transition: border-color .15s;
+  }
+  .file-label:hover { border-color: var(--accent); color: var(--text); }
+  .file-label input { display: none; }
+  #fileNameDisplay { font-size: 0.78rem; color: var(--green); margin-top: 4px; }
+
+  /* response area */
+  .response-area { overflow: hidden; display: flex; flex-direction: column; }
+  .res-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    background: var(--surface2);
+  }
+  .status-badge {
+    padding: 3px 10px; border-radius: 99px;
+    font-weight: 700; font-size: 0.78rem;
+  }
+  .status-2xx { background: rgba(52,211,153,.15); color: #34d399; }
+  .status-4xx { background: rgba(248,113,113,.15); color: #f87171; }
+  .status-5xx { background: rgba(251,191,36,.15);  color: #fbbf24; }
+  .status-0   { background: var(--surface2); color: var(--muted); }
+  .res-time   { color: var(--muted); margin-left: auto; }
+
+  .res-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
+  .res-tab {
+    padding: 8px 16px; font-size: 0.8rem; color: var(--muted);
+    border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent;
+    transition: all .12s;
+  }
+  .res-tab.active { color: var(--accent-hi); border-bottom-color: var(--accent); }
+
+  .res-body {
+    flex: 1; overflow: auto;
+    padding: 16px 20px;
+    font-family: monospace; font-size: 0.82rem; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .res-placeholder { color: var(--muted); font-style: italic; font-family: inherit; font-size: 0.88rem; }
+
+  /* JSON syntax highlighting */
+  .json-key    { color: #93c5fd; }
+  .json-str    { color: #86efac; }
+  .json-num    { color: #fca5a5; }
+  .json-bool   { color: #fdba74; }
+  .json-null   { color: var(--muted); }
+
+  .tag { background: rgba(99,102,241,.12); color: var(--accent-hi); padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <div class="logo">
+      <div class="logo-dot"></div>
+      ClipLens
+      <small>API Tester</small>
+    </div>
+
+    <div>
+      <div class="field-label">Base URL</div>
+      <input type="text" id="baseUrl" value="http://localhost:8000" spellcheck="false">
+    </div>
+
+    <div>
+      <div class="field-label">API Key</div>
+      <div class="input-wrap">
+        <input type="password" id="apiKey" placeholder="cliplens_…" spellcheck="false" id="apiKeyField">
+        <button class="toggle-btn" onclick="toggleKeyVis()" title="Show/hide">👁</button>
+      </div>
+    </div>
+
+    <hr class="sep">
+
+    <div>
+      <div class="endpoint-section">Search</div>
+      <button class="ep-btn active" data-id="search" onclick="selectEndpoint(this)">
+        <span class="method-badge GET">GET</span> /api/v1/search/
+      </button>
+    </div>
+
+    <div>
+      <div class="endpoint-section">Videos</div>
+      <button class="ep-btn" data-id="video_detail" onclick="selectEndpoint(this)">
+        <span class="method-badge GET">GET</span> Video detail
+      </button>
+      <button class="ep-btn" data-id="video_transcript" onclick="selectEndpoint(this)">
+        <span class="method-badge GET">GET</span> Transcript
+      </button>
+      <button class="ep-btn" data-id="video_chapters" onclick="selectEndpoint(this)">
+        <span class="method-badge GET">GET</span> Chapters
+      </button>
+      <button class="ep-btn" data-id="video_upload" onclick="selectEndpoint(this)">
+        <span class="method-badge POST">POST</span> Upload video
+      </button>
+    </div>
+
+  </aside>
+
+  <!-- ── Main panel ─────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- top bar -->
+    <div class="top-bar">
+      <span class="method-pill GET" id="topMethod">GET</span>
+      <div class="url-display" id="topUrl"><span>…</span></div>
+      <button class="send-btn" id="sendBtn" onclick="sendRequest()">Send</button>
+    </div>
+
+    <!-- params / body -->
+    <div class="params-area" id="paramsArea">
+      <!-- filled by renderParams() -->
+    </div>
+
+    <!-- response -->
+    <div class="response-area">
+      <div class="res-header" id="resHeader">
+        <span class="status-badge status-0" id="statusBadge">—</span>
+        <span id="resDesc" style="color:var(--muted)">Hit Send to make a request</span>
+        <span class="res-time" id="resTime"></span>
+      </div>
+      <div class="res-tabs">
+        <button class="res-tab active" onclick="showTab('body',this)">Body</button>
+        <button class="res-tab" onclick="showTab('raw',this)">Raw</button>
+      </div>
+      <div class="res-body" id="resBodyPretty"><span class="res-placeholder">Response will appear here.</span></div>
+      <div class="res-body" id="resBodyRaw" style="display:none"><span class="res-placeholder">Response will appear here.</span></div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+// ── Endpoint definitions ──────────────────────────────────────────────────
+const ENDPOINTS = {
+  search: {
+    method: 'GET',
+    path: '/api/v1/search/',
+    params: [
+      { name: 'q',      label: 'Query (q)',   type: 'text',   required: true,  placeholder: 'e.g. safety briefing' },
+      { name: 'limit',  label: 'Limit',       type: 'text',   required: false, placeholder: '20' },
+      { name: 'offset', label: 'Offset',      type: 'text',   required: false, placeholder: '0' },
+    ],
+  },
+  video_detail: {
+    method: 'GET',
+    path: '/api/v1/videos/{video_id}/',
+    params: [
+      { name: 'video_id', label: 'Video UUID', type: 'text', required: true, placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+    ],
+  },
+  video_transcript: {
+    method: 'GET',
+    path: '/api/v1/videos/{video_id}/transcript/',
+    params: [
+      { name: 'video_id', label: 'Video UUID',  type: 'text', required: true,  placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+      { name: 'format',   label: 'Format',      type: 'select', required: false, options: ['json', 'vtt'], placeholder: 'json' },
+    ],
+  },
+  video_chapters: {
+    method: 'GET',
+    path: '/api/v1/videos/{video_id}/chapters/',
+    params: [
+      { name: 'video_id', label: 'Video UUID', type: 'text', required: true, placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+    ],
+  },
+  video_upload: {
+    method: 'POST',
+    path: '/api/v1/videos/upload/',
+    params: [
+      { name: 'title',       label: 'Title',       type: 'text',     required: true,  placeholder: 'My Video' },
+      { name: 'channel_id',  label: 'Channel UUID', type: 'text',    required: true,  placeholder: 'xxxxxxxx-xxxx-…' },
+      { name: 'description', label: 'Description', type: 'text',     required: false, placeholder: 'Optional' },
+      { name: 'tags',        label: 'Tags',         type: 'text',    required: false, placeholder: 'comma,separated' },
+      { name: 'visibility',  label: 'Visibility',  type: 'select',   required: false, options: ['private','public','unlisted'] },
+      { name: '_file',       label: 'Video file',  type: 'file',     required: true  },
+    ],
+  },
+};
+
+let currentId  = 'search';
+let rawResponse = '';
+
+// ── Select endpoint ───────────────────────────────────────────────────────
+function selectEndpoint(btn) {
+  document.querySelectorAll('.ep-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentId = btn.dataset.id;
+  renderParams();
+}
+
+function renderParams() {
+  const ep     = ENDPOINTS[currentId];
+  const area   = document.getElementById('paramsArea');
+  const topUrl = document.getElementById('topUrl');
+  const topM   = document.getElementById('topMethod');
+
+  topM.textContent  = ep.method;
+  topM.className    = `method-pill ${ep.method}`;
+  topUrl.innerHTML  = `<span>${ep.path}</span>`;
+
+  let html = '';
+
+  if (ep.params.length === 0) {
+    area.innerHTML = '<div style="color:var(--muted);font-size:.85rem;">No parameters for this endpoint.</div>';
+    return;
+  }
+
+  html += '<div class="params-grid">';
+  ep.params.forEach(p => {
+    if (p.type === 'file') return; // handled separately
+    html += '<div class="param-row">';
+    html += `<label for="p_${p.name}">${p.label}${p.required ? ' <span style="color:var(--red)">*</span>' : ''}</label>`;
+    if (p.type === 'select') {
+      html += `<select id="p_${p.name}">`;
+      (p.options || []).forEach(o => html += `<option value="${o}">${o}</option>`);
+      html += `</select>`;
+    } else {
+      html += `<input type="text" id="p_${p.name}" placeholder="${p.placeholder || ''}" autocomplete="off" spellcheck="false">`;
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // File upload for POST upload endpoint
+  const filePart = ep.params.find(p => p.type === 'file');
+  if (filePart) {
+    html += `
+      <div>
+        <label class="file-label" for="p__file">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Choose video file
+          <input type="file" id="p__file" accept="video/*" onchange="showFileName(this)">
+        </label>
+        <div id="fileNameDisplay"></div>
+      </div>`;
+  }
+
+  area.innerHTML = html;
+  updateUrlDisplay();
+
+  // Live update URL as user types
+  area.querySelectorAll('input, select').forEach(el => {
+    el.addEventListener('input', updateUrlDisplay);
+  });
+}
+
+function showFileName(input) {
+  const d = document.getElementById('fileNameDisplay');
+  d.textContent = input.files[0] ? '📎 ' + input.files[0].name : '';
+}
+
+function updateUrlDisplay() {
+  const ep     = ENDPOINTS[currentId];
+  const base   = document.getElementById('baseUrl').value.replace(/\/$/, '');
+  let path     = ep.path;
+
+  // Replace path params
+  const videoId = document.getElementById('p_video_id')?.value?.trim();
+  if (videoId) path = path.replace('{video_id}', videoId);
+
+  // Build query string for GET
+  if (ep.method === 'GET') {
+    const qs = [];
+    ep.params.forEach(p => {
+      if (p.name === 'video_id') return;
+      const val = document.getElementById('p_' + p.name)?.value?.trim();
+      if (val) qs.push(`${p.name}=${encodeURIComponent(val)}`);
+    });
+    if (qs.length) path += '?' + qs.join('&');
+  }
+
+  const full = base + path;
+  document.getElementById('topUrl').innerHTML = `<span title="${full}">${full}</span>`;
+}
+
+// ── Send request ──────────────────────────────────────────────────────────
+async function sendRequest() {
+  const ep      = ENDPOINTS[currentId];
+  const base    = document.getElementById('baseUrl').value.replace(/\/$/, '');
+  const apiKey  = document.getElementById('apiKey').value.trim();
+  const sendBtn = document.getElementById('sendBtn');
+
+  let path = ep.path;
+  const videoId = document.getElementById('p_video_id')?.value?.trim();
+  if (videoId) path = path.replace('{video_id}', videoId);
+
+  let url = base + path;
+
+  const headers = {};
+  if (apiKey) headers['X-API-Key'] = apiKey;
+
+  let body = undefined;
+
+  if (ep.method === 'GET') {
+    const qs = [];
+    ep.params.forEach(p => {
+      if (p.name === 'video_id') return;
+      const val = document.getElementById('p_' + p.name)?.value?.trim();
+      if (val) qs.push(`${p.name}=${encodeURIComponent(val)}`);
+    });
+    if (qs.length) url += '?' + qs.join('&');
+  } else if (ep.method === 'POST') {
+    const fd = new FormData();
+    ep.params.forEach(p => {
+      if (p.type === 'file') {
+        const fileInput = document.getElementById('p__file');
+        if (fileInput?.files[0]) fd.append('file', fileInput.files[0]);
+        return;
+      }
+      const val = document.getElementById('p_' + p.name)?.value?.trim();
+      if (val) fd.append(p.name, val);
+    });
+    body = fd;
+  }
+
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Sending…';
+  setStatus(0, 'Waiting…', '');
+
+  const t0 = performance.now();
+  try {
+    const resp = await fetch(url, { method: ep.method, headers, body });
+    const ms   = Math.round(performance.now() - t0);
+    const text = await resp.text();
+    rawResponse = text;
+    displayResponse(resp.status, ms, text);
+  } catch (err) {
+    rawResponse = err.toString();
+    setStatus(0, 'Network error', '');
+    document.getElementById('resBodyPretty').innerHTML = `<span style="color:var(--red)">${escHtml(err.toString())}</span>`;
+    document.getElementById('resBodyRaw').textContent = err.toString();
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+  }
+}
+
+function displayResponse(status, ms, text) {
+  const cls = status >= 500 ? 'status-5xx' : status >= 400 ? 'status-4xx' : 'status-2xx';
+  setStatus(status, `HTTP ${status}`, `${ms} ms`, cls);
+
+  // Pretty body
+  let pretty = '';
+  try {
+    const obj = JSON.parse(text);
+    pretty = syntaxHighlight(JSON.stringify(obj, null, 2));
+  } catch {
+    // could be VTT or plain text
+    pretty = `<span style="color:var(--muted)">${escHtml(text)}</span>`;
+  }
+  document.getElementById('resBodyPretty').innerHTML = pretty;
+  document.getElementById('resBodyRaw').textContent  = text;
+}
+
+function setStatus(code, label, time, cls = 'status-0') {
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = label;
+  badge.className   = `status-badge ${cls}`;
+  document.getElementById('resTime').textContent = time;
+  document.getElementById('resDesc').textContent = code ? '' : label;
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+function showTab(tab, btn) {
+  document.querySelectorAll('.res-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('resBodyPretty').style.display = tab === 'body' ? '' : 'none';
+  document.getElementById('resBodyRaw').style.display    = tab === 'raw'  ? '' : 'none';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function toggleKeyVis() {
+  const f = document.getElementById('apiKey');
+  f.type = f.type === 'password' ? 'text' : 'password';
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function syntaxHighlight(json) {
+  json = escHtml(json);
+  return json.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    match => {
+      let cls = 'json-num';
+      if (/^"/.test(match)) {
+        cls = /:$/.test(match) ? 'json-key' : 'json-str';
+      } else if (/true|false/.test(match)) {
+        cls = 'json-bool';
+      } else if (/null/.test(match)) {
+        cls = 'json-null';
+      }
+      return `<span class="${cls}">${match}</span>`;
+    }
+  );
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+renderParams();
+document.getElementById('baseUrl').addEventListener('input', updateUrlDisplay);
+</script>
+</body>
+</html>
