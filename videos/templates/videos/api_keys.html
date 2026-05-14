@@ -1,0 +1,608 @@
+{% extends "videos/base.html" %}
+{% load static %}
+
+{% block title %}API Keys — ClipLens{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── Page layout ─────────────────────────────────────────────────────── */
+  .ak-wrap {
+    max-width: 860px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  .ak-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .ak-header h1 { font-size: 1.5rem; font-weight: 800; margin: 0 0 4px; }
+  .ak-header p  { color: var(--text-muted); font-size: 0.88rem; margin: 0; }
+
+  /* ── Card ────────────────────────────────────────────────────────────── */
+  .ak-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .ak-card-head {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ── Key table ───────────────────────────────────────────────────────── */
+  .ak-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  .ak-table th {
+    padding: 10px 16px;
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    background: var(--surface-alt, var(--bg));
+    border-bottom: 1px solid var(--border);
+  }
+  .ak-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .ak-table tr:last-child td { border-bottom: none; }
+  .ak-table tr:hover td { background: var(--surface-hover, rgba(255,255,255,.03)); }
+
+  .ak-name    { font-weight: 600; }
+  .ak-prefix  { font-family: monospace; font-size: 0.82rem; color: var(--text-muted); }
+  .ak-status-active   { color: #34d399; font-size: 0.78rem; font-weight: 600; }
+  .ak-status-revoked  { color: var(--text-muted); font-size: 0.78rem; }
+  .ak-perms   { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ak-perm-badge {
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: rgba(99,179,237,.15);
+    color: #63b3ed;
+    white-space: nowrap;
+  }
+  .ak-perm-badge.upload { background: rgba(52,211,153,.12); color: #34d399; }
+
+  .ak-actions { display: flex; gap: 6px; }
+  .ak-btn-revoke {
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: .15s;
+  }
+  .ak-btn-revoke:hover { border-color: #f87171; color: #f87171; }
+  .ak-btn-delete {
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: .15s;
+  }
+  .ak-btn-delete:hover { border-color: #f87171; color: #f87171; background: rgba(248,113,113,.08); }
+
+  .ak-empty {
+    padding: 2rem 1.25rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+  }
+
+  /* ── Create form ─────────────────────────────────────────────────────── */
+  .ak-form { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+  .ak-form label { display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 5px; color: var(--text-subtle, var(--text-muted)); }
+  .ak-form input[type=text],
+  .ak-form input[type=datetime-local] {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.88rem;
+    box-sizing: border-box;
+  }
+  .ak-form input:focus { outline: none; border-color: var(--accent); }
+
+  .ak-perm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+  }
+  .ak-perm-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    transition: border-color .15s;
+  }
+  .ak-perm-row:has(input:checked) { border-color: var(--accent); }
+  .ak-perm-row label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+  }
+  .ak-perm-row label input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .ak-perm-desc { font-size: 0.75rem; color: var(--text-muted); padding-left: 23px; }
+  .ak-scope-field {
+    display: none;
+    margin-top: 6px;
+  }
+  .ak-scope-field.visible { display: block; }
+  .ak-scope-field input {
+    width: 100%;
+    padding: 5px 10px;
+    font-size: 0.78rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    box-sizing: border-box;
+  }
+  .ak-scope-field input::placeholder { color: var(--text-muted); }
+
+  .ak-form-footer { display: flex; justify-content: flex-end; }
+
+  /* ── Reveal modal ────────────────────────────────────────────────────── */
+  .ak-modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.7);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+  }
+  .ak-modal-overlay.open { display: flex; }
+  .ak-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    max-width: 560px;
+    width: 90%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .ak-modal h2 { font-size: 1.1rem; font-weight: 700; margin: 0; }
+  .ak-modal p  { color: var(--text-muted); font-size: 0.875rem; margin: 0; }
+  .ak-modal .ak-raw-key {
+    font-family: monospace;
+    font-size: 0.88rem;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    word-break: break-all;
+    user-select: all;
+    color: #34d399;
+  }
+  .ak-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ── Docs section ────────────────────────────────────────────────────── */
+  .ak-docs { padding: 1.25rem; display: flex; flex-direction: column; gap: .75rem; font-size: 0.875rem; }
+  .ak-docs h3 { font-size: 0.9rem; font-weight: 700; margin: 0; }
+  .ak-docs p  { color: var(--text-muted); margin: 0; line-height: 1.6; }
+  .ak-code-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .ak-endpoint-table { border-collapse: collapse; width: 100%; }
+  .ak-endpoint-table th, .ak-endpoint-table td {
+    padding: 7px 10px;
+    text-align: left;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .ak-endpoint-table th { color: var(--text-muted); font-weight: 600; }
+  .ak-method { font-weight: 700; font-family: monospace; color: var(--accent); }
+  .ak-path   { font-family: monospace; font-size: 0.78rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ak-wrap">
+
+  <!-- Header -->
+  <div class="ak-header">
+    <div>
+      <h1>API Keys</h1>
+      <p>Create keys to let external systems search your library, read video data, or upload content.</p>
+    </div>
+  </div>
+
+  <!-- ── Existing keys ─────────────────────────────────────────────────── -->
+  <div class="ak-card">
+    <div class="ak-card-head">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+      </svg>
+      Your Keys
+    </div>
+
+    {% if api_keys %}
+    <table class="ak-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Prefix</th>
+          <th>Permissions</th>
+          <th>Last used</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for key in api_keys %}
+        <tr id="key-row-{{ key.id }}">
+          <td class="ak-name">{{ key.name }}</td>
+          <td class="ak-prefix">{{ key.key_prefix }}…</td>
+          <td>
+            <div class="ak-perms">
+              {% for perm in key.permissions.all %}
+              <span class="ak-perm-badge {% if 'upload' in perm.permission %}upload{% endif %}">
+                {{ perm.permission }}{% if perm.scope_name %} → {{ perm.scope_name }}{% endif %}
+              </span>
+              {% endfor %}
+            </div>
+          </td>
+          <td style="color:var(--text-muted);font-size:.8rem;">
+            {% if key.last_used_at %}{{ key.last_used_at|date:"M j, Y" }}{% else %}Never{% endif %}
+          </td>
+          <td>
+            {% if key.is_active %}
+            <span class="ak-status-active">● Active</span>
+            {% else %}
+            <span class="ak-status-revoked">Revoked</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="ak-actions">
+              {% if key.is_active %}
+              <button class="ak-btn-revoke" onclick="revokeKey('{{ key.id }}')">Revoke</button>
+              {% endif %}
+              <button class="ak-btn-delete" onclick="deleteKey('{{ key.id }}')">Delete</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="ak-empty">No API keys yet. Create one below.</div>
+    {% endif %}
+  </div>
+
+  <!-- ── Create new key ─────────────────────────────────────────────────── -->
+  <div class="ak-card">
+    <div class="ak-card-head">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      Create New Key
+    </div>
+
+    <form class="ak-form" id="createKeyForm" onsubmit="return createKey(event)">
+      {% csrf_token %}
+
+      <div>
+        <label for="keyName">Key Name</label>
+        <input type="text" id="keyName" name="name" placeholder="e.g. LMS Integration" required autocomplete="off">
+      </div>
+
+      <div>
+        <label>Permissions</label>
+        <div class="ak-perm-grid">
+
+          <!-- search:global -->
+          <div class="ak-perm-row">
+            <label>
+              <input type="checkbox" name="perm" value="search:global" onchange="toggleScope(this)">
+              search:global
+            </label>
+            <div class="ak-perm-desc">Search the entire library — all public videos and photos.</div>
+          </div>
+
+          <!-- search:channel -->
+          <div class="ak-perm-row">
+            <label>
+              <input type="checkbox" name="perm" value="search:channel" onchange="toggleScope(this)">
+              search:channel
+            </label>
+            <div class="ak-perm-desc">Search within a specific channel only.</div>
+            <div class="ak-scope-field" id="scope-search:channel">
+              <input type="text" name="scope_search:channel" placeholder="Channel UUID">
+            </div>
+          </div>
+
+          <!-- search:playlist -->
+          <div class="ak-perm-row">
+            <label>
+              <input type="checkbox" name="perm" value="search:playlist" onchange="toggleScope(this)">
+              search:playlist
+            </label>
+            <div class="ak-perm-desc">Search within a specific playlist only.</div>
+            <div class="ak-scope-field" id="scope-search:playlist">
+              <input type="text" name="scope_search:playlist" placeholder="Playlist UUID">
+            </div>
+          </div>
+
+          <!-- video:read -->
+          <div class="ak-perm-row">
+            <label>
+              <input type="checkbox" name="perm" value="video:read" onchange="toggleScope(this)">
+              video:read
+            </label>
+            <div class="ak-perm-desc">Read video metadata, HLS URL, transcript, and chapters for any video.</div>
+          </div>
+
+          <!-- video:upload -->
+          <div class="ak-perm-row">
+            <label>
+              <input type="checkbox" name="perm" value="video:upload" onchange="toggleScope(this)">
+              video:upload
+            </label>
+            <div class="ak-perm-desc">Upload new videos to a specific channel.</div>
+            <div class="ak-scope-field" id="scope-video:upload">
+              <input type="text" name="scope_video:upload" placeholder="Channel UUID">
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div>
+        <label for="keyExpiry">Expires at <span style="font-weight:400;color:var(--text-muted)">(optional — leave blank for no expiry)</span></label>
+        <input type="datetime-local" id="keyExpiry" name="expires_at">
+      </div>
+
+      <div id="createKeyError" style="display:none;color:#f87171;font-size:.85rem;"></div>
+
+      <div class="ak-form-footer">
+        <button type="submit" class="btn btn-primary" id="createKeyBtn">Generate Key</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ── API Documentation ──────────────────────────────────────────────── -->
+  <div class="ak-card">
+    <div class="ak-card-head">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+      </svg>
+      API Reference
+    </div>
+    <div class="ak-docs">
+
+      <h3>Authentication</h3>
+      <p>Include your API key in every request using one of these headers:</p>
+      <div class="ak-code-block">X-API-Key: cliplens_your_key_here
+
+# or
+
+Authorization: Bearer cliplens_your_key_here</div>
+
+      <h3>Base URL</h3>
+      <div class="ak-code-block">{{ request.scheme }}://{{ request.get_host }}/api/v1/</div>
+
+      <h3>Endpoints</h3>
+      <table class="ak-endpoint-table">
+        <thead>
+          <tr><th>Method</th><th>Path</th><th>Required permission</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="ak-method">GET</td>
+            <td class="ak-path">/api/v1/search/?q=<em>query</em></td>
+            <td>search:global / search:channel / search:playlist</td>
+            <td>Search videos. Optional: <code>limit</code>, <code>offset</code>.</td>
+          </tr>
+          <tr>
+            <td class="ak-method">GET</td>
+            <td class="ak-path">/api/v1/videos/<em>{id}</em>/</td>
+            <td>video:read</td>
+            <td>Video metadata, HLS URL, AI summary.</td>
+          </tr>
+          <tr>
+            <td class="ak-method">GET</td>
+            <td class="ak-path">/api/v1/videos/<em>{id}</em>/transcript/</td>
+            <td>video:read</td>
+            <td>Full transcript. Add <code>?format=vtt</code> for VTT file.</td>
+          </tr>
+          <tr>
+            <td class="ak-method">GET</td>
+            <td class="ak-path">/api/v1/videos/<em>{id}</em>/chapters/</td>
+            <td>video:read</td>
+            <td>Named chapters with timestamps.</td>
+          </tr>
+          <tr>
+            <td class="ak-method">POST</td>
+            <td class="ak-path">/api/v1/videos/upload/</td>
+            <td>video:upload (scoped)</td>
+            <td>Upload a video. Multipart: <code>file</code>, <code>title</code>, <code>channel_id</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Example: Search</h3>
+      <div class="ak-code-block">curl -s "{{ request.scheme }}://{{ request.get_host }}/api/v1/search/?q=safety+briefing&limit=5" \
+  -H "X-API-Key: cliplens_your_key_here"</div>
+
+      <h3>Example: Get Video</h3>
+      <div class="ak-code-block">curl -s "{{ request.scheme }}://{{ request.get_host }}/api/v1/videos/&lt;uuid&gt;/" \
+  -H "X-API-Key: cliplens_your_key_here"</div>
+
+    </div>
+  </div>
+
+</div><!-- /ak-wrap -->
+
+<!-- ── Key Reveal Modal ──────────────────────────────────────────────────── -->
+<div class="ak-modal-overlay" id="keyModal">
+  <div class="ak-modal">
+    <h2>🔑 Your new API key</h2>
+    <p>Copy this key now. It will <strong>never be shown again</strong>.</p>
+    <div class="ak-raw-key" id="modalRawKey"></div>
+    <div class="ak-modal-actions">
+      <button class="btn btn-ghost" onclick="copyKey()">Copy</button>
+      <button class="btn btn-primary" onclick="closeModal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Scope field toggle ──────────────────────────────────────────────────────
+function toggleScope(checkbox) {
+  const scopeId = 'scope-' + checkbox.value;
+  const field   = document.getElementById(scopeId);
+  if (!field) return;
+  field.classList.toggle('visible', checkbox.checked);
+  const input = field.querySelector('input');
+  if (!checkbox.checked && input) input.value = '';
+}
+
+// ── Create key ──────────────────────────────────────────────────────────────
+async function createKey(e) {
+  e.preventDefault();
+  const btn = document.getElementById('createKeyBtn');
+  const errEl = document.getElementById('createKeyError');
+  errEl.style.display = 'none';
+
+  // Gather permissions
+  const permBoxes = document.querySelectorAll('#createKeyForm input[name="perm"]:checked');
+  if (!permBoxes.length) {
+    errEl.textContent = 'Select at least one permission.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const perms = Array.from(permBoxes).map(cb => cb.value).join(',');
+  const body = {
+    name:        document.getElementById('keyName').value.trim(),
+    permissions: perms,
+    expires_at:  document.getElementById('keyExpiry').value || '',
+  };
+
+  // Collect scopes
+  document.querySelectorAll('.ak-scope-field.visible input').forEach(inp => {
+    body[inp.name] = inp.value.trim();
+  });
+
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+
+  try {
+    const res = await fetch('/api/api-keys/create/', {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'X-CSRFToken':   document.querySelector('[name=csrfmiddlewaretoken]').value,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errEl.textContent = data.error || 'Failed to create key.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    // Show reveal modal then reload the table
+    document.getElementById('modalRawKey').textContent = data.raw_key;
+    document.getElementById('keyModal').classList.add('open');
+    // Reset form
+    document.getElementById('createKeyForm').reset();
+    document.querySelectorAll('.ak-scope-field').forEach(f => f.classList.remove('visible'));
+
+  } catch (err) {
+    errEl.textContent = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Key';
+  }
+}
+
+function copyKey() {
+  const txt = document.getElementById('modalRawKey').textContent;
+  navigator.clipboard.writeText(txt).then(() => {
+    const btn = event.target;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+
+function closeModal() {
+  document.getElementById('keyModal').classList.remove('open');
+  // Reload so the new key appears in the table
+  window.location.reload();
+}
+
+// ── Revoke ──────────────────────────────────────────────────────────────────
+async function revokeKey(keyId) {
+  if (!confirm('Revoke this key? It will stop working immediately.')) return;
+
+  const res = await fetch(`/api/api-keys/${keyId}/revoke/`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrf() },
+  });
+  if (res.ok) {
+    window.location.reload();
+  } else {
+    alert('Failed to revoke key.');
+  }
+}
+
+// ── Delete ──────────────────────────────────────────────────────────────────
+async function deleteKey(keyId) {
+  if (!confirm('Permanently delete this key? This cannot be undone.')) return;
+
+  const res = await fetch(`/api/api-keys/${keyId}/delete/`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCsrf() },
+  });
+  if (res.ok) {
+    const row = document.getElementById('key-row-' + keyId);
+    if (row) row.remove();
+  } else {
+    alert('Failed to delete key.');
+  }
+}
+
+function getCsrf() {
+  return document.querySelector('[name=csrfmiddlewaretoken]').value;
+}
+</script>
+{% endblock %}

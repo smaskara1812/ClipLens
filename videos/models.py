@@ -1555,3 +1555,78 @@ class LiveStream(models.Model):
         if self.ended_at and self.started_at:
             return int((self.ended_at - self.started_at).total_seconds())
         return None
+
+
+# ────────────────────────────────────────────────────────────────────────
+# API Keys — granular programmatic access
+# ────────────────────────────────────────────────────────────────────────
+
+class APIKey(models.Model):
+    """
+    Programmatic API key for external integrations.
+
+    The raw key (cliplens_<32-char-token>) is shown once at creation.
+    Only the SHA-256 hash is stored so the DB cannot leak usable keys.
+    key_prefix stores the first 16 chars of the raw key for display.
+    """
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name        = models.CharField(max_length=120, help_text='Human-readable label, e.g. "LMS Integration"')
+    key_prefix  = models.CharField(max_length=20, help_text='First 16 chars of raw key — for display only')
+    key_hash    = models.CharField(max_length=64, unique=True, db_index=True, help_text='SHA-256 of raw key')
+    owner       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='api_keys')
+    created_at  = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    expires_at  = models.DateTimeField(null=True, blank=True, help_text='null = never expires')
+    is_active   = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.key_prefix}…)'
+
+
+class APIKeyPermission(models.Model):
+    """
+    One permission granted to an API key.
+
+    Permissions:
+      search:global   — full-library search (all visible videos/photos)
+      search:channel  — search within a specific channel (scope_id = channel UUID)
+      search:playlist — search within a specific playlist (scope_id = playlist UUID)
+      video:read      — read metadata + transcript for any video
+      video:upload    — upload new videos to a specific channel (scope_id = channel UUID)
+    """
+    PERM_SEARCH_GLOBAL   = 'search:global'
+    PERM_SEARCH_CHANNEL  = 'search:channel'
+    PERM_SEARCH_PLAYLIST = 'search:playlist'
+    PERM_VIDEO_READ      = 'video:read'
+    PERM_VIDEO_UPLOAD    = 'video:upload'
+
+    PERM_CHOICES = [
+        (PERM_SEARCH_GLOBAL,   'Search — Global (entire library)'),
+        (PERM_SEARCH_CHANNEL,  'Search — Channel (scoped to one channel)'),
+        (PERM_SEARCH_PLAYLIST, 'Search — Playlist (scoped to one playlist)'),
+        (PERM_VIDEO_READ,      'Video Read (metadata + transcript)'),
+        (PERM_VIDEO_UPLOAD,    'Video Upload (to a specific channel)'),
+    ]
+
+    SCOPE_TYPE_GLOBAL   = 'global'
+    SCOPE_TYPE_CHANNEL  = 'channel'
+    SCOPE_TYPE_PLAYLIST = 'playlist'
+
+    api_key    = models.ForeignKey(APIKey, on_delete=models.CASCADE, related_name='permissions')
+    permission = models.CharField(max_length=30, choices=PERM_CHOICES)
+    # For scoped permissions: store the target object's ID (UUID as string)
+    # and a human-readable name for display.  Null for global permissions.
+    scope_id   = models.CharField(max_length=40, blank=True, default='',
+                                   help_text='UUID of the scoped channel/playlist, empty for global')
+    scope_name = models.CharField(max_length=200, blank=True, default='',
+                                   help_text='Snapshot name for display (channel/playlist name)')
+
+    class Meta:
+        unique_together = [('api_key', 'permission', 'scope_id')]
+
+    def __str__(self):
+        scope = f' → {self.scope_name}' if self.scope_name else ''
+        return f'{self.api_key.name}: {self.permission}{scope}'

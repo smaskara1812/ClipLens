@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import api_v1
 
 urlpatterns = [
     # ── Frontend pages ──
@@ -225,4 +226,17 @@ urlpatterns = [
     # ── Live Streaming — mediamtx webhooks (internal only) ──
     path('api/streams/on-publish/',   views.stream_on_publish),
     path('api/streams/on-unpublish/', views.stream_on_unpublish),
+
+    # ── API Key Management (editor+) ──
+    path('api-keys/',                           views.api_keys_page,   name='api_keys'),
+    path('api/api-keys/create/',                views.api_key_create),
+    path('api/api-keys/<uuid:key_id>/revoke/',  views.api_key_revoke),
+    path('api/api-keys/<uuid:key_id>/delete/',  views.api_key_delete),
+
+    # ── External REST API v1 (key-authenticated, no session required) ──
+    path('api/v1/search/',                              api_v1.search),
+    path('api/v1/videos/upload/',                       api_v1.video_upload),
+    path('api/v1/videos/<uuid:video_id>/',              api_v1.video_detail),
+    path('api/v1/videos/<uuid:video_id>/transcript/',   api_v1.video_transcript),
+    path('api/v1/videos/<uuid:video_id>/chapters/',     api_v1.video_chapters),
 ]

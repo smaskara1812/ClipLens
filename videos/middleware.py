@@ -26,6 +26,7 @@ class LoginRequiredMiddleware:
         r'|/api/channels/[^/]+/live/'  # live status polling — public (shows LIVE badge)
         r'|/api/streams/'              # live streams list — public
         r'|/live/\d+/'                 # live watch page — public
+        r'|/api/v1/'                   # external API — has its own key-based auth
         r')'
     )
 

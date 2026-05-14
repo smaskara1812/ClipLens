@@ -1,3 +1,4 @@
+import json
 import threading
 import shutil
 import logging
@@ -25,6 +26,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.clickjacking import xframe_options_exempt
+from django.views.decorators.http import require_POST
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -38,6 +40,7 @@ from .models import (
     FaceIdentity, FaceIdentityNickname, DetectedFace, UserProfile, Photo, Album, AlbumPhoto,
     SpeakerIdentity, SpeakerFaceSuggestion, VideoMoment, Event, NamedPlace, MomentCategory,
     StreamKey, LiveStream,
+    APIKey, APIKeyPermission,
 )
 from .activity import log_activity, snapshot_fields, diff_snapshots
 from .serializers import (
@@ -8650,3 +8653,146 @@ def generate_summary_api(request, video_id):
     from .tasks import generate_video_summary_task
     generate_video_summary_task.apply_async(args=[str(video_id)], queue='default')
     return Response({'status': 'queued'})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# API Key Management (editor+)
+# ════════════════════════════════════════════════════════════════════════════
+
+@login_required
+def api_keys_page(request):
+    """
+    GET  /api-keys/   — list all keys owned by the current user
+    """
+    if not _is_editor(request.user):
+        return redirect('player')
+
+    keys = APIKey.objects.filter(owner=request.user).prefetch_related('permissions')
+    return render(request, 'videos/api_keys.html', {
+        'api_keys':      keys,
+        'perm_choices':  APIKeyPermission.PERM_CHOICES,
+    })
+
+
+@login_required
+@require_POST
+def api_key_create(request):
+    """
+    POST /api/api-keys/create/
+
+    Body (multipart or JSON):
+      name         — display label
+      permissions  — comma-separated list of permission codes
+                     e.g. "search:global,video:read"
+      scope_<perm> — optional scope UUID for scoped permissions
+                     e.g. scope_search:channel=<channel_uuid>
+    """
+    if not _is_editor(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+
+    try:
+        if request.content_type and 'application/json' in request.content_type:
+            body = json.loads(request.body)
+        else:
+            body = request.POST
+    except Exception:
+        return JsonResponse({'error': 'Invalid request body.'}, status=400)
+
+    name = (body.get('name') or '').strip()
+    if not name:
+        return JsonResponse({'error': 'name is required.'}, status=400)
+
+    perms_raw = (body.get('permissions') or '').strip()
+    if not perms_raw:
+        return JsonResponse({'error': 'At least one permission is required.'}, status=400)
+
+    requested_perms = [p.strip() for p in perms_raw.split(',') if p.strip()]
+    valid_perm_codes = {p[0] for p in APIKeyPermission.PERM_CHOICES}
+    for p in requested_perms:
+        if p not in valid_perm_codes:
+            return JsonResponse({'error': f'Unknown permission: {p}'}, status=400)
+
+    # Generate key
+    from .api_auth import generate_api_key
+    raw_key, prefix, digest = generate_api_key()
+
+    # Expiry (optional)
+    expires_at = None
+    expires_raw = (body.get('expires_at') or '').strip()
+    if expires_raw:
+        try:
+            from django.utils.dateparse import parse_datetime
+            expires_at = parse_datetime(expires_raw)
+        except Exception:
+            pass
+
+    api_key = APIKey.objects.create(
+        name=name,
+        key_prefix=prefix,
+        key_hash=digest,
+        owner=request.user,
+        expires_at=expires_at,
+    )
+
+    # Create permission rows
+    scoped_perms = {APIKeyPermission.PERM_SEARCH_CHANNEL,
+                    APIKeyPermission.PERM_SEARCH_PLAYLIST,
+                    APIKeyPermission.PERM_VIDEO_UPLOAD}
+
+    for perm in requested_perms:
+        scope_id   = ''
+        scope_name = ''
+        if perm in scoped_perms:
+            scope_id = (body.get(f'scope_{perm}') or '').strip()
+            if scope_id:
+                # Try to resolve a human-readable name
+                try:
+                    if perm in (APIKeyPermission.PERM_SEARCH_CHANNEL, APIKeyPermission.PERM_VIDEO_UPLOAD):
+                        from .models import Channel as _Ch
+                        ch = _Ch.objects.get(pk=scope_id)
+                        scope_name = ch.name
+                    elif perm == APIKeyPermission.PERM_SEARCH_PLAYLIST:
+                        from .models import Playlist as _Pl
+                        pl = _Pl.objects.get(pk=scope_id)
+                        scope_name = pl.name
+                except Exception:
+                    scope_name = scope_id
+
+        APIKeyPermission.objects.create(
+            api_key=api_key,
+            permission=perm,
+            scope_id=scope_id,
+            scope_name=scope_name,
+        )
+
+    return JsonResponse({
+        'id':      str(api_key.id),
+        'name':    api_key.name,
+        'raw_key': raw_key,   # shown ONCE, never stored
+        'prefix':  prefix,
+    }, status=201)
+
+
+@login_required
+@require_POST
+def api_key_revoke(request, key_id):
+    """POST /api/api-keys/<uuid>/revoke/ — deactivate a key."""
+    if not _is_editor(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+
+    key = get_object_or_404(APIKey, id=key_id, owner=request.user)
+    key.is_active = False
+    key.save(update_fields=['is_active'])
+    return JsonResponse({'status': 'revoked'})
+
+
+@login_required
+@require_POST
+def api_key_delete(request, key_id):
+    """POST /api/api-keys/<uuid>/delete/ — permanently delete a key."""
+    if not _is_editor(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+
+    key = get_object_or_404(APIKey, id=key_id, owner=request.user)
+    key.delete()
+    return JsonResponse({'status': 'deleted'})
