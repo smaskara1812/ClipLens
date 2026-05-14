@@ -6,16 +6,23 @@ See api_auth.py for authentication details.
 
 Endpoints
 ---------
-GET  /api/v1/search/           — search videos (and optionally photos)
-GET  /api/v1/videos/<id>/      — video metadata + HLS URL
-GET  /api/v1/videos/<id>/transcript/  — full transcript (VTT or JSON)
-GET  /api/v1/videos/<id>/chapters/    — named chapters
-POST /api/v1/videos/upload/    — upload a new video to a channel
-"""
+GET  /api/v1/search/                       — full 9-pass search
+GET  /api/v1/videos/<id>/                  — video metadata + HLS URL
+GET  /api/v1/videos/<id>/transcript/       — full transcript (VTT or JSON)
+GET  /api/v1/videos/<id>/chapters/         — named chapters
+POST /api/v1/videos/upload/                — upload a new video to a channel
 
-import json
-import os
-import uuid
+Search passes (all applied when the key has permission):
+  1. Title + tags          (icontains + fuzzy)
+  2. Chapter names         (icontains)
+  3. Transcript segments   (icontains)
+  4. YOLO object labels    (icontains)
+  5. Scene descriptions    (icontains)
+  6. CLIP semantic         (pgvector cosine similarity — requires CLIP_ENABLED)
+  7. Face identity names   (icontains)
+  8. Photos                (title, tags, labels — global scope only)
+  9. Named places          (name + description — global scope only)
+"""
 
 from django.conf import settings
 from django.db.models import Q
@@ -29,15 +36,18 @@ from .api_auth import (
     can_search,
     get_search_scope,
     has_permission,
-    require_permission,
 )
 from .models import (
     APIKeyPermission,
     Channel,
+    DetectedFace,
+    FaceIdentity,
+    NamedPlace,
     Photo,
     Subtitle,
     Video,
     VideoChapter,
+    VideoFrame,
     VideoSegment,
 )
 
@@ -49,7 +59,6 @@ def _err(message, status=400):
 
 
 def _auth(request):
-    """Authenticate and return (api_key, None) or (None, error_response)."""
     try:
         key = authenticate_api_key(request)
         return key, None
@@ -57,17 +66,12 @@ def _auth(request):
         return None, JsonResponse({'error': e.message}, status=e.status)
 
 
-def _video_to_dict(video, request=None):
-    """Serialize a Video to the standard API response shape."""
-    site_url = getattr(settings, 'SITE_URL', '')
-    thumb = ''
-    if video.thumbnail:
-        thumb = f'{site_url}/media/{video.thumbnail}'
+def _site_url():
+    return getattr(settings, 'SITE_URL', '').rstrip('/')
 
-    hls_url = ''
-    if video.hls_path:
-        hls_url = f'{site_url}/media/{video.hls_path}'
 
+def _video_to_dict(video):
+    site = _site_url()
     return {
         'id':          str(video.id),
         'title':       video.title,
@@ -78,8 +82,8 @@ def _video_to_dict(video, request=None):
             'name': video.channel.name,
             'slug': video.channel.slug,
         },
-        'thumbnail_url': thumb,
-        'hls_url':       hls_url,
+        'thumbnail_url': f'{site}/media/{video.thumbnail}' if video.thumbnail else '',
+        'hls_url':       f'{site}/media/{video.hls_path}' if video.hls_path else '',
         'status':        video.status,
         'visibility':    video.visibility,
         'tags':          video.tags or '',
@@ -96,27 +100,38 @@ def search(request):
     """
     GET /api/v1/search/?q=<query>[&limit=20][&offset=0]
 
-    Required permission: search:global  OR  search:channel  OR  search:playlist
+    Required permission: search:global OR search:channel OR search:playlist
 
-    Returns a list of matching videos. Each result includes a `match` object
-    describing where the query matched (title, transcript, label, etc.)
+    Runs up to 9 search passes across the library:
+      1. Video title + tags
+      2. Chapter names
+      3. Transcript (speech)
+      4. YOLO object labels
+      5. Scene descriptions (BLIP/Florence-2)
+      6. CLIP semantic (visual embedding)
+      7. Face identity names
+      8. Photos  (global scope only)
+      9. Named places  (global scope only)
+
+    Scoped keys (search:channel / search:playlist) run passes 1–7
+    restricted to videos in the permitted channel(s)/playlist(s).
+    Passes 8–9 require search:global.
 
     Response:
     {
-      "count": 12,
+      "count": <int>,
       "results": [
         {
-          "id": "uuid",
+          "id": "<uuid>",
           "title": "...",
+          "type": "video" | "photo" | "place",
           "channel": {"id": ..., "name": ..., "slug": ...},
           "thumbnail_url": "...",
-          "duration": 183,
-          "match": {
-            "source": "title|transcript|label|scene|chapter",
-            "snippet": "...surrounding text..."
-          }
-        },
-        ...
+          "duration": <seconds | null>,
+          "created_at": "ISO8601",
+          "match": {"source": "title|chapter|transcript|label|scene|clip|face|photo|place",
+                    "snippet": "..."}
+        }
       ]
     }
     """
@@ -132,100 +147,260 @@ def search(request):
         return _err('Missing required parameter: q')
 
     try:
-        limit  = max(1, min(100, int(request.GET.get('limit', 20))))
-        offset = max(0, int(request.GET.get('offset', 0)))
+        limit  = max(1, min(100, int(request.GET.get('limit',  20))))
+        offset = max(0,          int(request.GET.get('offset',  0)))
     except (ValueError, TypeError):
         return _err('limit and offset must be integers.')
 
-    scope     = get_search_scope(api_key)
-    results   = []
-    seen_ids  = set()
+    scope    = get_search_scope(api_key)
+    results  = []
+    seen_ids = set()           # prevents duplicates across passes
+    site     = _site_url()
 
-    def _base_qs():
-        qs = Video.objects.filter(status='ready', visibility='public').select_related('channel')
+    # ── Scope helpers ─────────────────────────────────────────────────────
+    def _video_base():
+        """Base Video queryset filtered to scope and ready/public."""
+        qs = (
+            Video.objects
+            .filter(status='ready', visibility='public')
+            .select_related('channel')
+        )
         if not scope['is_global']:
-            channel_filter  = Q(channel_id__in=scope['channel_ids']) if scope['channel_ids'] else Q()
-            playlist_filter = Q(playlist_items__playlist_id__in=scope['playlist_ids']) if scope['playlist_ids'] else Q()
-            qs = qs.filter(channel_filter | playlist_filter).distinct()
+            channel_q  = Q(channel_id__in=scope['channel_ids'])  if scope['channel_ids']  else Q()
+            playlist_q = Q(playlist_items__playlist_id__in=scope['playlist_ids']) if scope['playlist_ids'] else Q()
+            qs = qs.filter(channel_q | playlist_q).distinct()
         return qs
 
-    def _add(video, source, snippet=''):
-        if video.id not in seen_ids:
-            seen_ids.add(video.id)
-            site_url = getattr(settings, 'SITE_URL', '')
-            thumb = f'{site_url}/media/{video.thumbnail}' if video.thumbnail else ''
-            results.append({
-                'id':            str(video.id),
-                'title':         video.title,
-                'description':   (video.description or '')[:200],
-                'duration':      video.duration,
-                'channel': {
-                    'id':   str(video.channel.id),
-                    'name': video.channel.name,
-                    'slug': video.channel.slug,
-                },
-                'thumbnail_url': thumb,
-                'status':        video.status,
-                'visibility':    video.visibility,
-                'created_at':    video.created_at.isoformat(),
-                'match': {
-                    'source':  source,
-                    'snippet': snippet[:300],
-                },
-            })
+    def _frame_base():
+        """Base VideoFrame queryset scoped to permitted videos."""
+        qs = VideoFrame.objects.filter(
+            video__status='ready', video__visibility='public'
+        ).select_related('video', 'video__channel')
+        if not scope['is_global']:
+            channel_q  = Q(video__channel_id__in=scope['channel_ids'])  if scope['channel_ids']  else Q()
+            playlist_q = Q(video__playlist_items__playlist_id__in=scope['playlist_ids']) if scope['playlist_ids'] else Q()
+            qs = qs.filter(channel_q | playlist_q).distinct()
+        return qs
 
-    base = _base_qs()
-    q_lower = q.lower()
+    def _seg_base():
+        """Base VideoSegment queryset scoped to permitted videos."""
+        qs = VideoSegment.objects.filter(
+            video__status='ready', video__visibility='public'
+        ).select_related('video', 'video__channel')
+        if not scope['is_global']:
+            channel_q  = Q(video__channel_id__in=scope['channel_ids'])  if scope['channel_ids']  else Q()
+            playlist_q = Q(video__playlist_items__playlist_id__in=scope['playlist_ids']) if scope['playlist_ids'] else Q()
+            qs = qs.filter(channel_q | playlist_q).distinct()
+        return qs
 
-    # 1. Title / tags
+    # ── Result builder ────────────────────────────────────────────────────
+    def _add_video(video, source, snippet=''):
+        vid_key = f'v:{video.id}'
+        if vid_key in seen_ids:
+            return
+        seen_ids.add(vid_key)
+        thumb = f'{site}/media/{video.thumbnail}' if video.thumbnail else ''
+        results.append({
+            'id':            str(video.id),
+            'type':          'video',
+            'title':         video.title,
+            'description':   (video.description or '')[:200],
+            'duration':      video.duration,
+            'channel': {
+                'id':   str(video.channel.id),
+                'name': video.channel.name,
+                'slug': video.channel.slug,
+            },
+            'thumbnail_url': thumb,
+            'created_at':    video.created_at.isoformat(),
+            'match': {'source': source, 'snippet': snippet[:300]},
+        })
+
+    def _add_photo(photo, source, snippet=''):
+        pk = f'p:{photo.id}'
+        if pk in seen_ids:
+            return
+        seen_ids.add(pk)
+        thumb = f'{site}/media/{photo.thumbnail}' if photo.thumbnail else ''
+        results.append({
+            'id':            str(photo.id),
+            'type':          'photo',
+            'title':         photo.title or '',
+            'description':   '',
+            'duration':      None,
+            'channel': {
+                'id':   str(photo.channel.id),
+                'name': photo.channel.name,
+                'slug': photo.channel.slug,
+            } if photo.channel else {},
+            'thumbnail_url': thumb,
+            'created_at':    photo.created_at.isoformat(),
+            'match': {'source': source, 'snippet': snippet[:300]},
+        })
+
+    def _add_place(place):
+        pk = f'place:{place.id}'
+        if pk in seen_ids:
+            return
+        seen_ids.add(pk)
+        results.append({
+            'id':            str(place.id),
+            'type':          'place',
+            'title':         place.name,
+            'description':   (place.description or '')[:200],
+            'duration':      None,
+            'channel':       {},
+            'thumbnail_url': '',
+            'created_at':    place.created_at.isoformat() if hasattr(place, 'created_at') else '',
+            'match': {'source': 'place', 'snippet': place.description[:200] if place.description else place.name},
+        })
+
+    base = _video_base()
+
+    # ── Pass 1: Title + tags ──────────────────────────────────────────────
     for v in base.filter(Q(title__icontains=q) | Q(tags__icontains=q))[:50]:
-        _add(v, 'title', v.title)
+        _add_video(v, 'title', v.title)
 
-    # 2. Chapter names
-    from .models import VideoChapter
-    chapter_video_ids = (
+    # ── Pass 2: Chapter names ─────────────────────────────────────────────
+    chapter_vids = (
         VideoChapter.objects
         .filter(video__in=base, title__icontains=q)
         .values_list('video_id', flat=True)
         .distinct()[:30]
     )
-    for v in base.filter(id__in=chapter_video_ids):
+    for v in base.filter(id__in=chapter_vids):
         ch = VideoChapter.objects.filter(video=v, title__icontains=q).first()
-        _add(v, 'chapter', ch.title if ch else '')
+        _add_video(v, 'chapter', ch.title if ch else '')
 
-    # 3. Transcript
-    from .models import VideoSegment
-    seg_video_ids = (
-        VideoSegment.objects
-        .filter(video__in=base, text__icontains=q)
+    # ── Pass 3: Transcript ────────────────────────────────────────────────
+    seg_vids = (
+        _seg_base()
+        .filter(text__icontains=q)
         .values_list('video_id', flat=True)
         .distinct()[:50]
     )
-    for v in base.filter(id__in=seg_video_ids):
+    for v in base.filter(id__in=seg_vids):
         seg = VideoSegment.objects.filter(video=v, text__icontains=q).first()
-        _add(v, 'transcript', seg.text[:200] if seg else '')
+        _add_video(v, 'transcript', seg.text[:200] if seg else '')
 
-    # 4. YOLO object labels
-    from .models import VideoFrame
-    label_video_ids = (
-        VideoFrame.objects
-        .filter(video__in=base, labels__icontains=q)
+    # ── Pass 4: YOLO labels ───────────────────────────────────────────────
+    label_vids = (
+        _frame_base()
+        .filter(labels__icontains=q)
         .values_list('video_id', flat=True)
         .distinct()[:30]
     )
-    for v in base.filter(id__in=label_video_ids):
-        _add(v, 'label', '')
+    for v in base.filter(id__in=label_vids):
+        fr = VideoFrame.objects.filter(video=v, labels__icontains=q).first()
+        _add_video(v, 'label', fr.labels[:100] if fr and fr.labels else '')
 
-    # 5. Scene descriptions
-    scene_video_ids = (
-        VideoFrame.objects
-        .filter(video__in=base, description__icontains=q)
+    # ── Pass 5: Scene descriptions ────────────────────────────────────────
+    scene_vids = (
+        _frame_base()
+        .filter(description__icontains=q)
         .values_list('video_id', flat=True)
         .distinct()[:30]
     )
-    for v in base.filter(id__in=scene_video_ids):
+    for v in base.filter(id__in=scene_vids):
         fr = VideoFrame.objects.filter(video=v, description__icontains=q).first()
-        _add(v, 'scene', fr.description[:200] if fr else '')
+        _add_video(v, 'scene', fr.description[:200] if fr and fr.description else '')
+
+    # ── Pass 6: CLIP semantic (pgvector) ──────────────────────────────────
+    if getattr(settings, 'CLIP_ENABLED', True):
+        try:
+            from pgvector.django import CosineDistance
+            from .clip_utils import get_clip_text_vector
+            txt_vec = get_clip_text_vector(q)
+            if txt_vec is not None:
+                threshold = getattr(settings, 'CLIP_SIMILARITY_THRESHOLD', 0.24)
+                max_dist  = 1.0 - threshold
+                clip_frames = (
+                    _frame_base()
+                    .exclude(clip_embedding=None)
+                    .annotate(_dist=CosineDistance('clip_embedding', txt_vec))
+                    .filter(_dist__lte=max_dist)
+                    .order_by('_dist')
+                    [:150]
+                )
+                clip_seen_vids = set()
+                for frm in clip_frames:
+                    vid_id = str(frm.video_id)
+                    if vid_id not in clip_seen_vids:
+                        clip_seen_vids.add(vid_id)
+                        _add_video(
+                            frm.video, 'clip',
+                            frm.description or frm.labels or '',
+                        )
+        except Exception:
+            pass
+
+    # ── Pass 7: Face identity names ───────────────────────────────────────
+    face_qs = (
+        DetectedFace.objects
+        .filter(
+            video__status='ready',
+            video__visibility='public',
+            identity__name__icontains=q,
+        )
+        .exclude(identity__name='')
+        .select_related('video', 'video__channel', 'identity')
+    )
+    if not scope['is_global']:
+        channel_q  = Q(video__channel_id__in=scope['channel_ids'])  if scope['channel_ids']  else Q()
+        playlist_q = Q(video__playlist_items__playlist_id__in=scope['playlist_ids']) if scope['playlist_ids'] else Q()
+        face_qs    = face_qs.filter(channel_q | playlist_q)
+
+    face_seen = set()
+    for df in face_qs.order_by('identity_id')[:100]:
+        vid_id = str(df.video_id)
+        if vid_id not in face_seen:
+            face_seen.add(vid_id)
+            _add_video(df.video, 'face', df.identity.name)
+
+    # ── Pass 8: Photos (global scope only) ───────────────────────────────
+    if scope['is_global']:
+        photo_qs = (
+            Photo.objects
+            .filter(status='ready', visibility='public')
+            .select_related('channel')
+            .filter(
+                Q(title__icontains=q)
+                | Q(tags__icontains=q)
+                | Q(labels__icontains=q)
+            )[:40]
+        )
+        for p in photo_qs:
+            _add_photo(p, 'photo', p.title or '')
+
+        # Photo CLIP
+        if getattr(settings, 'CLIP_ENABLED', True):
+            try:
+                from pgvector.django import CosineDistance
+                from .clip_utils import get_clip_text_vector
+                txt_vec = get_clip_text_vector(q)
+                if txt_vec is not None:
+                    ph_threshold = getattr(settings, 'CLIP_PHOTO_SIMILARITY_THRESHOLD', 0.28)
+                    clip_photos = (
+                        Photo.objects
+                        .filter(status='ready', visibility='public')
+                        .exclude(clip_embedding=None)
+                        .select_related('channel')
+                        .annotate(_dist=CosineDistance('clip_embedding', txt_vec))
+                        .filter(_dist__lte=1.0 - ph_threshold)
+                        .order_by('_dist')
+                        [:30]
+                    )
+                    for p in clip_photos:
+                        _add_photo(p, 'clip_photo', '')
+            except Exception:
+                pass
+
+    # ── Pass 9: Named places (global scope only) ──────────────────────────
+    if scope['is_global']:
+        for place in NamedPlace.objects.filter(
+            Q(name__icontains=q) | Q(description__icontains=q)
+        )[:20]:
+            _add_place(place)
 
     total = len(results)
     page  = results[offset: offset + limit]
@@ -240,10 +415,7 @@ def search(request):
 def video_detail(request, video_id):
     """
     GET /api/v1/videos/<uuid>/
-
     Required permission: video:read
-
-    Returns full video metadata including HLS URL and AI summary.
     """
     api_key, err = _auth(request)
     if err:
@@ -257,7 +429,7 @@ def video_detail(request, video_id):
     except Video.DoesNotExist:
         return _err('Video not found.', 404)
 
-    return JsonResponse(_video_to_dict(video, request))
+    return JsonResponse(_video_to_dict(video))
 
 
 # ── Transcript ────────────────────────────────────────────────────────────────
@@ -267,12 +439,7 @@ def video_detail(request, video_id):
 def video_transcript(request, video_id):
     """
     GET /api/v1/videos/<uuid>/transcript/?format=json|vtt
-
     Required permission: video:read
-
-    Returns the full transcript.
-    format=json (default) — array of {start, end, text, speaker}
-    format=vtt  — raw VTT subtitle file content
     """
     api_key, err = _auth(request)
     if err:
@@ -289,7 +456,6 @@ def video_transcript(request, video_id):
     fmt = request.GET.get('format', 'json').lower()
 
     if fmt == 'vtt':
-        # Return the first English subtitle track's VTT content
         sub = Subtitle.objects.filter(video=video, language='en').first()
         if not sub:
             sub = Subtitle.objects.filter(video=video).first()
@@ -298,7 +464,6 @@ def video_transcript(request, video_id):
         from django.http import HttpResponse
         return HttpResponse(sub.content, content_type='text/vtt')
 
-    # JSON format — VideoSegment rows
     segments = (
         VideoSegment.objects
         .filter(video=video)
@@ -324,10 +489,7 @@ def video_transcript(request, video_id):
 def video_chapters(request, video_id):
     """
     GET /api/v1/videos/<uuid>/chapters/
-
     Required permission: video:read
-
-    Returns named chapters with timestamps.
     """
     api_key, err = _auth(request)
     if err:
@@ -357,18 +519,15 @@ def video_chapters(request, video_id):
 def video_upload(request):
     """
     POST /api/v1/videos/upload/
+    Required permission: video:upload (scoped to target channel)
 
-    Required permission: video:upload  (scoped to a channel)
-
-    Multipart form fields:
+    Multipart:
       file        — video file (required)
       title       — video title (required)
       channel_id  — UUID of target channel (required — must match key scope)
       description — optional
       tags        — optional comma-separated
       visibility  — public | private | unlisted  (default: private)
-
-    Returns the created video object (status will be 'processing').
     """
     api_key, err = _auth(request)
     if err:
@@ -414,7 +573,6 @@ def video_upload(request):
     )
     video.save()
 
-    # Kick off the processing pipeline
     from .tasks import process_video_task
     process_video_task.delay(str(video.id))
 

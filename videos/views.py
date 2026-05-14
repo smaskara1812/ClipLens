@@ -3,10 +3,14 @@ import threading
 import shutil
 import logging
 
-# Module-level CLIP cache — loaded once on first search, reused for all subsequent searches
+# CLIP encoding is now handled by clip_utils.get_clip_text_vector()
+# These module-level vars are kept as None so existing references don't break,
+# but the real singleton lives in clip_utils.
 _clip_model_cache = None
 _clip_proc_cache  = None
 _clip_cache_lock  = threading.Lock()
+
+from .clip_utils import get_clip_text_vector as _get_clip_vec
 
 _task_logger = logging.getLogger('videos.tasks')
 from functools import wraps
@@ -904,57 +908,45 @@ def player_page(request):
         # Cap: 250 best-matching frames (up from 100); channel/date/duration filters applied.
         if use_semantic and getattr(settings, 'CLIP_ENABLED', True):
             try:
-                import torch
                 from pgvector.django import CosineDistance
-                global _clip_model_cache, _clip_proc_cache
-                if _clip_model_cache is None:
-                    with _clip_cache_lock:
-                        if _clip_model_cache is None:
-                            from transformers import CLIPProcessor, CLIPModel
-                            _clip_proc_cache  = CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
-                            _clip_model_cache = CLIPModel.from_pretrained('openai/clip-vit-base-patch32')
-                            _clip_model_cache.eval()
-                _txt_inputs = _clip_proc_cache(text=[q], return_tensors='pt', padding=True)
-                with torch.no_grad():
-                    _txt_feat = _clip_model_cache.get_text_features(**_txt_inputs)
-                    _txt_feat = _txt_feat / _txt_feat.norm(dim=-1, keepdim=True)
-                _txt_vec = _txt_feat[0].tolist()
-                _threshold = getattr(settings, 'CLIP_SIMILARITY_THRESHOLD', 0.24)
-                _max_dist  = 1.0 - _threshold  # cosine distance = 1 − similarity
-                # pgvector HNSW ANN search — no Python loop needed
-                _clip_base_qs = (
-                    VideoFrame.objects
-                    .filter(video__visibility=Video.VISIBILITY_PUBLIC,
-                            video__status=Video.STATUS_READY)
-                    .exclude(clip_embedding=None)
-                )
-                _clip_base_qs = _apply_ai_video_filters(
-                    _clip_base_qs, ch_slug, cat_slug, duration_filter, date_filter
-                )
-                for frm in (
-                    _clip_base_qs
-                    .annotate(_dist=CosineDistance('clip_embedding', _txt_vec))
-                    .filter(_dist__lte=_max_dist)
-                    .order_by('_dist')
-                    .select_related('video', 'video__channel')
-                    [:250]
-                ):
-                    vid_id = str(frm.video_id)
-                    if vid_id not in seen_scene_videos:
-                        seen_scene_videos[vid_id] = {'video': frm.video, 'moments': [], '_seen_ts': set(), 'total_moments': 0}
-                    _e = seen_scene_videos[vid_id]
-                    _ts = round(frm.timestamp)
-                    _e['total_moments'] += 1
-                    if _ts not in _e['_seen_ts'] and len(_e['moments']) < 30:
-                        _e['_seen_ts'].add(_ts)
-                        _e['moments'].append({
-                            'timestamp':         frm.timestamp,
-                            'labels':            frm.description or frm.labels or q,
-                            'labels_list':       [frm.description or frm.labels or q],
-                            'highlighted_labels': None,   # no highlight for semantic results
-                            'time_fmt':          _fmt_seconds_display(frm.timestamp),
-                            'source':            'clip',
-                        })
+                _txt_vec = _get_clip_vec(q)
+                if _txt_vec is not None:
+                    _threshold = getattr(settings, 'CLIP_SIMILARITY_THRESHOLD', 0.24)
+                    _max_dist  = 1.0 - _threshold  # cosine distance = 1 − similarity
+                    # pgvector HNSW ANN search — no Python loop needed
+                    _clip_base_qs = (
+                        VideoFrame.objects
+                        .filter(video__visibility=Video.VISIBILITY_PUBLIC,
+                                video__status=Video.STATUS_READY)
+                        .exclude(clip_embedding=None)
+                    )
+                    _clip_base_qs = _apply_ai_video_filters(
+                        _clip_base_qs, ch_slug, cat_slug, duration_filter, date_filter
+                    )
+                    for frm in (
+                        _clip_base_qs
+                        .annotate(_dist=CosineDistance('clip_embedding', _txt_vec))
+                        .filter(_dist__lte=_max_dist)
+                        .order_by('_dist')
+                        .select_related('video', 'video__channel')
+                        [:250]
+                    ):
+                        vid_id = str(frm.video_id)
+                        if vid_id not in seen_scene_videos:
+                            seen_scene_videos[vid_id] = {'video': frm.video, 'moments': [], '_seen_ts': set(), 'total_moments': 0}
+                        _e = seen_scene_videos[vid_id]
+                        _ts = round(frm.timestamp)
+                        _e['total_moments'] += 1
+                        if _ts not in _e['_seen_ts'] and len(_e['moments']) < 30:
+                            _e['_seen_ts'].add(_ts)
+                            _e['moments'].append({
+                                'timestamp':         frm.timestamp,
+                                'labels':            frm.description or frm.labels or q,
+                                'labels_list':       [frm.description or frm.labels or q],
+                                'highlighted_labels': None,   # no highlight for semantic results
+                                'time_fmt':          _fmt_seconds_display(frm.timestamp),
+                                'source':            'clip',
+                            })
             except Exception:
                 pass
 
@@ -1268,39 +1260,28 @@ def player_page(request):
         # CLIP semantic search on photos
         if use_semantic and getattr(settings, 'CLIP_ENABLED', True):
             try:
-                import torch as _torch
                 from pgvector.django import CosineDistance as _CD
-                if _clip_model_cache is None:
-                    with _clip_cache_lock:
-                        if _clip_model_cache is None:
-                            from transformers import CLIPProcessor, CLIPModel
-                            _clip_proc_cache  = CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
-                            _clip_model_cache = CLIPModel.from_pretrained('openai/clip-vit-base-patch32')
-                            _clip_model_cache.eval()
-                _txt_inputs = _clip_proc_cache(text=[q], return_tensors='pt', padding=True)
-                with _torch.no_grad():
-                    _tf = _clip_model_cache.get_text_features(**_txt_inputs)
-                    _tf = _tf / _tf.norm(dim=-1, keepdim=True)
-                _tv = _tf[0].tolist()
-                # Photos use a stricter threshold than videos: CLIP does word→concept
-                # associations (e.g. "cow" → Bali via Hindu context) that are too loose
-                # for photo library search. 0.28 keeps genuine visual matches while
-                # filtering out cultural/conceptual leaps.
-                _threshold = getattr(settings, 'CLIP_PHOTO_SIMILARITY_THRESHOLD', 0.28)
-                _clip_photos = (
-                    Photo.objects
-                    .filter(visibility=Photo.VISIBILITY_PUBLIC, status=Photo.STATUS_READY)
-                    .exclude(clip_embedding=None)
-                    .annotate(_dist=_CD('clip_embedding', _tv))
-                    .filter(_dist__lte=1.0 - _threshold)
-                    .order_by('_dist')
-                    .select_related('channel')[:50]
-                )
-                seen_ids = {str(p.id) for p in _photo_qs[:200]}
-                for p in _clip_photos:
-                    if str(p.id) not in seen_ids:
-                        seen_ids.add(str(p.id))
-                        _photo_qs = list(_photo_qs) + [p]  # type: ignore[assignment]
+                _tv = _get_clip_vec(q)
+                if _tv is not None:
+                    # Photos use a stricter threshold than videos: CLIP does word→concept
+                    # associations (e.g. "cow" → Bali via Hindu context) that are too loose
+                    # for photo library search. 0.28 keeps genuine visual matches while
+                    # filtering out cultural/conceptual leaps.
+                    _threshold = getattr(settings, 'CLIP_PHOTO_SIMILARITY_THRESHOLD', 0.28)
+                    _clip_photos = (
+                        Photo.objects
+                        .filter(visibility=Photo.VISIBILITY_PUBLIC, status=Photo.STATUS_READY)
+                        .exclude(clip_embedding=None)
+                        .annotate(_dist=_CD('clip_embedding', _tv))
+                        .filter(_dist__lte=1.0 - _threshold)
+                        .order_by('_dist')
+                        .select_related('channel')[:50]
+                    )
+                    seen_ids = {str(p.id) for p in _photo_qs[:200]}
+                    for p in _clip_photos:
+                        if str(p.id) not in seen_ids:
+                            seen_ids.add(str(p.id))
+                            _photo_qs = list(_photo_qs) + [p]  # type: ignore[assignment]
             except Exception:
                 pass
 
@@ -8747,36 +8728,50 @@ def api_key_create(request):
         expires_at=expires_at,
     )
 
-    # Create permission rows
+    # Create permission rows — scoped perms support multiple scope IDs
     scoped_perms = {APIKeyPermission.PERM_SEARCH_CHANNEL,
                     APIKeyPermission.PERM_SEARCH_PLAYLIST,
                     APIKeyPermission.PERM_VIDEO_UPLOAD}
 
     for perm in requested_perms:
-        scope_id   = ''
-        scope_name = ''
-        if perm in scoped_perms:
-            scope_id = (body.get(f'scope_{perm}') or '').strip()
-            if scope_id:
-                # Try to resolve a human-readable name
-                try:
-                    if perm in (APIKeyPermission.PERM_SEARCH_CHANNEL, APIKeyPermission.PERM_VIDEO_UPLOAD):
-                        from .models import Channel as _Ch
-                        ch = _Ch.objects.get(pk=scope_id)
-                        scope_name = ch.name
-                    elif perm == APIKeyPermission.PERM_SEARCH_PLAYLIST:
-                        from .models import Playlist as _Pl
-                        pl = _Pl.objects.get(pk=scope_id)
-                        scope_name = pl.name
-                except Exception:
-                    scope_name = scope_id
+        if perm not in scoped_perms:
+            # Non-scoped permission — single row, no scope
+            APIKeyPermission.objects.get_or_create(
+                api_key=api_key, permission=perm, scope_id='',
+                defaults={'scope_name': ''},
+            )
+            continue
 
-        APIKeyPermission.objects.create(
-            api_key=api_key,
-            permission=perm,
-            scope_id=scope_id,
-            scope_name=scope_name,
-        )
+        # Scoped: body may send a single string or a list of UUIDs
+        raw_scope = body.get(f'scope_{perm}') or []
+        if isinstance(raw_scope, str):
+            raw_scope = [s.strip() for s in raw_scope.split(',') if s.strip()]
+        # Deduplicate while preserving order
+        seen_scopes = []
+        for s in raw_scope:
+            if s and s not in seen_scopes:
+                seen_scopes.append(s)
+
+        for scope_id in seen_scopes:
+            # Resolve human-readable name
+            scope_name = scope_id
+            try:
+                if perm in (APIKeyPermission.PERM_SEARCH_CHANNEL, APIKeyPermission.PERM_VIDEO_UPLOAD):
+                    ch = Channel.objects.get(pk=scope_id)
+                    scope_name = ch.name
+                elif perm == APIKeyPermission.PERM_SEARCH_PLAYLIST:
+                    from .models import Playlist as _Pl
+                    pl = _Pl.objects.get(pk=scope_id)
+                    scope_name = pl.name
+            except Exception:
+                pass
+
+            APIKeyPermission.objects.get_or_create(
+                api_key=api_key,
+                permission=perm,
+                scope_id=scope_id,
+                defaults={'scope_name': scope_name},
+            )
 
     return JsonResponse({
         'id':      str(api_key.id),
