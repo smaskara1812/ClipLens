@@ -385,7 +385,7 @@
                 {% for pl in user_playlists %}
                 <div class="ak-scope-item">
                   <input type="checkbox" id="spl_{{ pl.id }}" name="scope_search:playlist" value="{{ pl.id }}">
-                  <label for="spl_{{ pl.id }}">{{ pl.name }}</label>
+                  <label for="spl_{{ pl.id }}">{{ pl.title }}</label>
                 </div>
                 {% endfor %}
               </div>

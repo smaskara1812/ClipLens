@@ -8658,7 +8658,7 @@ def api_keys_page(request):
 
     # Playlists this user owns
     from .models import Playlist as _Playlist
-    user_playlists = _Playlist.objects.filter(owner=request.user).order_by('name')
+    user_playlists = _Playlist.objects.filter(owner=request.user).order_by('title')
 
     return render(request, 'videos/api_keys.html', {
         'api_keys':       keys,
@@ -8762,7 +8762,7 @@ def api_key_create(request):
                 elif perm == APIKeyPermission.PERM_SEARCH_PLAYLIST:
                     from .models import Playlist as _Pl
                     pl = _Pl.objects.get(pk=scope_id)
-                    scope_name = pl.name
+                    scope_name = pl.title
             except Exception:
                 pass
 
