@@ -562,7 +562,7 @@ def generate_video_summary_task(self, video_id: str):
         'stream': False,
         'options': {
             'temperature': 0.4,
-            'num_predict': 512,
+            'num_predict': 1024,
         },
     }).encode('utf-8')
 
