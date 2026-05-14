@@ -8668,9 +8668,22 @@ def api_keys_page(request):
         return redirect('player')
 
     keys = APIKey.objects.filter(owner=request.user).prefetch_related('permissions')
+
+    # Channels this user owns or can edit — for scoped permission dropdowns
+    from django.db.models import Q as _Q
+    user_channels = Channel.objects.filter(
+        _Q(owner=request.user) | _Q(editors=request.user)
+    ).distinct().order_by('name')
+
+    # Playlists this user owns
+    from .models import Playlist as _Playlist
+    user_playlists = _Playlist.objects.filter(owner=request.user).order_by('name')
+
     return render(request, 'videos/api_keys.html', {
-        'api_keys':      keys,
-        'perm_choices':  APIKeyPermission.PERM_CHOICES,
+        'api_keys':       keys,
+        'perm_choices':   APIKeyPermission.PERM_CHOICES,
+        'user_channels':  user_channels,
+        'user_playlists': user_playlists,
     })
 
 

@@ -151,17 +151,24 @@
     margin-top: 6px;
   }
   .ak-scope-field.visible { display: block; }
-  .ak-scope-field input {
+  .ak-scope-field select {
     width: 100%;
-    padding: 5px 10px;
-    font-size: 0.78rem;
+    padding: 6px 10px;
+    font-size: 0.8rem;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--surface);
     color: var(--text);
     box-sizing: border-box;
+    cursor: pointer;
   }
-  .ak-scope-field input::placeholder { color: var(--text-muted); }
+  .ak-scope-field select:focus { outline: none; border-color: var(--accent); }
+  .ak-scope-empty {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 4px 2px;
+  }
 
   .ak-form-footer { display: flex; justify-content: flex-end; }
 
@@ -326,21 +333,30 @@
           <!-- search:global -->
           <div class="ak-perm-row">
             <label>
-              <input type="checkbox" name="perm" value="search:global" onchange="toggleScope(this)">
-              search:global
+              <input type="checkbox" name="perm" value="search:global">
+              Search — Entire Library
             </label>
-            <div class="ak-perm-desc">Search the entire library — all public videos and photos.</div>
+            <div class="ak-perm-desc">Key can search all public videos and photos in the platform.</div>
           </div>
 
           <!-- search:channel -->
           <div class="ak-perm-row">
             <label>
               <input type="checkbox" name="perm" value="search:channel" onchange="toggleScope(this)">
-              search:channel
+              Search — One Channel
             </label>
-            <div class="ak-perm-desc">Search within a specific channel only.</div>
+            <div class="ak-perm-desc">Key can only search within the selected channel.</div>
             <div class="ak-scope-field" id="scope-search:channel">
-              <input type="text" name="scope_search:channel" placeholder="Channel UUID">
+              {% if user_channels %}
+              <select name="scope_search:channel">
+                <option value="">— pick a channel —</option>
+                {% for ch in user_channels %}
+                <option value="{{ ch.id }}">{{ ch.name }}</option>
+                {% endfor %}
+              </select>
+              {% else %}
+              <div class="ak-scope-empty">You have no channels yet.</div>
+              {% endif %}
             </div>
           </div>
 
@@ -348,32 +364,50 @@
           <div class="ak-perm-row">
             <label>
               <input type="checkbox" name="perm" value="search:playlist" onchange="toggleScope(this)">
-              search:playlist
+              Search — One Playlist
             </label>
-            <div class="ak-perm-desc">Search within a specific playlist only.</div>
+            <div class="ak-perm-desc">Key can only search within the selected playlist.</div>
             <div class="ak-scope-field" id="scope-search:playlist">
-              <input type="text" name="scope_search:playlist" placeholder="Playlist UUID">
+              {% if user_playlists %}
+              <select name="scope_search:playlist">
+                <option value="">— pick a playlist —</option>
+                {% for pl in user_playlists %}
+                <option value="{{ pl.id }}">{{ pl.name }}</option>
+                {% endfor %}
+              </select>
+              {% else %}
+              <div class="ak-scope-empty">You have no playlists yet.</div>
+              {% endif %}
             </div>
           </div>
 
           <!-- video:read -->
           <div class="ak-perm-row">
             <label>
-              <input type="checkbox" name="perm" value="video:read" onchange="toggleScope(this)">
-              video:read
+              <input type="checkbox" name="perm" value="video:read">
+              Read Videos
             </label>
-            <div class="ak-perm-desc">Read video metadata, HLS URL, transcript, and chapters for any video.</div>
+            <div class="ak-perm-desc">Key can fetch any video's metadata, HLS stream URL, transcript, and chapters.</div>
           </div>
 
           <!-- video:upload -->
           <div class="ak-perm-row">
             <label>
               <input type="checkbox" name="perm" value="video:upload" onchange="toggleScope(this)">
-              video:upload
+              Upload Videos
             </label>
-            <div class="ak-perm-desc">Upload new videos to a specific channel.</div>
+            <div class="ak-perm-desc">Key can upload videos to the selected channel.</div>
             <div class="ak-scope-field" id="scope-video:upload">
-              <input type="text" name="scope_video:upload" placeholder="Channel UUID">
+              {% if user_channels %}
+              <select name="scope_video:upload">
+                <option value="">— pick a channel —</option>
+                {% for ch in user_channels %}
+                <option value="{{ ch.id }}">{{ ch.name }}</option>
+                {% endfor %}
+              </select>
+              {% else %}
+              <div class="ak-scope-empty">You have no channels yet.</div>
+              {% endif %}
             </div>
           </div>
 
@@ -381,7 +415,7 @@
       </div>
 
       <div>
-        <label for="keyExpiry">Expires at <span style="font-weight:400;color:var(--text-muted)">(optional — leave blank for no expiry)</span></label>
+        <label for="keyExpiry">Expires <span style="font-weight:400;color:var(--text-muted)">(optional — leave blank for never)</span></label>
         <input type="datetime-local" id="keyExpiry" name="expires_at">
       </div>
 
@@ -508,15 +542,29 @@ async function createKey(e) {
   }
 
   const perms = Array.from(permBoxes).map(cb => cb.value).join(',');
+
+  // Validate scoped permissions have a selection
+  const scopedPerms = ['search:channel', 'search:playlist', 'video:upload'];
+  for (const perm of Array.from(permBoxes).map(cb => cb.value)) {
+    if (scopedPerms.includes(perm)) {
+      const sel = document.querySelector(`#scope-${CSS.escape(perm)} select`);
+      if (!sel || !sel.value) {
+        errEl.textContent = `Please select a target for the "${perm}" permission.`;
+        errEl.style.display = 'block';
+        return;
+      }
+    }
+  }
+
   const body = {
     name:        document.getElementById('keyName').value.trim(),
     permissions: perms,
     expires_at:  document.getElementById('keyExpiry').value || '',
   };
 
-  // Collect scopes
-  document.querySelectorAll('.ak-scope-field.visible input').forEach(inp => {
-    body[inp.name] = inp.value.trim();
+  // Collect scopes from visible dropdowns (select elements)
+  document.querySelectorAll('.ak-scope-field.visible select').forEach(sel => {
+    if (sel.value) body[sel.name] = sel.value;
   });
 
   btn.disabled = true;
