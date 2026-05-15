@@ -519,12 +519,15 @@ def video_chapters(request, video_id):
 def video_upload(request):
     """
     POST /api/v1/videos/upload/
-    Required permission: video:upload (scoped to target channel)
+    Required permission: video:upload (scoped to one or more channels)
 
     Multipart:
       file        — video file (required)
       title       — video title (required)
-      channel_id  — UUID of target channel (required — must match key scope)
+      channel_id  — UUID of target channel.
+                    Optional when the key is scoped to exactly ONE channel
+                    (it is inferred automatically).
+                    Required when the key can upload to multiple channels.
       description — optional
       tags        — optional comma-separated
       visibility  — public | private | unlisted  (default: private)
@@ -533,11 +536,37 @@ def video_upload(request):
     if err:
         return err
 
+    # Resolve which channel to upload to
     channel_id = request.POST.get('channel_id', '').strip()
-    if not channel_id:
-        return _err('channel_id is required.')
 
-    if not has_permission(api_key, APIKeyPermission.PERM_VIDEO_UPLOAD, scope_id=channel_id):
+    # Collect all upload-scoped channel IDs for this key
+    upload_scopes = list(
+        api_key.permissions
+        .filter(permission=APIKeyPermission.PERM_VIDEO_UPLOAD)
+        .exclude(scope_id='')
+        .values_list('scope_id', flat=True)
+    )
+
+    if not upload_scopes:
+        return _err('This key does not have the "video:upload" permission.', 403)
+
+    if not channel_id:
+        # Auto-infer only when scoped to exactly one channel
+        if len(upload_scopes) == 1:
+            channel_id = upload_scopes[0]
+        else:
+            names = list(
+                api_key.permissions
+                .filter(permission=APIKeyPermission.PERM_VIDEO_UPLOAD)
+                .exclude(scope_id='')
+                .values_list('scope_name', flat=True)
+            )
+            return _err(
+                f'This key can upload to multiple channels: {", ".join(names)}. '
+                f'Specify channel_id in your request.'
+            )
+
+    if channel_id not in upload_scopes:
         return _err(
             f'This key does not have "video:upload" permission for channel {channel_id}.',
             403,
