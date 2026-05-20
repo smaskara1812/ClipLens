@@ -1,0 +1,90 @@
+{% extends "tenants/base.html" %}
+{% block title %}Dashboard — ClipLens Control Plane{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Organisations</h1>
+  <p>All tenants and their current-month usage</p>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ tenant_data|length }}</div>
+    <div class="stat-label">Total Organisations</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ tenant_data|length }}</div>
+    <div class="stat-label">Active Tenants</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ plans|length }}</div>
+    <div class="stat-label">Plans Available</div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <span class="card-title" style="margin:0;">All Organisations</span>
+    <a href="{% url 'tenants:create_tenant' %}" class="btn btn-primary btn-sm">+ Provision New Org</a>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Organisation</th>
+        <th>Plan</th>
+        <th>Status</th>
+        <th>AI Minutes (this month)</th>
+        <th>Storage Used</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in tenant_data %}
+      <tr>
+        <td>
+          <strong>{{ item.tenant.name }}</strong><br>
+          <span style="color:#8b949e; font-size:12px;">{{ item.tenant.slug }}.cliplens.*</span>
+        </td>
+        <td><span class="badge-plan">{{ item.tenant.plan.name }}</span></td>
+        <td>
+          {% if item.tenant.is_active %}
+            <span class="badge-active">Active</span>
+          {% else %}
+            <span class="badge-inactive">Inactive</span>
+          {% endif %}
+        </td>
+        <td>
+          <div style="margin-bottom:4px; font-size:13px;">
+            {{ item.ai_minutes_used }} / {{ item.tenant.plan.ai_minutes_limit }} min
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill {% if item.ai_minutes_pct >= 95 %}critical{% elif item.ai_minutes_pct >= 80 %}warning{% endif %}"
+                 style="width: {{ item.ai_minutes_pct }}%"></div>
+          </div>
+        </td>
+        <td>
+          <div style="margin-bottom:4px; font-size:13px;">
+            {{ item.storage_gb_used }} / {{ item.tenant.plan.storage_limit_gb }} GB
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill {% if item.storage_pct >= 95 %}critical{% elif item.storage_pct >= 80 %}warning{% endif %}"
+                 style="width: {{ item.storage_pct }}%"></div>
+          </div>
+        </td>
+        <td>
+          <a href="{% url 'tenants:tenant_detail' item.tenant.pk %}" class="btn btn-secondary btn-sm">View</a>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6" style="text-align:center; color:#8b949e; padding:32px;">
+          No organisations yet.
+          <a href="{% url 'tenants:create_tenant' %}" style="color:#58a6ff;">Provision your first one →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

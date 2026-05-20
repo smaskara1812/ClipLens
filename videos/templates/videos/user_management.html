@@ -53,6 +53,12 @@
       </h1>
       <p>Manage all accounts, roles and channels.</p>
     </div>
+    {% if is_superadmin %}
+    <button class="btn btn-primary" onclick="openCreateModal()" style="margin-left:auto;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14" style="margin-right:6px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Create User
+    </button>
+    {% endif %}
   </div>
 
   <!-- Stats -->
@@ -128,7 +134,7 @@
         <td class="hide-sm" style="color:var(--text-muted);font-size:12px;">{{ u.date_joined|date:"M j, Y" }}</td>
         <td>
           <div class="action-btns">
-            {% if not u.is_superuser %}
+            {% if u != request.user %}
             <button class="btn btn-ghost btn-sm" onclick="toggleActive({{ u.id }}, {{ u.is_active|yesno:'true,false' }}, this)">
               {% if u.is_active %}Suspend{% else %}Restore{% endif %}
             </button>
@@ -138,8 +144,15 @@
               <option value="editor" {% if u.profile.role == 'editor' %}selected{% endif %}>Editor</option>
               <option value="superadmin" {% if u.profile.role == 'superadmin' %}selected{% endif %}>Superadmin</option>
             </select>
+            {% if is_superadmin %}
+            <button class="btn btn-ghost btn-sm" style="color:var(--red);"
+                    onclick="deleteUser({{ u.id }}, '{{ u.username|escapejs }}', this)"
+                    title="Delete user">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            </button>
+            {% endif %}
             {% else %}
-            <span style="font-size:12px;color:var(--text-subtle);">Protected</span>
+            <span style="font-size:12px;color:var(--text-subtle);">You</span>
             {% endif %}
           </div>
         </td>
@@ -149,7 +162,57 @@
   </table>
   </div>
 
-</div>
+  <!-- Create User Modal -->
+  <div id="createUserModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:100%;max-width:440px;margin:16px;padding:28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2 style="font-size:17px;font-weight:700;">Create New User</h2>
+      <button onclick="closeCreateModal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:20px;line-height:1;">&times;</button>
+    </div>
+    <div id="createUserError" style="display:none;background:var(--red-bg);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:10px 14px;font-size:13px;margin-bottom:16px;"></div>
+    <form id="createUserForm" onsubmit="submitCreateUser(event)">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">First Name</label>
+          <input class="form-input" name="first_name" placeholder="Jane" autocomplete="off">
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">Last Name</label>
+          <input class="form-input" name="last_name" placeholder="Smith" autocomplete="off">
+        </div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">Username <span style="color:var(--red);">*</span></label>
+        <input class="form-input" name="username" placeholder="janesmith" required autocomplete="off">
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">Email</label>
+        <input class="form-input" type="email" name="email" placeholder="jane@company.com" autocomplete="off">
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">Password <span style="color:var(--red);">*</span></label>
+        <div style="position:relative;">
+          <input class="form-input" type="password" name="password" id="createPwField" placeholder="Min. 8 characters" required autocomplete="new-password" style="padding-right:40px;">
+          <button type="button" onclick="togglePw()" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;">Show</button>
+        </div>
+      </div>
+      <div style="margin-bottom:20px;">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">Role <span style="color:var(--red);">*</span></label>
+        <select class="form-select" name="role">
+          <option value="viewer">Viewer — can browse and watch</option>
+          <option value="editor">Editor — can upload and manage content</option>
+          <option value="superadmin">Superadmin — full org access</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button type="button" class="btn btn-ghost" onclick="closeCreateModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="createSubmitBtn">Create User</button>
+      </div>
+    </form>
+  </div>
+</div><!-- end createUserModal -->
+
+</div><!-- end admin-layout -->
 {% endblock %}
 
 {% block extra_scripts %}
@@ -207,6 +270,90 @@ async function setRole(userId, role, sel) {
   } else {
     sel.disabled = false;
     showToast('error', 'Role update failed');
+  }
+}
+
+// ── Create User ──────────────────────────────────────────────────────────────
+function openCreateModal() {
+  document.getElementById('createUserModal').style.display = 'flex';
+  document.getElementById('createUserError').style.display = 'none';
+  document.getElementById('createUserForm').reset();
+  document.querySelector('#createUserForm [name="username"]').focus();
+}
+
+function closeCreateModal() {
+  document.getElementById('createUserModal').style.display = 'none';
+}
+
+function togglePw() {
+  const f = document.getElementById('createPwField');
+  const btn = f.nextElementSibling;
+  if (f.type === 'password') { f.type = 'text'; btn.textContent = 'Hide'; }
+  else { f.type = 'password'; btn.textContent = 'Show'; }
+}
+
+// Close modal on backdrop click
+document.getElementById('createUserModal').addEventListener('click', function(e) {
+  if (e.target === this) closeCreateModal();
+});
+
+async function submitCreateUser(e) {
+  e.preventDefault();
+  const form = e.target;
+  const btn = document.getElementById('createSubmitBtn');
+  const errBox = document.getElementById('createUserError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  const body = {
+    username:   form.username.value.trim(),
+    email:      form.email.value.trim(),
+    password:   form.password.value,
+    role:       form.role.value,
+    first_name: form.first_name.value.trim(),
+    last_name:  form.last_name.value.trim(),
+  };
+
+  try {
+    const res = await fetch('/api/admin/users/create/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('success', `User "${data.username}" created`);
+      closeCreateModal();
+      setTimeout(() => location.reload(), 800);
+    } else {
+      errBox.textContent = data.error || 'Failed to create user.';
+      errBox.style.display = 'block';
+    }
+  } catch {
+    errBox.textContent = 'Network error — please try again.';
+    errBox.style.display = 'block';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Create User';
+}
+
+// ── Delete User ──────────────────────────────────────────────────────────────
+async function deleteUser(userId, username, btn) {
+  if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+  btn.disabled = true;
+  const res = await fetch(`/api/admin/users/${userId}/delete/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  if (res.ok) {
+    showToast('success', `User "${username}" deleted`);
+    document.getElementById(`urow-${userId}`)?.remove();
+  } else {
+    const data = await res.json().catch(() => ({}));
+    showToast('error', data.error || 'Delete failed');
+    btn.disabled = false;
   }
 }
 </script>

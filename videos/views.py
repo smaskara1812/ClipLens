@@ -204,7 +204,13 @@ def _postgres_fuzzy_filter(qs, raw: str, fields: tuple[str, ...], threshold: flo
     )
 
 
-def _dispatch_process_video(video_id: str):
+def _tenant_slug(request) -> str:
+    """Return the active tenant slug from the request, or '' in single-tenant mode."""
+    tenant = getattr(request, 'tenant', None)
+    return tenant.slug if tenant else ''
+
+
+def _dispatch_process_video(video_id: str, tenant_slug: str = ''):
     """
     Send video processing to Celery if the broker is reachable,
     otherwise fall back to a daemon thread so dev works without Redis.
@@ -212,6 +218,7 @@ def _dispatch_process_video(video_id: str):
     try:
         _tasks.process_video_task.apply_async(
             args=[str(video_id)],
+            kwargs={'tenant_slug': tenant_slug} if tenant_slug else {},
             queue='processing',
         )
         _task_logger.info(f'Dispatched process_video_task via Celery for {video_id}')
@@ -224,10 +231,11 @@ def _dispatch_process_video(video_id: str):
         ).start()
 
 
-def _dispatch_upscale_video(video_id: str, target_long_edge: int) -> None:
+def _dispatch_upscale_video(video_id: str, target_long_edge: int, tenant_slug: str = '') -> None:
     try:
         _tasks.upscale_video_task.apply_async(
             args=[str(video_id), int(target_long_edge)],
+            kwargs={'tenant_slug': tenant_slug} if tenant_slug else {},
             queue='processing',
         )
         _task_logger.info('Dispatched upscale_video_task for %s → %s', video_id, target_long_edge)
@@ -245,10 +253,11 @@ def _dispatch_upscale_video(video_id: str, target_long_edge: int) -> None:
         threading.Thread(target=_run, daemon=True).start()
 
 
-def _dispatch_upscale_photo(photo_id: str, target_long_edge: int) -> None:
+def _dispatch_upscale_photo(photo_id: str, target_long_edge: int, tenant_slug: str = '') -> None:
     try:
         _tasks.upscale_photo_task.apply_async(
             args=[str(photo_id), int(target_long_edge)],
+            kwargs={'tenant_slug': tenant_slug} if tenant_slug else {},
             queue='processing',
         )
         _task_logger.info('Dispatched upscale_photo_task for %s → %s', photo_id, target_long_edge)
@@ -1997,7 +2006,16 @@ def video_purge(request, video_id):
         'file_size': video.file_size,
         'upscaled_size': video.upscaled_size,
     }
+    freed_bytes = (snap.get('file_size') or 0) + (snap.get('upscaled_size') or 0)
     video.delete()  # fires post_delete signal → files on disk removed
+    # Log freed storage in metering
+    _slug = _tenant_slug(request)
+    if _slug and freed_bytes:
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(_slug, -freed_bytes)
+        except Exception:
+            pass
     log_activity(request, 'purge',
                  target_type='Video', target_id=snap['id'], target_label=snap['title'],
                  verb='permanently deleted video', metadata=snap)
@@ -2041,6 +2059,14 @@ def photo_purge(request, photo_id):
             except Exception:
                 pass
     photo.delete()
+    # Log freed storage in metering
+    _slug = _tenant_slug(request)
+    if _slug and snap.get('file_size'):
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(_slug, -(snap['file_size']))
+        except Exception:
+            pass
     log_activity(request, 'purge',
                  target_type='Photo', target_id=snap['id'], target_label=snap['title'],
                  verb='permanently deleted photo', metadata=snap)
@@ -3059,6 +3085,22 @@ def video_upload(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # ── Multi-tenant quota pre-flight ─────────────────────────────────────────
+    _slug = _tenant_slug(request)
+    if _slug:
+        try:
+            from tenants.metering import check_quota, QuotaExceeded
+            file_size = request.data.get('video_file')
+            file_size_bytes = getattr(file_size, 'size', 0) if file_size else 0
+            check_quota(_slug, 'storage_gb', additional=file_size_bytes / 1024**3)
+            check_quota(_slug, 'ai_minutes')
+        except QuotaExceeded as qe:
+            return Response(
+                {'error': f'Plan quota exceeded: {qe.resource} ({qe.used:.1f}/{qe.limit:.1f}). '
+                          f'Please upgrade your plan or contact support.'},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
     serializer = VideoUploadSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -3076,6 +3118,15 @@ def video_upload(request):
         video.thumbnail = thumbnail_file
     video.save()
 
+    # ── Log storage usage ─────────────────────────────────────────────────────
+    _slug = _tenant_slug(request)
+    if _slug and video.file_size:
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(_slug, video.file_size)
+        except Exception:
+            pass  # metering failures must never block uploads
+
     # Optionally add to a playlist (used by folder/event uploads)
     playlist_id = request.data.get('playlist_id', '').strip()
     if playlist_id:
@@ -3089,7 +3140,7 @@ def video_upload(request):
     # Notify subscribers
     _notify_subscribers_new_video(video)
 
-    _dispatch_process_video(video.id)
+    _dispatch_process_video(video.id, tenant_slug=_tenant_slug(request))
 
     log_activity(
         request, 'upload', target=video, verb='uploaded video',
@@ -3394,7 +3445,7 @@ def reprocess_video(request, video_id):
     if video.status == Video.STATUS_PROCESSING:
         return Response({'error': 'Already processing'}, status=status.HTTP_400_BAD_REQUEST)
 
-    _dispatch_process_video(video.id)
+    _dispatch_process_video(video.id, tenant_slug=_tenant_slug(request))
     return Response({'message': 'Reprocessing started', 'id': str(video.id)})
 
 
@@ -3466,7 +3517,7 @@ def video_upscale_start(request, video_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    _dispatch_upscale_video(video.id, pr['long_edge'])
+    _dispatch_upscale_video(video.id, pr['long_edge'], tenant_slug=_tenant_slug(request))
     return Response({
         'message': 'Upscale started',
         'id': str(video.id),
@@ -3542,7 +3593,7 @@ def photo_upscale_start(request, photo_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    _dispatch_upscale_photo(photo.id, pr['long_edge'])
+    _dispatch_upscale_photo(photo.id, pr['long_edge'], tenant_slug=_tenant_slug(request))
     return Response({
         'message': 'Upscale started',
         'id': str(photo.id),
@@ -4239,7 +4290,11 @@ def subtitle_upload(request, video_id):
     # searchable via in-video speech search (works for VTT and SRT uploads).
     try:
         from .tasks import reindex_segments_task
-        reindex_segments_task.apply_async(args=[subtitle.id], queue='default')
+        reindex_segments_task.apply_async(
+            args=[subtitle.id],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='default',
+        )
     except Exception:
         pass  # non-critical — subtitle still saved, search index rebuilt on next regenerate
 
@@ -4285,7 +4340,11 @@ def subtitle_regenerate(request, video_id):
     VideoSegment.objects.filter(video=video).delete()
     try:
         from .tasks import generate_captions_task
-        generate_captions_task.apply_async(args=[str(video_id), language], queue='captions')
+        generate_captions_task.apply_async(
+            args=[str(video_id), language],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='captions',
+        )
         log_activity(request, 'regenerate', target=video,
                      verb=f'regenerated captions ({language})',
                      metadata={'language': language})
@@ -4323,7 +4382,7 @@ def subtitle_translate(request, video_id):
         from .tasks import translate_subtitles_task
         translate_subtitles_task.apply_async(
             args=[str(video_id), list(target_languages)],
-            kwargs={'source_subtitle_id': source_subtitle_id},
+            kwargs={'source_subtitle_id': source_subtitle_id, 'tenant_slug': _tenant_slug(request)},
             queue='translation',
         )
         log_activity(request, 'translate', target=video,
@@ -4949,7 +5008,11 @@ def subtitle_cues(request, video_id, subtitle_id):
     # Keep in-video speech search in sync with subtitle text edits.
     try:
         from .tasks import reindex_segments_task
-        reindex_segments_task.apply_async(args=[subtitle.id], queue='default')
+        reindex_segments_task.apply_async(
+            args=[subtitle.id],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='default',
+        )
     except Exception:
         pass
     return Response({'ok': True, 'cue_count': len(cues)})
@@ -4975,7 +5038,11 @@ def audio_track_extract(request, video_id):
         return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
     try:
         from .tasks import extract_audio_tracks_task
-        extract_audio_tracks_task.apply_async(args=[str(video_id)], queue='processing')
+        extract_audio_tracks_task.apply_async(
+            args=[str(video_id)],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='processing',
+        )
         return Response({'message': 'Audio track extraction started.'})
     except Exception as exc:
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -5007,7 +5074,11 @@ def video_frames_analyze(request, video_id):
     VideoFrame.objects.filter(video=video).delete()
     try:
         from .tasks import analyze_video_frames_task
-        analyze_video_frames_task.apply_async(args=[str(video_id)], queue='processing')
+        analyze_video_frames_task.apply_async(
+            args=[str(video_id)],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='processing',
+        )
         return Response({'message': 'Visual analysis started.'})
     except Exception as exc:
         return Response({'error': f'Could not dispatch task: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -5036,7 +5107,11 @@ def run_diarization(request, video_id):
 
     try:
         from .tasks import run_diarization_task
-        task = run_diarization_task.apply_async(args=[str(video_id)], queue='captions')
+        task = run_diarization_task.apply_async(
+            args=[str(video_id)],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='captions',
+        )
         payload = {'task_id': task.id, 'segment_count': segment_count}
         if segment_count == 0:
             payload['warning'] = (
@@ -6099,6 +6174,99 @@ def user_management_toggle(request, user_id):
     return Response({'id': target.id, 'is_active': target.is_active, 'is_staff': target.is_staff, 'role': role})
 
 
+@api_view(['POST'])
+def user_create_api(request):
+    """
+    POST /api/admin/users/create/
+    Create a new user in the current tenant DB.
+    Superadmin only. Returns the new user data on success.
+    """
+    if not request.user.is_authenticated or not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+    username   = (request.data.get('username') or '').strip()
+    email      = (request.data.get('email') or '').strip().lower()
+    password   = request.data.get('password') or ''
+    role       = request.data.get('role', UserProfile.ROLE_VIEWER)
+    first_name = (request.data.get('first_name') or '').strip()
+    last_name  = (request.data.get('last_name') or '').strip()
+
+    # Validate
+    if not username:
+        return Response({'error': 'Username is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(password) < 8:
+        return Response({'error': 'Password must be at least 8 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+    if role not in (UserProfile.ROLE_SUPERADMIN, UserProfile.ROLE_EDITOR, UserProfile.ROLE_VIEWER):
+        return Response({'error': 'Invalid role.'}, status=status.HTTP_400_BAD_REQUEST)
+    if User.objects.filter(username=username).exists():
+        return Response({'error': f"Username '{username}' is already taken."}, status=status.HTTP_400_BAD_REQUEST)
+    if email and User.objects.filter(email=email).exists():
+        return Response({'error': f"Email '{email}' is already in use."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Create user — the post_save signal auto-creates a UserProfile (viewer by default)
+    user = User.objects.create_user(
+        username=username,
+        email=email,
+        password=password,
+        first_name=first_name,
+        last_name=last_name,
+    )
+
+    # Set the requested role (signal already created the profile as viewer)
+    profile, _ = UserProfile.objects.get_or_create(user=user, defaults={'role': role})
+    if profile.role != role:
+        profile.role = role
+        profile.save(update_fields=['role'])
+
+    log_activity(
+        request, 'user_created', target=user,
+        target_type='User', target_label=username,
+        verb=f'created user {username} with role {role}',
+    )
+
+    return Response({
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'role': profile.role,
+        'is_active': user.is_active,
+        'date_joined': user.date_joined,
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['DELETE'])
+def user_delete_api(request, user_id):
+    """
+    DELETE /api/admin/users/<id>/delete/
+    Remove a user from the current tenant. Cannot delete yourself or the last superadmin.
+    Superadmin only.
+    """
+    if not request.user.is_authenticated or not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+    target = get_object_or_404(User, id=user_id)
+
+    if target == request.user:
+        return Response({'error': 'You cannot delete your own account.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Prevent deleting the last superadmin
+    superadmin_count = UserProfile.objects.filter(role=UserProfile.ROLE_SUPERADMIN).count()
+    try:
+        is_superadmin_target = target.profile.role == UserProfile.ROLE_SUPERADMIN
+    except Exception:
+        is_superadmin_target = False
+    if is_superadmin_target and superadmin_count <= 1:
+        return Response({'error': 'Cannot delete the last superadmin.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    log_activity(
+        request, 'user_deleted', target=target,
+        target_type='User', target_label=target.username,
+        verb=f'deleted user {target.username}',
+    )
+    target.delete()
+    return Response({'ok': True})
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Photo / Digital Asset Management
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -6646,6 +6814,20 @@ def photo_upload(request):
     if not file_obj:
         return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # ── Multi-tenant quota pre-flight ─────────────────────────────────────────
+    _slug = _tenant_slug(request)
+    if _slug:
+        try:
+            from tenants.metering import check_quota, QuotaExceeded
+            check_quota(_slug, 'storage_gb', additional=file_obj.size / 1024**3)
+            check_quota(_slug, 'ai_minutes')
+        except QuotaExceeded as qe:
+            return Response(
+                {'error': f'Plan quota exceeded: {qe.resource} ({qe.used:.1f}/{qe.limit:.1f}). '
+                          f'Please upgrade your plan or contact support.'},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
     # Extension-based validation (more reliable than content-type for large/RAW files).
     # Browsers often send 'application/octet-stream' for HEIC, PSD, RAW files.
     ALLOWED_PHOTO_EXTS = {
@@ -6716,8 +6898,17 @@ def photo_upload(request):
         except Album.DoesNotExist:
             pass
 
+    # ── Log storage usage ─────────────────────────────────────────────────────
+    if _slug and photo.file_size:
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(_slug, photo.file_size)
+        except Exception:
+            pass
+
     _tasks.analyze_photo_task.apply_async(
         args=[str(photo.id)],
+        kwargs={'tenant_slug': _tenant_slug(request)},
         queue='processing',
     )
 
@@ -8576,7 +8767,11 @@ def stream_on_publish(request):
 
     # Start FFmpeg via Celery (live queue) — portable, no shell scripts needed
     from . import tasks as _tasks
-    _tasks.run_live_ffmpeg.delay(live.id, raw_key)
+    _tasks.run_live_ffmpeg.apply_async(
+        args=[live.id, raw_key],
+        kwargs={'tenant_slug': _tenant_slug(request)},
+        queue='live',
+    )
 
     return JsonResponse({'status': 'ok'})
 
@@ -8632,7 +8827,11 @@ def generate_summary_api(request, video_id):
         return Response({'error': 'forbidden'}, status=403)
 
     from .tasks import generate_video_summary_task
-    generate_video_summary_task.apply_async(args=[str(video_id)], queue='default')
+    generate_video_summary_task.apply_async(
+        args=[str(video_id)],
+        kwargs={'tenant_slug': _tenant_slug(request)},
+        queue='default',
+    )
     return Response({'status': 'queued'})
 
 

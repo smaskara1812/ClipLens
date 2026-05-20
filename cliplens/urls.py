@@ -16,6 +16,9 @@ urlpatterns = [
     path('login/', DebugLoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(next_page='/player/'), name='logout'),
 
+    # ── Control plane (accessible at admin.cliplens.* or /platform/ locally) ──
+    path('platform/', include('tenants.urls', namespace='tenants')),
+
     path('', include('videos.urls')),
 
     # Serve media files in all environments (dev + production)

@@ -165,8 +165,10 @@ urlpatterns = [
     path('api/notifications/read/',  views.mark_notifications_read),
 
     # ── API: Admin ──
-    path('api/admin/users/',           views.user_management_api),
-    path('api/admin/users/<int:user_id>/', views.user_management_toggle),
+    path('api/admin/users/',                          views.user_management_api),
+    path('api/admin/users/create/',                   views.user_create_api),
+    path('api/admin/users/<int:user_id>/',            views.user_management_toggle),
+    path('api/admin/users/<int:user_id>/delete/',     views.user_delete_api),
 
     # ── Media map (photos + videos with location) ──
     path('media/map/',                       views.media_map_page,       name='media_map'),

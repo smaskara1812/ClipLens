@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db.models import Q
+from django.core.cache import cache as _cache
 
 
 def sidebar_context(request):
@@ -51,16 +52,88 @@ def site_url(request):
     """
     Injects SITE_URL into every Django template context.
 
-    Usage in templates:
-        {{ SITE_URL }}                          → http://192.168.1.100:8080
-        {{ SITE_URL }}/api/videos/              → full API URL
-        {{ SITE_URL }}{{ video.hls_url }}       → full HLS playlist URL
-
-    Configured via SITE_URL in .env — no hardcoded hosts anywhere.
+    In single-tenant mode this returns settings.SITE_URL (from .env).
+    In multi-tenant mode it derives the origin from the actual request host
+    so that {{ SITE_URL }} on testorg1.cliplens.local returns
+    http://testorg1.cliplens.local — not the hardcoded localhost value.
+    This fixes all CORS errors caused by cross-origin API calls in JS templates.
     """
+    if getattr(settings, 'MULTI_TENANT', False) and request is not None:
+        try:
+            scheme = 'https' if request.is_secure() else 'http'
+            host = request.get_host()  # includes port if non-standard
+            return {'SITE_URL': f'{scheme}://{host}'}
+        except Exception:
+            pass
     return {
         'SITE_URL': getattr(settings, 'SITE_URL', 'http://localhost:8000'),
     }
+
+
+def tenant_usage_warning(request):
+    """
+    Injects usage warning flags into every template context when MULTI_TENANT=True.
+
+    Available variables:
+        usage_warning        — 'warning' | 'critical' | None
+        usage_warning_detail — dict with resource name, used, limit, pct (or None)
+
+    Cached for 5 minutes per tenant to avoid hammering the control DB on every request.
+    """
+    if not getattr(settings, 'MULTI_TENANT', False):
+        return {'usage_warning': None, 'usage_warning_detail': None}
+
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return {'usage_warning': None, 'usage_warning_detail': None}
+
+    cache_key = f'usage_warning_{tenant.slug}'
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        from tenants.metering import get_monthly_usage, usage_warning_level
+        usage = get_monthly_usage(tenant.slug)
+        plan = usage.get('plan')
+        if not plan:
+            return {'usage_warning': None, 'usage_warning_detail': None}
+
+        # Check both resources; surface the most severe
+        ai_level = usage_warning_level(usage['ai_minutes'], plan.ai_minutes_limit)
+        storage_level = usage_warning_level(usage['storage_gb'], plan.storage_limit_gb)
+
+        severity_rank = {None: 0, 'warning': 1, 'critical': 2}
+        if severity_rank.get(ai_level, 0) >= severity_rank.get(storage_level, 0):
+            worst_level = ai_level
+            if ai_level and plan.ai_minutes_limit > 0:
+                detail = {
+                    'resource': 'AI processing',
+                    'used': round(usage['ai_minutes'], 1),
+                    'limit': plan.ai_minutes_limit,
+                    'pct': round(usage['ai_minutes'] / plan.ai_minutes_limit * 100, 1),
+                    'unit': 'min',
+                }
+            else:
+                detail = None
+        else:
+            worst_level = storage_level
+            if storage_level and plan.storage_limit_gb > 0:
+                detail = {
+                    'resource': 'Storage',
+                    'used': round(usage['storage_gb'], 2),
+                    'limit': plan.storage_limit_gb,
+                    'pct': round(usage['storage_gb'] / plan.storage_limit_gb * 100, 1),
+                    'unit': 'GB',
+                }
+            else:
+                detail = None
+
+        result = {'usage_warning': worst_level, 'usage_warning_detail': detail}
+        _cache.set(cache_key, result, 300)  # cache 5 min
+        return result
+    except Exception:
+        return {'usage_warning': None, 'usage_warning_detail': None}
 
 
 def user_role(request):

@@ -1,0 +1,111 @@
+{% extends "tenants/base.html" %}
+{% block title %}{{ tenant.name }} — ClipLens Control Plane{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+    <div>
+      <h1>{{ tenant.name }}</h1>
+      <p>
+        <code style="color:#58a6ff;">{{ tenant.slug }}.cliplens.*</code>
+        &nbsp;|&nbsp; DB: <code style="color:#8b949e;">{{ tenant.db_name }}</code>
+        &nbsp;|&nbsp; Media: <code style="color:#8b949e;">{{ tenant.media_folder }}</code>
+      </p>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <form method="post" action="{% url 'tenants:toggle_tenant' tenant.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn {% if tenant.is_active %}btn-danger{% else %}btn-primary{% endif %} btn-sm">
+          {% if tenant.is_active %}Deactivate{% else %}Activate{% endif %}
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Usage meters -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ usage.ai_minutes }}</div>
+    <div class="stat-label">AI Minutes Used (this month)</div>
+    <div class="progress-bar" style="margin-top:10px;">
+      {% with pct=usage.ai_minutes|floatformat:0 %}
+      <div class="progress-fill {% if usage.ai_minutes >= tenant.plan.ai_minutes_limit %}critical{% endif %}"
+           style="width: {% widthratio usage.ai_minutes tenant.plan.ai_minutes_limit 100 %}%"></div>
+      {% endwith %}
+    </div>
+    <small style="color:#8b949e; font-size:12px; margin-top:4px; display:block;">
+      Limit: {{ tenant.plan.ai_minutes_limit }} min
+    </small>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ usage.storage_gb }} GB</div>
+    <div class="stat-label">Storage Used</div>
+    <div class="progress-bar" style="margin-top:10px;">
+      <div class="progress-fill {% if usage.storage_gb >= tenant.plan.storage_limit_gb %}critical{% endif %}"
+           style="width: {% widthratio usage.storage_gb tenant.plan.storage_limit_gb 100 %}%"></div>
+    </div>
+    <small style="color:#8b949e; font-size:12px; margin-top:4px; display:block;">
+      Limit: {{ tenant.plan.storage_limit_gb }} GB
+    </small>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ tenant.plan.name }}</div>
+    <div class="stat-label">Current Plan</div>
+    <div style="margin-top:10px;">
+      <form method="post" action="{% url 'tenants:change_plan' tenant.pk %}" style="display:flex; gap:6px;">
+        {% csrf_token %}
+        <select name="plan_id" style="flex:1; font-size:12px; padding:4px 8px;">
+          {% for plan in plans %}
+            <option value="{{ plan.pk }}" {% if plan.pk == tenant.plan.pk %}selected{% endif %}>
+              {{ plan.name }}
+            </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-secondary btn-sm">Change</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Recent usage events -->
+<div class="card">
+  <div class="card-title">Recent Usage Events</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Type</th>
+        <th>Value</th>
+        <th>Task ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in recent_events %}
+      <tr>
+        <td style="font-size:12px; color:#8b949e;">{{ event.timestamp|date:"Y-m-d H:i:s" }}</td>
+        <td>{{ event.get_event_type_display }}</td>
+        <td>
+          {% if event.event_type == 'storage_delta' %}
+            {{ event.value|floatformat:0 }} bytes
+          {% else %}
+            {{ event.value|floatformat:1 }} min
+          {% endif %}
+        </td>
+        <td style="font-size:11px; color:#8b949e;">{{ event.task_id|default:"—" }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="4" style="text-align:center; color:#8b949e; padding:24px;">
+          No usage events yet for this month.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div style="margin-top:16px;">
+  <a href="{% url 'tenants:dashboard' %}" class="btn btn-secondary btn-sm">← Back to Dashboard</a>
+</div>
+{% endblock %}

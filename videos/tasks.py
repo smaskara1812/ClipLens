@@ -84,7 +84,7 @@ def _open_any_photo(img_path: Path, ext: str = ''):
     default_retry_delay=30,
     acks_late=True,
 )
-def process_video_task(self, video_id: str, skip_ai: bool = False):
+def process_video_task(self, video_id: str, skip_ai: bool = False, **kwargs):
     """
     Convert uploaded video to HLS (single or multi-quality) + extract thumbnail.
     Always runs regardless of skip_ai.
@@ -92,8 +92,12 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
     skip_ai=False (default): also triggers Whisper captions + frame analysis afterwards.
     skip_ai=True: HLS + thumbnail only — used for live stream recordings when
                   LIVE_STREAM_AUTO_PROCESS=false. Editor triggers AI manually later.
+
+    tenant_slug (via **kwargs): forwarded to chained tasks so they inherit tenant context.
     """
     from .services import process_video
+    tenant_slug = kwargs.get('tenant_slug', '')
+    chain_kwargs = {'tenant_slug': tenant_slug} if tenant_slug else {}
     try:
         process_video(video_id)
 
@@ -102,6 +106,7 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
             if getattr(settings, 'AUTO_CAPTION_ON_UPLOAD', True):
                 generate_captions_task.apply_async(
                     args=[video_id],
+                    kwargs=chain_kwargs,
                     queue='captions',
                     countdown=5,
                 )
@@ -109,6 +114,7 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
             if getattr(settings, 'FRAME_ANALYSIS_ENABLED', True):
                 analyze_video_frames_task.apply_async(
                     args=[video_id],
+                    kwargs=chain_kwargs,
                     queue='processing',
                     countdown=10,
                 )
@@ -117,6 +123,7 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
         if getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True):
             generate_seek_thumbnails_task.apply_async(
                 args=[video_id],
+                kwargs=chain_kwargs,
                 queue='processing',
                 countdown=15,
             )
@@ -135,7 +142,7 @@ def process_video_task(self, video_id: str, skip_ai: bool = False):
     max_retries=2,
     default_retry_delay=30,
 )
-def generate_seek_thumbnails_task(self, video_id: str):
+def generate_seek_thumbnails_task(self, video_id: str, **kwargs):
     """
     Generate a sprite sheet (single JPEG) from the original video for
     seek-bar hover / scrub preview.  One tile per SEEK_THUMBNAIL_INTERVAL
@@ -221,7 +228,7 @@ def generate_seek_thumbnails_task(self, video_id: str):
     default_retry_delay=60,
     acks_late=True,
 )
-def upscale_video_task(self, video_id: str, target_long_edge: int):
+def upscale_video_task(self, video_id: str, target_long_edge: int, **kwargs):
     from .upscale import run_video_upscale_pipeline
 
     try:
@@ -239,7 +246,7 @@ def upscale_video_task(self, video_id: str, target_long_edge: int):
     default_retry_delay=60,
     acks_late=True,
 )
-def upscale_photo_task(self, photo_id: str, target_long_edge: int):
+def upscale_photo_task(self, photo_id: str, target_long_edge: int, **kwargs):
     from .upscale import run_photo_upscale_pipeline
 
     try:
@@ -345,7 +352,7 @@ def _extract_audio_wav(source_path: str, out_path: str) -> bool:
     default_retry_delay=60,
     acks_late=True,
 )
-def generate_captions_task(self, video_id: str, language: str = 'en'):
+def generate_captions_task(self, video_id: str, language: str = 'en', **kwargs):
     """
     Use faster-whisper to transcribe the video and create a Subtitle record.
 
@@ -459,7 +466,7 @@ def generate_captions_task(self, video_id: str, language: str = 'en'):
     max_retries=2,
     default_retry_delay=60,
 )
-def generate_video_summary_task(self, video_id: str):
+def generate_video_summary_task(self, video_id: str, **kwargs):
     """
     Generate an AI summary for a video using Ollama.
 
@@ -687,7 +694,7 @@ def _cluster_embeddings(embeddings, threshold=0.35):
     default_retry_delay=30,
     acks_late=True,
 )
-def analyze_video_frames_task(self, video_id: str):
+def analyze_video_frames_task(self, video_id: str, **kwargs):
     """
     Phase A — Object Detection (YOLOv8):
       Extract frames, detect objects, build visual search index.
@@ -1328,7 +1335,7 @@ def _parse_vtt_segments(vtt_text: str) -> list[dict]:
     max_retries=1,
     acks_late=True,
 )
-def reindex_segments_task(subtitle_id: int):
+def reindex_segments_task(subtitle_id: int, **kwargs):
     """
     Rebuild VideoSegment rows by parsing a saved Subtitle's VTT file.
     Called after subtitle upload or caption regeneration so in-video speech
@@ -1496,7 +1503,7 @@ def _build_vtt(cues):
     time_limit=2100,
 )
 def translate_subtitles_task(self, video_id: str, target_languages: list,
-                              source_subtitle_id: int = None):
+                              source_subtitle_id: int = None, **kwargs):
     """
     Translate the source subtitle of a video into each target language using
     facebook/nllb-200-distilled-600M.
@@ -1618,7 +1625,7 @@ def translate_subtitles_task(self, video_id: str, target_languages: list,
     max_retries=1,
     acks_late=True,
 )
-def extract_audio_tracks_task(self, video_id: str):
+def extract_audio_tracks_task(self, video_id: str, **kwargs):
     """
     Detect all audio streams in the source file and produce an HLS audio-only
     playlist for each one so the player can offer audio track switching.
@@ -1853,7 +1860,7 @@ def _extract_photo_exif(img_path):
     default_retry_delay=30,
     acks_late=True,
 )
-def analyze_photo_task(self, photo_id: str):
+def analyze_photo_task(self, photo_id: str, **kwargs):
     """
     Run AI analysis on a single uploaded photo:
       - YOLOv8  → object labels
@@ -2453,7 +2460,7 @@ def _upsert_speaker_face_suggestions(video, segments: list) -> int:
     max_retries=1,
     acks_late=True,
 )
-def run_diarization_task(self, video_id: str):
+def run_diarization_task(self, video_id: str, **kwargs):
     """
     Run speaker diarization on a video using pyannote.audio.
     Assigns a speaker_label (e.g. SPEAKER_00) to every VideoSegment.
@@ -2486,7 +2493,12 @@ def run_diarization_task(self, video_id: str):
         if getattr(settings, 'AUDIO_EVENTS_ENABLED', True):
             try:
                 queue = getattr(settings, 'AUDIO_EVENTS_QUEUE', 'audio')
-                detect_audio_events_task.apply_async(args=[str(video.id)], queue=queue)
+                _slug = kwargs.get('tenant_slug', '')
+                detect_audio_events_task.apply_async(
+                    args=[str(video.id)],
+                    kwargs={'tenant_slug': _slug} if _slug else {},
+                    queue=queue,
+                )
                 audio_queued = True
                 logger.info(
                     f'run_diarization_task: no transcript segments for {video.id}; '
@@ -2807,7 +2819,12 @@ def run_diarization_task(self, video_id: str):
     if getattr(settings, 'AUDIO_EVENTS_ENABLED', True):
         try:
             queue = getattr(settings, 'AUDIO_EVENTS_QUEUE', 'audio')
-            detect_audio_events_task.apply_async(args=[str(video.id)], queue=queue)
+            _slug = kwargs.get('tenant_slug', '')
+            detect_audio_events_task.apply_async(
+                args=[str(video.id)],
+                kwargs={'tenant_slug': _slug} if _slug else {},
+                queue=queue,
+            )
             logger.info(
                 f'run_diarization_task: queued detect_audio_events_task '
                 f'for {video.id} on queue "{queue}"'
@@ -3025,7 +3042,7 @@ def _collapse_same_label_windows(windows: list[tuple[float, float, str, float]],
     default_retry_delay=120,
     acks_late=True,
 )
-def detect_audio_events_task(self, video_id: str):
+def detect_audio_events_task(self, video_id: str, **kwargs):
     """
     Detect non-speech audio events and silence spans for a video.
 
@@ -3268,7 +3285,7 @@ def detect_audio_events_task(self, video_id: str):
 
 @shared_task(bind=True, name='videos.tasks.run_live_ffmpeg',
              queue='live', time_limit=10800)   # 3hr hard cap; task blocks for stream duration
-def run_live_ffmpeg(self, live_stream_id, stream_key):
+def run_live_ffmpeg(self, live_stream_id, stream_key, **kwargs):
     """
     Runs FFmpeg for the duration of a live stream.
     Reads RTMP from mediamtx, outputs HLS segments for viewers + records MP4.
@@ -3332,12 +3349,17 @@ def run_live_ffmpeg(self, live_stream_id, stream_key):
         status=LiveStream.STATUS_PROCESSING,
         ended_at=_tz.now(),
     )
-    process_livestream_recording.delay(live_stream_id)
+    _slug = kwargs.get('tenant_slug', '')
+    process_livestream_recording.apply_async(
+        args=[live_stream_id],
+        kwargs={'tenant_slug': _slug} if _slug else {},
+        queue='processing',
+    )
 
 
 @shared_task(bind=True, name='videos.tasks.process_livestream_recording',
              queue='processing', max_retries=1, soft_time_limit=7200, time_limit=7500)
-def process_livestream_recording(self, live_stream_id):
+def process_livestream_recording(self, live_stream_id, **kwargs):
     """
     Called after a live stream ends.
     Creates a Video record from the recording and runs the full AI pipeline.
@@ -3394,11 +3416,13 @@ def process_livestream_recording(self, live_stream_id):
 
     auto_process = getattr(settings, 'LIVE_STREAM_AUTO_PROCESS', True)
 
+    _slug = kwargs.get('tenant_slug', '')
+    _chain_kwargs = {'tenant_slug': _slug} if _slug else {}
     if auto_process:
         logger.info(f'[livestream] Auto-processing ON — queuing full pipeline for Video id={video.id}')
-        process_video_task.delay(str(video.id), skip_ai=False)
+        process_video_task.apply_async(args=[str(video.id)], kwargs={**_chain_kwargs, 'skip_ai': False}, queue='processing')
     else:
         # HLS encoding + thumbnail always run so the video is watchable.
         # AI (Whisper, YOLO, CLIP, faces, speakers) is skipped — editor triggers manually.
         logger.info(f'[livestream] Auto-processing OFF — queuing HLS+thumbnail only for Video id={video.id}')
-        process_video_task.delay(str(video.id), skip_ai=True)
+        process_video_task.apply_async(args=[str(video.id)], kwargs={**_chain_kwargs, 'skip_ai': True}, queue='processing')

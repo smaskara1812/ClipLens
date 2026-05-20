@@ -10,6 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'freestream-dev-secret-key-2024')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG_PROPAGATE_EXCEPTIONS = DEBUG  # surface full tracebacks in runserver during dev
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 def _origin_from_url(url: str) -> str | None:
@@ -56,12 +57,14 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_celery_results',
     'videos',
+    'tenants.apps.TenantsConfig',
     'debug_toolbar',
 ]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'debug_toolbar.middleware.DebugToolbarMiddleware',
+    'tenants.middleware.TenantMiddleware',   # must be first after CORS so all views see request.tenant
     'videos.middleware.HLSHeadersMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # serve static files in production
@@ -98,9 +101,10 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
-                'videos.context_processors.site_url',        # injects SITE_URL into all templates
-                'videos.context_processors.user_role',       # injects is_editor / is_superadmin / user_role
-                'videos.context_processors.sidebar_context', # injects subscribed_channels for sidebar
+                'videos.context_processors.site_url',             # injects SITE_URL into all templates
+                'videos.context_processors.user_role',            # injects is_editor / is_superadmin / user_role
+                'videos.context_processors.sidebar_context',      # injects subscribed_channels for sidebar
+                'videos.context_processors.tenant_usage_warning', # injects usage_warning / usage_warning_detail
             ],
         },
     },
@@ -167,6 +171,39 @@ else:
         }
     }
 
+# ── Multi-Tenancy ──────────────────────────────────────────────────────────────
+# Set MULTI_TENANT=true in .env to enable subdomain-based tenant routing.
+# When False the app behaves exactly as before (single DB, no tenant isolation).
+MULTI_TENANT = os.getenv('MULTI_TENANT', 'false').lower() == 'true'
+
+if MULTI_TENANT and _use_postgres:
+    # Control plane DB — stores Tenant, Plan, UsageEvent rows
+    DATABASES['control'] = {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('CONTROL_DB_NAME',     'freestream_control'),
+        'USER': os.getenv('POSTGRES_USER',       'postgres'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
+        'HOST': os.getenv('POSTGRES_HOST',       'localhost'),
+        'PORT': os.getenv('POSTGRES_PORT',       '5432'),
+        'OPTIONS': {'connect_timeout': 5},
+    }
+
+    # DB router — routes tenants app → control, everything else → active tenant DB
+    DATABASE_ROUTERS = ['tenants.db_router.TenantDatabaseRouter']
+
+    # Allow *.cliplens.local and *.your-domain.com subdomains
+    _extra_hosts = [
+        '.cliplens.local',
+        '.cliplens.com',
+    ]
+    ALLOWED_HOSTS = list(set(ALLOWED_HOSTS + _extra_hosts))
+
+    # Trust CSRF from all subdomains (local dev)
+    CSRF_TRUSTED_ORIGINS = list(set(CSRF_TRUSTED_ORIGINS + [
+        'http://*.cliplens.local',
+        'https://*.cliplens.com',
+    ]))
+
 # ── Cache (Redis — reuses the Celery broker, separate DB index 1) ─────────────
 CACHES = {
     'default': {
@@ -225,6 +262,11 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# In multi-tenant mode use the tenant-aware storage backend so every upload
+# lands in media/tenants/<slug>/ rather than the shared media/ root.
+if MULTI_TENANT:
+    DEFAULT_FILE_STORAGE = 'tenants.storage.TenantFileSystemStorage'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
