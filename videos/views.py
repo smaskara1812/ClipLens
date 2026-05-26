@@ -3100,6 +3100,9 @@ def video_upload(request):
                           f'Please upgrade your plan or contact support.'},
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
+        except Exception:
+            # Metering failures must never block uploads — log and continue
+            _task_logger.exception("Quota pre-flight check failed for tenant '%s', allowing upload", _slug)
 
     serializer = VideoUploadSerializer(data=request.data)
     if not serializer.is_valid():
@@ -6827,6 +6830,8 @@ def photo_upload(request):
                           f'Please upgrade your plan or contact support.'},
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
+        except Exception:
+            _task_logger.exception("Quota pre-flight check failed for tenant '%s', allowing upload", _slug)
 
     # Extension-based validation (more reliable than content-type for large/RAW files).
     # Browsers often send 'application/octet-stream' for HEIC, PSD, RAW files.

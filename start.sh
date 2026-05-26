@@ -40,6 +40,10 @@ echo ""
 echo "ClipLens — starting dev environment"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Ensure nginx upload temp dir exists (nginx uses this to buffer large uploads;
+# path is permanent but the dir may need to be recreated after OS reinstall)
+mkdir -p "$HOME/.nginx_tmp/client_body"
+
 if ! redis-cli ping &>/dev/null; then
   echo "  ✗ Redis is not running."
   echo "    Start it:  brew services start redis"
@@ -60,25 +64,34 @@ echo "  [1/6] Django dev server       → http://localhost:8000"
 python manage.py runserver &
 DJANGO_PID=$!
 
+# ── macOS fork-safety fix ─────────────────────────────────────────────────────
+# On macOS, forked child processes that use Objective-C runtime (PyTorch, OpenCV,
+# InsightFace, etc.) crash with SIGSEGV unless this env var is set.
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+
 # ── 2. Main Celery worker ────────────────────────────────────────────────────
 #   Handles: video processing (HLS encode), frame analysis (YOLO / BLIP /
 #            CLIP / InsightFace), seek thumbnails, Whisper captions,
 #            Ollama AI summary, livestream recording pipeline.
+#
+#   --pool=solo: runs tasks in the main process (no fork). This avoids
+#   SIGSEGV crashes on macOS where PyTorch/onnxruntime/OpenCV are not
+#   fork-safe. Tasks run serially but models stay loaded between tasks.
 echo "  [2/6] Celery main worker      (processing, captions, default)"
 celery -A cliplens worker -l info \
   -Q processing,captions,default \
   -n main@%h \
-  --concurrency=2 &
+  --pool=solo &
 CELERY_PID=$!
 
 # ── 3. Audio worker ───────────────────────────────────────────────────────────
 #   Handles: PANNs CNN14 audio event detection + FFmpeg silence detection.
-#   Concurrency=1 — PANNs holds ~150 MB in RAM per process.
+#   --pool=solo: PANNs (onnxruntime) also crashes under fork on macOS.
 echo "  [3/6] Celery audio worker     (${AUDIO_QUEUE})"
 celery -A cliplens worker -l info \
   -Q "${AUDIO_QUEUE}" \
   -n audio@%h \
-  --concurrency=1 &
+  --pool=solo &
 AUDIO_CELERY_PID=$!
 
 # ── 4. Translation worker ─────────────────────────────────────────────────────

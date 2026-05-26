@@ -11,15 +11,27 @@
 <div class="stat-grid">
   <div class="stat-card">
     <div class="stat-value">{{ tenant_data|length }}</div>
-    <div class="stat-label">Total Organisations</div>
+    <div class="stat-label">Total Orgs</div>
   </div>
   <div class="stat-card">
-    <div class="stat-value">{{ tenant_data|length }}</div>
-    <div class="stat-label">Active Tenants</div>
+    <div class="stat-value">{{ active_count }}</div>
+    <div class="stat-label">Active Orgs</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_users }}</div>
+    <div class="stat-label">Total Users</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_videos }}</div>
+    <div class="stat-label">Total Videos</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_photos }}</div>
+    <div class="stat-label">Total Photos</div>
   </div>
   <div class="stat-card">
     <div class="stat-value">{{ plans|length }}</div>
-    <div class="stat-label">Plans Available</div>
+    <div class="stat-label">Plans</div>
   </div>
 </div>
 
@@ -34,8 +46,11 @@
         <th>Organisation</th>
         <th>Plan</th>
         <th>Status</th>
-        <th>AI Minutes (this month)</th>
-        <th>Storage Used</th>
+        <th>Users</th>
+        <th>Videos</th>
+        <th>Photos</th>
+        <th>AI Minutes</th>
+        <th>Storage</th>
         <th></th>
       </tr>
     </thead>
@@ -54,22 +69,25 @@
             <span class="badge-inactive">Inactive</span>
           {% endif %}
         </td>
-        <td>
-          <div style="margin-bottom:4px; font-size:13px;">
+        <td style="text-align:center;">{{ item.user_count }}</td>
+        <td style="text-align:center;">{{ item.video_count }}</td>
+        <td style="text-align:center;">{{ item.photo_count }}</td>
+        <td style="min-width:140px;">
+          <div style="margin-bottom:4px; font-size:12px; color:#8b949e;">
             {{ item.ai_minutes_used }} / {{ item.tenant.plan.ai_minutes_limit }} min
           </div>
           <div class="progress-bar">
             <div class="progress-fill {% if item.ai_minutes_pct >= 95 %}critical{% elif item.ai_minutes_pct >= 80 %}warning{% endif %}"
-                 style="width: {{ item.ai_minutes_pct }}%"></div>
+                 style="width:{{ item.ai_minutes_pct }}%"></div>
           </div>
         </td>
-        <td>
-          <div style="margin-bottom:4px; font-size:13px;">
+        <td style="min-width:130px;">
+          <div style="margin-bottom:4px; font-size:12px; color:#8b949e;">
             {{ item.storage_gb_used }} / {{ item.tenant.plan.storage_limit_gb }} GB
           </div>
           <div class="progress-bar">
             <div class="progress-fill {% if item.storage_pct >= 95 %}critical{% elif item.storage_pct >= 80 %}warning{% endif %}"
-                 style="width: {{ item.storage_pct }}%"></div>
+                 style="width:{{ item.storage_pct }}%"></div>
           </div>
         </td>
         <td>
@@ -78,7 +96,7 @@
       </tr>
       {% empty %}
       <tr>
-        <td colspan="6" style="text-align:center; color:#8b949e; padding:32px;">
+        <td colspan="9" style="text-align:center; color:#8b949e; padding:32px;">
           No organisations yet.
           <a href="{% url 'tenants:create_tenant' %}" style="color:#58a6ff;">Provision your first one →</a>
         </td>

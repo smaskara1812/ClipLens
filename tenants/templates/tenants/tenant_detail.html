@@ -3,19 +3,25 @@
 
 {% block content %}
 <div class="page-header">
-  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
     <div>
       <h1>{{ tenant.name }}</h1>
-      <p>
-        <code style="color:#58a6ff;">{{ tenant.slug }}.cliplens.*</code>
-        &nbsp;|&nbsp; DB: <code style="color:#8b949e;">{{ tenant.db_name }}</code>
-        &nbsp;|&nbsp; Media: <code style="color:#8b949e;">{{ tenant.media_folder }}</code>
+      <p style="margin-top:6px; line-height:1.8;">
+        <code style="color:#58a6ff; background:#1f2937; padding:2px 6px; border-radius:4px;">{{ tenant.slug }}.cliplens.*</code>
+        &nbsp;
+        <span style="color:#484f58;">DB:</span> <code style="color:#8b949e;">{{ tenant.db_name }}</code>
+        &nbsp;
+        <span style="color:#484f58;">Media:</span> <code style="color:#8b949e;">{{ tenant.media_folder }}</code>
       </p>
     </div>
-    <div style="display:flex; gap:8px;">
-      <form method="post" action="{% url 'tenants:toggle_tenant' tenant.pk %}">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <a href="{{ org_url }}" target="_blank" class="btn btn-secondary btn-sm">
+        ↗ Open Org
+      </a>
+      <form method="post" action="{% url 'tenants:toggle_tenant' tenant.pk %}" style="margin:0;">
         {% csrf_token %}
-        <button type="submit" class="btn {% if tenant.is_active %}btn-danger{% else %}btn-primary{% endif %} btn-sm">
+        <button type="submit" class="btn {% if tenant.is_active %}btn-danger{% else %}btn-primary{% endif %} btn-sm"
+                onclick="return confirm('{% if tenant.is_active %}Deactivate this org? It will return 404 for all users.{% else %}Reactivate this org?{% endif %}')">
           {% if tenant.is_active %}Deactivate{% else %}Activate{% endif %}
         </button>
       </form>
@@ -23,49 +29,98 @@
   </div>
 </div>
 
-<!-- Usage meters -->
+<!-- Summary stat cards -->
 <div class="stat-grid">
   <div class="stat-card">
+    <div class="stat-value">{{ user_count }}</div>
+    <div class="stat-label">Users</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ video_count }}</div>
+    <div class="stat-label">Videos</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ photo_count }}</div>
+    <div class="stat-label">Photos</div>
+  </div>
+  <div class="stat-card">
     <div class="stat-value">{{ usage.ai_minutes }}</div>
-    <div class="stat-label">AI Minutes Used (this month)</div>
-    <div class="progress-bar" style="margin-top:10px;">
-      {% with pct=usage.ai_minutes|floatformat:0 %}
+    <div class="stat-label">AI Minutes (this month)</div>
+    <div class="progress-bar" style="margin-top:8px;">
       <div class="progress-fill {% if usage.ai_minutes >= tenant.plan.ai_minutes_limit %}critical{% endif %}"
-           style="width: {% widthratio usage.ai_minutes tenant.plan.ai_minutes_limit 100 %}%"></div>
-      {% endwith %}
+           style="width:{% widthratio usage.ai_minutes tenant.plan.ai_minutes_limit 100 %}%"></div>
     </div>
-    <small style="color:#8b949e; font-size:12px; margin-top:4px; display:block;">
-      Limit: {{ tenant.plan.ai_minutes_limit }} min
-    </small>
+    <small style="color:#8b949e; font-size:11px;">Limit: {{ tenant.plan.ai_minutes_limit }} min</small>
   </div>
   <div class="stat-card">
     <div class="stat-value">{{ usage.storage_gb }} GB</div>
     <div class="stat-label">Storage Used</div>
-    <div class="progress-bar" style="margin-top:10px;">
+    <div class="progress-bar" style="margin-top:8px;">
       <div class="progress-fill {% if usage.storage_gb >= tenant.plan.storage_limit_gb %}critical{% endif %}"
-           style="width: {% widthratio usage.storage_gb tenant.plan.storage_limit_gb 100 %}%"></div>
+           style="width:{% widthratio usage.storage_gb tenant.plan.storage_limit_gb 100 %}%"></div>
     </div>
-    <small style="color:#8b949e; font-size:12px; margin-top:4px; display:block;">
-      Limit: {{ tenant.plan.storage_limit_gb }} GB
-    </small>
+    <small style="color:#8b949e; font-size:11px;">Limit: {{ tenant.plan.storage_limit_gb }} GB</small>
   </div>
   <div class="stat-card">
-    <div class="stat-value">{{ tenant.plan.name }}</div>
+    <div class="stat-value" style="font-size:20px;">{{ tenant.plan.name }}</div>
     <div class="stat-label">Current Plan</div>
-    <div style="margin-top:10px;">
-      <form method="post" action="{% url 'tenants:change_plan' tenant.pk %}" style="display:flex; gap:6px;">
-        {% csrf_token %}
-        <select name="plan_id" style="flex:1; font-size:12px; padding:4px 8px;">
-          {% for plan in plans %}
-            <option value="{{ plan.pk }}" {% if plan.pk == tenant.plan.pk %}selected{% endif %}>
-              {{ plan.name }}
-            </option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="btn btn-secondary btn-sm">Change</button>
-      </form>
-    </div>
+    <form method="post" action="{% url 'tenants:change_plan' tenant.pk %}" style="display:flex; gap:6px; margin-top:10px;">
+      {% csrf_token %}
+      <select name="plan_id" style="flex:1; font-size:12px; padding:4px 8px;">
+        {% for plan in plans %}
+          <option value="{{ plan.pk }}" {% if plan.pk == tenant.plan.pk %}selected{% endif %}>{{ plan.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-secondary btn-sm">Change</button>
+    </form>
   </div>
+</div>
+
+<!-- Users -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-title">Users ({{ user_count }})</div>
+  {% if users %}
+  <table>
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Joined</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td><strong>{{ u.username }}</strong></td>
+        <td style="color:#8b949e;">{{ u.email|default:"—" }}</td>
+        <td>
+          {% if u.role == 'superadmin' %}
+            <span style="color:#f0883e; font-size:12px; font-weight:600;">● Superadmin</span>
+          {% elif u.role == 'editor' %}
+            <span style="color:#58a6ff; font-size:12px; font-weight:600;">● Editor</span>
+          {% elif u.role == 'viewer' %}
+            <span style="color:#8b949e; font-size:12px;">● Viewer</span>
+          {% else %}
+            <span style="color:#484f58; font-size:12px;">{{ u.role }}</span>
+          {% endif %}
+        </td>
+        <td style="color:#8b949e; font-size:12px;">{{ u.date_joined|date:"Y-m-d" }}</td>
+        <td>
+          {% if u.is_active %}
+            <span style="color:#3fb950; font-size:12px;">Active</span>
+          {% else %}
+            <span style="color:#f85149; font-size:12px;">Disabled</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:#8b949e; padding:16px 0; text-align:center;">Could not load users for this org.</p>
+  {% endif %}
 </div>
 
 <!-- Recent usage events -->
@@ -87,18 +142,18 @@
         <td>{{ event.get_event_type_display }}</td>
         <td>
           {% if event.event_type == 'storage_delta' %}
-            {{ event.value|floatformat:0 }} bytes
+            {% if event.value >= 0 %}+{% endif %}{{ event.value|floatformat:0 }} B
           {% else %}
             {{ event.value|floatformat:1 }} min
           {% endif %}
         </td>
-        <td style="font-size:11px; color:#8b949e;">{{ event.task_id|default:"—" }}</td>
+        <td style="font-size:11px; color:#8b949e; max-width:160px; overflow:hidden; text-overflow:ellipsis;">
+          {{ event.task_id|default:"—" }}
+        </td>
       </tr>
       {% empty %}
       <tr>
-        <td colspan="4" style="text-align:center; color:#8b949e; padding:24px;">
-          No usage events yet for this month.
-        </td>
+        <td colspan="4" style="text-align:center; color:#8b949e; padding:24px;">No usage events recorded yet.</td>
       </tr>
       {% endfor %}
     </tbody>

@@ -268,6 +268,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 if MULTI_TENANT:
     DEFAULT_FILE_STORAGE = 'tenants.storage.TenantFileSystemStorage'
 
+# ── Upload size limits ────────────────────────────────────────────────────────
+# Django's defaults are 2.5 MB which blocks any real video upload with a 500.
+# Files stream to disk via Django's temp file handler — this just prevents
+# the 500 RequestDataTooBig exception on large multipart bodies.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 4 * 1024 * 1024 * 1024   # 4 GB — non-file fields
+FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024          # 50 MB — above this → temp file on disk
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS — fully open, all origins, all methods, all headers

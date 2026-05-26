@@ -1,11 +1,11 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
-from django.views.static import serve
 from django.urls import re_path
 from django.contrib.auth import views as auth_views
 from videos.auth_views import DebugLoginView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from tenants.media_serve import protected_media
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -21,8 +21,8 @@ urlpatterns = [
 
     path('', include('videos.urls')),
 
-    # Serve media files in all environments (dev + production)
-    re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    # Serve media files — tenant-aware in MULTI_TENANT mode, open in single-tenant
+    re_path(r'^media/(?P<path>.*)$', protected_media),
 ]
 
 if settings.DEBUG:

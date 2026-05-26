@@ -29,7 +29,7 @@ def _get_tenant_from_slug(slug: str):
     from .models import Tenant
     try:
         return Tenant.objects.using('control').select_related('plan').get(slug=slug)
-    except Tenant.DoesNotExist:
+    except Exception:
         return None
 
 

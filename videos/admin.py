@@ -5,10 +5,15 @@ from .models import (
     Video, Category, Channel, ChannelLink, ChannelSubscription,
     Comment, CommentLike, VideoLike, Playlist, PlaylistItem,
     WatchHistory, SavedVideo, WatchTimeEntry, VideoChapter,
-    EndScreen, Notification, Subtitle, AudioTrack, VideoSegment, VideoFrame,
+    EndScreen, Notification, Subtitle, AudioTrack, AudioEvent,
+    VideoSegment, VideoFrame,
     FaceIdentity, FaceIdentityNickname, DetectedFace,
     SpeakerIdentity, SpeakerFaceSuggestion, UserProfile,
     Photo, Album, AlbumPhoto, Event,
+    NamedPlace, MomentCategory, VideoMoment,
+    StreamKey, LiveStream,
+    APIKey, APIKeyPermission,
+    ActivityLog,
 )
 
 
@@ -297,3 +302,122 @@ class EventAdmin(admin.ModelAdmin):
     def video_count_display(self, obj):
         return obj.video_count
     video_count_display.short_description = 'Videos'
+
+
+# ── Named Places ─────────────────────────────────────────────────────────────
+
+@admin.register(NamedPlace)
+class NamedPlaceAdmin(admin.ModelAdmin):
+    list_display   = ['name', 'slug', 'latitude', 'longitude', 'radius_meters', 'created_by', 'created_at']
+    search_fields  = ['name', 'description']
+    prepopulated_fields = {'slug': ('name',)}
+    readonly_fields = ['created_at']
+    raw_id_fields  = ['created_by']
+
+
+# ── Video Moments ─────────────────────────────────────────────────────────────
+
+@admin.register(MomentCategory)
+class MomentCategoryAdmin(admin.ModelAdmin):
+    list_display  = ['name', 'key', 'icon', 'color', 'is_system', 'sort_order', 'created_by']
+    list_filter   = ['is_system']
+    search_fields = ['name', 'key']
+    raw_id_fields = ['created_by']
+
+
+@admin.register(VideoMoment)
+class VideoMomentAdmin(admin.ModelAdmin):
+    list_display  = ['video', 'title', 'category', 'timestamp', 'visibility', 'created_by', 'created_at']
+    list_filter   = ['category', 'visibility']
+    search_fields = ['title', 'description', 'video__title']
+    raw_id_fields = ['video', 'created_by']
+    readonly_fields = ['created_at']
+
+
+# ── Audio Events ──────────────────────────────────────────────────────────────
+
+@admin.register(AudioEvent)
+class AudioEventAdmin(admin.ModelAdmin):
+    list_display  = ['video', 'label', 'start_seconds', 'end_seconds', 'confidence', 'source']
+    list_filter   = ['label', 'source']
+    search_fields = ['video__title', 'label']
+    raw_id_fields = ['video']
+
+
+# ── Live Streaming ────────────────────────────────────────────────────────────
+
+@admin.register(StreamKey)
+class StreamKeyAdmin(admin.ModelAdmin):
+    list_display  = ['channel', 'key', 'is_active', 'created_at']
+    list_filter   = ['is_active']
+    search_fields = ['channel__name', 'key']
+    readonly_fields = ['key', 'created_at']
+    raw_id_fields = ['channel']
+
+    def has_add_permission(self, request):
+        return False  # keys are auto-created with channels
+
+
+@admin.register(LiveStream)
+class LiveStreamAdmin(admin.ModelAdmin):
+    list_display   = ['channel', 'title', 'status', 'started_at', 'ended_at', 'duration_display', 'video']
+    list_filter    = ['status', 'channel']
+    search_fields  = ['title', 'channel__name']
+    readonly_fields = ['started_at', 'ended_at', 'hls_path', 'recording_path', 'duration_display']
+    raw_id_fields  = ['channel', 'stream_key', 'video']
+
+    def duration_display(self, obj):
+        secs = obj.duration_seconds
+        if secs is None:
+            return '—'
+        m, s = divmod(secs, 60)
+        h, m = divmod(m, 60)
+        return f'{h}h {m}m {s}s' if h else f'{m}m {s}s'
+    duration_display.short_description = 'Duration'
+
+
+# ── API Keys ──────────────────────────────────────────────────────────────────
+
+class APIKeyPermissionInline(admin.TabularInline):
+    model   = APIKeyPermission
+    extra   = 0
+    fields  = ['permission', 'scope_id']
+    readonly_fields = []
+
+
+@admin.register(APIKey)
+class APIKeyAdmin(admin.ModelAdmin):
+    list_display   = ['name', 'owner', 'key_prefix', 'is_active', 'last_used_at', 'expires_at', 'created_at']
+    list_filter    = ['is_active']
+    search_fields  = ['name', 'owner__username', 'key_prefix']
+    readonly_fields = ['id', 'key_prefix', 'key_hash', 'created_at', 'last_used_at']
+    raw_id_fields  = ['owner']
+    inlines        = [APIKeyPermissionInline]
+
+    def has_add_permission(self, request):
+        return False  # keys are created via the UI, not admin
+
+
+@admin.register(APIKeyPermission)
+class APIKeyPermissionAdmin(admin.ModelAdmin):
+    list_display  = ['api_key', 'permission', 'scope_id']
+    list_filter   = ['permission']
+    search_fields = ['api_key__name', 'api_key__owner__username']
+    raw_id_fields = ['api_key']
+
+
+# ── Activity Log ──────────────────────────────────────────────────────────────
+
+@admin.register(ActivityLog)
+class ActivityLogAdmin(admin.ModelAdmin):
+    list_display   = ['actor_username', 'action', 'verb', 'target_type', 'target_label', 'ip_address', 'timestamp']
+    list_filter    = ['action', 'target_type', 'timestamp']
+    search_fields  = ['actor_username', 'verb', 'target_label', 'ip_address']
+    readonly_fields = [f.name for f in ActivityLog._meta.fields]  # entire log is read-only
+    date_hierarchy = 'timestamp'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False  # audit log must not be edited

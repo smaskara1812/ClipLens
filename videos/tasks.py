@@ -19,6 +19,22 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+def _media_root() -> Path:
+    """
+    Return the active media root for the current request/task thread.
+
+    In multi-tenant mode this is the per-tenant media folder
+    (e.g. media/tenants/orga/).  In single-tenant mode it falls back to
+    settings.MEDIA_ROOT.  All path construction in tasks should use this
+    instead of settings.MEDIA_ROOT directly so files are isolated per tenant.
+    """
+    try:
+        from tenants.storage import get_media_root
+        return Path(get_media_root())
+    except ImportError:
+        return _media_root()
+
+
 # ── Photo format normaliser ───────────────────────────────────────────────────
 
 def _open_any_photo(img_path: Path, ext: str = ''):
@@ -98,6 +114,16 @@ def process_video_task(self, video_id: str, skip_ai: bool = False, **kwargs):
     from .services import process_video
     tenant_slug = kwargs.get('tenant_slug', '')
     chain_kwargs = {'tenant_slug': tenant_slug} if tenant_slug else {}
+
+    # Explicitly set tenant DB context in the task body as well as via signal.
+    # The task_prerun signal handles this too, but direct setup is more reliable
+    # with --pool=solo where signal/thread-local timing can vary.
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            pass
     try:
         process_video(video_id)
 
@@ -173,7 +199,7 @@ def generate_seek_thumbnails_task(self, video_id: str, **kwargs):
     quality  = getattr(settings, 'SEEK_THUMBNAIL_QUALITY',  4)
 
     input_path  = video.original_file.path
-    sprite_dir  = os.path.join(settings.MEDIA_ROOT, 'seek_sprites')
+    sprite_dir  = os.path.join(_media_root(), 'seek_sprites')
     os.makedirs(sprite_dir, exist_ok=True)
     sprite_file = os.path.join(sprite_dir, f'{video_id}.jpg')
 
@@ -363,6 +389,14 @@ def generate_captions_task(self, video_id: str, language: str = 'en', **kwargs):
         4. Save WebVTT as a Subtitle record
         5. Clean up the temp WAV
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     import tempfile
     from .models import Video, Subtitle
     from django.core.files.base import ContentFile
@@ -382,7 +416,7 @@ def generate_captions_task(self, video_id: str, language: str = 'en', **kwargs):
         logger.info(f'generate_captions_task: captions already exist for {video_id}/{language}')
         return
 
-    source_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+    source_path = _media_root() / video.original_file.name
     if not source_path.exists():
         logger.warning(f'generate_captions_task: source file missing for {video_id}')
         return
@@ -703,6 +737,14 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
       Detect faces, compute ArcFace embeddings, cluster into identities,
       save DetectedFace + FaceIdentity rows, crop face thumbnails.
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     import shutil
     import tempfile
     import json
@@ -724,7 +766,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
         logger.info(f'analyze_video_frames_task: video {video_id} not ready, skipping')
         return
 
-    source_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+    source_path = _media_root() / video.original_file.name
     if not source_path.exists():
         logger.warning(f'analyze_video_frames_task: source file missing for {video_id}')
         return
@@ -1157,7 +1199,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
                 )
 
         # ── Step 8: save face crops + DetectedFace rows ───────────────────────
-        faces_dir = Path(settings.MEDIA_ROOT) / 'faces' / str(video_id)
+        faces_dir = _media_root() / 'faces' / str(video_id)
         faces_dir.mkdir(parents=True, exist_ok=True)
 
         # ── Step 8 config ─────────────────────────────────────────────────────
@@ -1637,7 +1679,7 @@ def extract_audio_tracks_task(self, video_id: str, **kwargs):
     except Video.DoesNotExist:
         return
 
-    source_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+    source_path = _media_root() / video.original_file.name
     if not source_path.exists():
         logger.warning(f'extract_audio_tracks_task: source missing for {video_id}')
         return
@@ -1664,7 +1706,7 @@ def extract_audio_tracks_task(self, video_id: str, **kwargs):
         logger.info(f'extract_audio_tracks_task: only {len(streams)} audio stream(s) for {video_id}, skipping')
         return
 
-    out_base = Path(settings.MEDIA_ROOT) / 'hls' / str(video_id) / 'audio'
+    out_base = _media_root() / 'hls' / str(video_id) / 'audio'
     out_base.mkdir(parents=True, exist_ok=True)
 
     AudioTrack.objects.filter(video=video).delete()   # reset
@@ -1870,6 +1912,14 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
 
     No HLS or Whisper — photos need none of that.
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     import json
     import numpy as np
     import cv2
@@ -1889,7 +1939,7 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
     photo.status = Photo.STATUS_PROCESSING
     photo.save(update_fields=['status'])
 
-    img_path = Path(settings.MEDIA_ROOT) / photo.file.name
+    img_path = _media_root() / photo.file.name
     if not img_path.exists():
         photo.status = Photo.STATUS_FAILED
         photo.processing_error = 'Source file missing'
@@ -2139,7 +2189,7 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
 
         # Save face crops + DetectedFace rows for photo workflow parity
         if raw_faces and matched_identities:
-            faces_dir = Path(settings.MEDIA_ROOT) / 'faces' / 'photos' / str(photo.id)
+            faces_dir = _media_root() / 'faces' / 'photos' / str(photo.id)
             faces_dir.mkdir(parents=True, exist_ok=True)
 
             AUTO_CONFIRM_SIM = getattr(settings, 'FACE_AUTO_CONFIRM_THRESHOLD', 0.75)
@@ -2212,7 +2262,7 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
             thumb = pil_img.copy()
             thumb.thumbnail((480, 480), _PILImage.LANCZOS)
             thumb_rel = f'photos/thumbnails/{photo.id}.jpg'
-            thumb_path = Path(settings.MEDIA_ROOT) / thumb_rel
+            thumb_path = _media_root() / thumb_rel
             thumb_path.parent.mkdir(parents=True, exist_ok=True)
             thumb.save(str(thumb_path), 'JPEG', quality=82)
             photo.thumbnail = thumb_rel
@@ -2515,14 +2565,14 @@ def run_diarization_task(self, video_id: str, **kwargs):
         }
 
     # ── Prepare audio file ────────────────────────────────────────────────────
-    audio_dir  = Path(settings.MEDIA_ROOT) / 'audio'
+    audio_dir  = _media_root() / 'audio'
     audio_path = audio_dir / f'{video_id}.wav'
 
     if not audio_path.exists():
         audio_dir.mkdir(parents=True, exist_ok=True)
         source = None
         if video.original_file and video.original_file.name:
-            candidate = Path(settings.MEDIA_ROOT) / video.original_file.name
+            candidate = _media_root() / video.original_file.name
             if candidate.exists():
                 source = candidate
         if source is None:
@@ -2986,7 +3036,7 @@ def _ensure_panns_assets() -> dict[str, str]:
     # Use MEDIA_ROOT as HOME for panns_inference so its internal hardcoded
     # `Path.home()/panns_data/...` paths stay writable across environments
     # where the process home directory may be read-only.
-    media_home = str(Path(settings.MEDIA_ROOT).resolve())
+    media_home = str(Path(settings.MEDIA_ROOT).resolve())  # intentionally global — PANNs model cache path
     os.environ['HOME'] = media_home
 
     data_dir = Path(media_home) / 'panns_data'
@@ -3071,7 +3121,7 @@ def detect_audio_events_task(self, video_id: str, **kwargs):
         logger.warning(f'detect_audio_events_task: video {video_id} not found')
         return {'ok': False, 'error': 'video-not-found'}
 
-    source_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+    source_path = _media_root() / video.original_file.name
     if not video.original_file or not video.original_file.name or not source_path.exists():
         logger.warning(f'detect_audio_events_task: source file missing for {video_id}')
         return {'ok': False, 'error': 'source-missing'}
@@ -3377,7 +3427,7 @@ def process_livestream_recording(self, live_stream_id, **kwargs):
         logger.error(f'[livestream] LiveStream {live_stream_id} not found')
         return
 
-    recording_abs = os.path.join(settings.MEDIA_ROOT, live.recording_path)
+    recording_abs = os.path.join(_media_root(), live.recording_path)
 
     # Wait up to 30s for FFmpeg to finish writing the recording
     import time

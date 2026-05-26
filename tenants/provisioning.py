@@ -172,7 +172,8 @@ def _run_migrations(db_alias: str) -> None:
 def _create_media_folder(media_folder: str) -> None:
     """Create the tenant media directory tree."""
     base = Path(settings.MEDIA_ROOT)
-    for subdir in ['videos', 'photos', 'thumbnails', 'face_crops', 'captions']:
+    for subdir in ['videos', 'photos', 'thumbnails', 'face_crops', 'captions',
+                   'originals', 'hls', 'seek_sprites', 'faces', 'audio']:
         path = base / media_folder / subdir
         path.mkdir(parents=True, exist_ok=True)
     logger.info("Created media folders under %s", media_folder)
@@ -184,7 +185,7 @@ def _create_admin_user(db_alias: str, email: str, password: str, username: str) 
         username=username,
         email=email,
         is_staff=True,
-        is_superuser=False,  # Django superuser != our superadmin role
+        is_superuser=True,   # gives full Django admin access within this tenant's DB
         password=make_password(password),
     )
     user.save(using=db_alias)

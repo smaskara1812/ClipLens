@@ -29,6 +29,15 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+def _media_root() -> Path:
+    """Tenant-aware media root (falls back to settings.MEDIA_ROOT in single-tenant mode)."""
+    try:
+        from tenants.storage import get_media_root
+        return Path(get_media_root())
+    except ImportError:
+        return _media_root()
+
+
 def _probe_duration(path: str) -> float:
     """Return duration in seconds of any media file/playlist via ffprobe. Returns 0 on error."""
     cmd = [
@@ -132,7 +141,7 @@ def _convert_single(video_id: str, source_path: str,
     Encode a single HLS stream (no quality switching).
     Returns (hls_relative_path, []).
     """
-    out_dir = Path(settings.MEDIA_ROOT) / 'hls' / str(video_id)
+    out_dir = _media_root() / 'hls' / str(video_id)
 
     # Wipe stale segments from any previous run
     if out_dir.exists():
@@ -209,7 +218,7 @@ def _encode_rendition(video_id: str, source_path: str,
     Encode one rendition.  Returns True on success.
     Output: media/hls/<video_id>/<label>/playlist.m3u8
     """
-    out_dir = Path(settings.MEDIA_ROOT) / 'hls' / str(video_id) / label
+    out_dir = _media_root() / 'hls' / str(video_id) / label
 
     # Wipe any stale segments/playlist from a previous (possibly truncated) run
     if out_dir.exists():
@@ -299,7 +308,7 @@ def _write_master_playlist(video_id: str, encoded: list,
     and NAME so level.name returns the human-readable label (e.g. "720p").
     Returns relative path from MEDIA_ROOT.
     """
-    out_dir = Path(settings.MEDIA_ROOT) / 'hls' / str(video_id)
+    out_dir = _media_root() / 'hls' / str(video_id)
     master  = out_dir / 'master.m3u8'
 
     lines = ['#EXTM3U', '#EXT-X-VERSION:3', '']
@@ -399,7 +408,7 @@ def extract_thumbnail(video_id: str, source_path: str, timestamp: float = 5.0) -
     Extract a thumbnail frame from the video.
     Returns relative path from MEDIA_ROOT, or empty string on failure.
     """
-    thumb_dir  = Path(settings.MEDIA_ROOT) / 'thumbnails'
+    thumb_dir  = _media_root() / 'thumbnails'
     thumb_dir.mkdir(parents=True, exist_ok=True)
     thumb_path = thumb_dir / f'{video_id}.jpg'
 
@@ -435,7 +444,7 @@ def process_video(video_id: str) -> None:
     video.status = Video.STATUS_PROCESSING
     video.save(update_fields=['status'])
 
-    source_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+    source_path = _media_root() / video.original_file.name
 
     try:
         # Step 1: metadata

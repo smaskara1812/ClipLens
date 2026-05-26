@@ -141,24 +141,50 @@ def user_role(request):
     Injects role flags into every template context.
 
     Available variables:
-        is_editor      — True for editors and superadmins
-        is_superadmin  — True only for superadmins
-        user_role      — raw role string ('superadmin' / 'editor' / 'viewer') or None
+        is_editor           — True for editors and superadmins
+        is_superadmin       — True only for superadmins
+        user_role           — raw role string ('superadmin' / 'editor' / 'viewer') or None
+        is_platform_owner   — True only for the platform owner (Soham); gates control plane
+        control_plane_url   — absolute URL to admin.cliplens.local/platform/ (platform owner only)
     """
+    base = {'is_editor': False, 'is_superadmin': False, 'user_role': None,
+            'is_platform_owner': False, 'control_plane_url': ''}
+
     if not request.user.is_authenticated:
-        return {'is_editor': False, 'is_superadmin': False, 'user_role': None}
+        return base
 
     try:
         profile = request.user.profile
         role = profile.role
+        is_platform_owner = getattr(profile, 'is_platform_owner', False)
+
+        # Build control plane URL for platform owners in multi-tenant mode
+        control_plane_url = ''
+        if is_platform_owner and getattr(settings, 'MULTI_TENANT', False):
+            try:
+                scheme = 'https' if request.is_secure() else 'http'
+                host = request.get_host()  # e.g. testorg1.cliplens.local or admin.cliplens.local
+                # Replace subdomain (or bare host) with 'admin'
+                parts = host.split('.')
+                if len(parts) >= 3:
+                    parts[0] = 'admin'
+                    admin_host = '.'.join(parts)
+                else:
+                    admin_host = host  # fallback — already on admin or bare host
+                control_plane_url = f'{scheme}://{admin_host}/platform/'
+            except Exception:
+                pass
+
         return {
-            'is_editor':     profile.is_editor,
-            'is_superadmin': profile.is_superadmin,
-            'user_role':     role,
+            'is_editor':         profile.is_editor,
+            'is_superadmin':     profile.is_superadmin,
+            'user_role':         role,
+            'is_platform_owner': is_platform_owner,
+            'control_plane_url': control_plane_url,
         }
     except Exception:
         # Profile doesn't exist yet (e.g. superuser created via createsuperuser)
         if request.user.is_superuser:
-            return {'is_editor': True, 'is_superadmin': True, 'user_role': 'superadmin'}
-        return {'is_editor': False, 'is_superadmin': False, 'user_role': 'viewer'}
+            return {**base, 'is_editor': True, 'is_superadmin': True, 'user_role': 'superadmin'}
+        return base
 

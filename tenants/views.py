@@ -22,10 +22,24 @@ logger = logging.getLogger(__name__)
 # ── Auth guard ─────────────────────────────────────────────────────────────────
 
 def platform_owner_required(view_func):
-    """Decorator: only the platform owner (Soham) can access control plane views."""
+    """
+    Decorator: only the platform owner can access control plane views.
+
+    Two-layer check:
+      1. request.tenant must be None — control plane is only reachable via the
+         admin subdomain (where TenantMiddleware always sets tenant=None).
+         This blocks any org admin who flips is_platform_owner=True in their
+         own tenant DB and tries to hit /platform/ via their subdomain.
+      2. The authenticated user must have is_platform_owner=True on their
+         UserProfile in the default (control-plane) DB.
+    """
     @wraps(view_func)
     @login_required
     def _wrapped(request, *args, **kwargs):
+        # Gate 1: must be on the admin subdomain, not a tenant subdomain
+        if getattr(request, 'tenant', None) is not None:
+            return render(request, 'tenants/403.html', status=403)
+        # Gate 2: user must be the platform owner in the default DB
         profile = getattr(request.user, 'profile', None)
         if not profile or not profile.is_platform_owner:
             return render(request, 'tenants/403.html', status=403)
@@ -35,20 +49,48 @@ def platform_owner_required(view_func):
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
+def _tenant_content_counts(db_alias):
+    """
+    Query a tenant's DB for user / video / photo counts.
+    Auto-registers the DB alias if it isn't in settings.DATABASES yet
+    (happens when an org was provisioned after the server started).
+    Returns a dict with safe defaults on any error (DB down, not migrated, etc.).
+    """
+    counts = {'user_count': 0, 'video_count': 0, 'photo_count': 0}
+    try:
+        from django.conf import settings
+        from .provisioning import _register_db_alias
+        if db_alias not in settings.DATABASES:
+            _register_db_alias(db_alias)
+
+        from django.contrib.auth.models import User
+        from videos.models import Video, Photo
+        counts['user_count'] = User.objects.using(db_alias).count()
+        counts['video_count'] = Video.objects.using(db_alias).filter(
+            deleted_at__isnull=True
+        ).count()
+        counts['photo_count'] = Photo.objects.using(db_alias).filter(
+            deleted_at__isnull=True
+        ).count()
+    except Exception as exc:
+        logger.warning("Could not query counts for DB '%s': %s", db_alias, exc)
+    return counts
+
+
 @platform_owner_required
 def dashboard(request):
     """Main control plane: list of all tenants with usage summaries."""
-    from django.db.models import Sum, Count
+    from django.db.models import Sum
     from django.utils import timezone
-    from datetime import timedelta
 
     tenants = Tenant.objects.using('control').select_related('plan').order_by('name')
 
-    # Build per-tenant usage summary for the current calendar month
     now = timezone.now()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     tenant_data = []
+    total_users = total_videos = total_photos = 0
+
     for t in tenants:
         events = UsageEvent.objects.using('control').filter(
             tenant=t, timestamp__gte=month_start
@@ -63,20 +105,32 @@ def dashboard(request):
             event_type=UsageEvent.TYPE_STORAGE_DELTA
         ).aggregate(total=Sum('value'))['total'] or 0
 
+        counts = _tenant_content_counts(t.db_name)
+        total_users  += counts['user_count']
+        total_videos += counts['video_count']
+        total_photos += counts['photo_count']
+
         tenant_data.append({
-            'tenant': t,
+            'tenant':          t,
             'ai_minutes_used': round(ai_minutes, 1),
-            'ai_minutes_pct': min(100, round(ai_minutes / max(t.plan.ai_minutes_limit, 1) * 100)),
+            'ai_minutes_pct':  min(100, round(ai_minutes / max(t.plan.ai_minutes_limit, 1) * 100)),
             'storage_gb_used': round(storage_bytes / 1024**3, 2),
-            'storage_pct': min(100, round(
+            'storage_pct':     min(100, round(
                 (storage_bytes / 1024**3) / max(t.plan.storage_limit_gb, 1) * 100
             )),
+            **counts,
         })
 
+    active_count = sum(1 for td in tenant_data if td['tenant'].is_active)
     plans = Plan.objects.using('control').all()
+
     return render(request, 'tenants/dashboard.html', {
-        'tenant_data': tenant_data,
-        'plans': plans,
+        'tenant_data':   tenant_data,
+        'plans':         plans,
+        'active_count':  active_count,
+        'total_users':   total_users,
+        'total_videos':  total_videos,
+        'total_photos':  total_photos,
     })
 
 
@@ -116,13 +170,55 @@ def tenant_detail(request, tenant_id):
         ).aggregate(total=Sum('value'))['total'] or 0) / 1024**3, 2),
     }
 
+    # ── Cross-DB: users, videos, photos in this tenant's DB ───────────────────
+    users = []
+    counts = _tenant_content_counts(tenant.db_name)
+    try:
+        from django.contrib.auth.models import User
+        from videos.models import UserProfile
+        raw_users = (
+            User.objects.using(tenant.db_name)
+            .order_by('username')
+            .values('id', 'username', 'email', 'date_joined', 'is_active')
+        )
+        # Fetch profiles in one query keyed by user_id
+        profiles = {
+            p['user_id']: p
+            for p in UserProfile.objects.using(tenant.db_name).values('user_id', 'role', 'is_platform_owner')
+        }
+        for u in raw_users:
+            profile = profiles.get(u['id'], {})
+            users.append({
+                'username':    u['username'],
+                'email':       u['email'],
+                'date_joined': u['date_joined'],
+                'is_active':   u['is_active'],
+                'role':        profile.get('role', '—'),
+            })
+    except Exception as exc:
+        logger.warning("Could not fetch users for tenant '%s': %s", tenant.slug, exc)
+
+    # Build the org URL for the "Open Org" button
+    scheme = 'https' if request.is_secure() else 'http'
+    host = request.get_host()
+    parts = host.split('.')
+    if len(parts) >= 3:
+        parts[0] = tenant.slug
+        org_host = '.'.join(parts)
+    else:
+        org_host = f"{tenant.slug}.cliplens.local"
+    org_url = f"{scheme}://{org_host}/"
+
     plans = Plan.objects.using('control').all()
 
     return render(request, 'tenants/tenant_detail.html', {
-        'tenant': tenant,
+        'tenant':        tenant,
         'recent_events': recent_events,
-        'usage': usage,
-        'plans': plans,
+        'usage':         usage,
+        'plans':         plans,
+        'users':         users,
+        'org_url':       org_url,
+        **counts,
     })
 
 
