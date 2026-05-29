@@ -23,6 +23,21 @@ effective_storage_gb  = plan.storage_limit_gb + Σ(active storage addons)
 
 Both totals are computed in real time on every quota check by `tenants.metering.get_monthly_usage()`.
 
+### What "AI minute" actually means
+
+One AI minute = one minute of wall-clock time spent by a Celery worker running an AI task on the
+tenant's media. The meter is **hardware-dependent** — the same task takes 5 wall-clock minutes on
+a GPU server and 20 minutes on a CPU-only box.
+
+This has design implications for hosted vs self-hosted deployments — read
+**[docs/ai-minutes-and-hardware.md](ai-minutes-and-hardware.md)** for the full discussion of
+metering models (wall-clock vs normalised units vs flat-fee self-host) and recommended next steps.
+
+User-facing copy lives in:
+- `terms.html` section 6 ("How AI minutes are counted")
+- Landing page FAQ
+- `org_usage.html` "About AI Minutes" card
+
 ### How credit packs get drained
 
 After every Celery task completes, `log_ai_minutes()`:

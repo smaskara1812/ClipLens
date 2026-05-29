@@ -6,7 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ClipLens — Searchable AI media intelligence for organisations</title>
   <meta name="description" content="ClipLens transforms hours of raw video and photo libraries into a searchable, multilingual knowledge base — with face recognition, transcription, and semantic search built in.">
-  <link rel="icon" type="image/png" href="{% static 'videos/logos/logo-icon.png' %}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'videos/logos/favicon-32x32-dark.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'videos/logos/favicon-16x16-dark.png' %}">
+  <link rel="shortcut icon" type="image/x-icon" href="{% static 'videos/logos/favicon-dark.ico' %}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'videos/logos/apple-touch-icon.png' %}">
 
   <style>
     /* ─────────────────────────────────────────────────────────────
@@ -1296,11 +1299,37 @@
         </details>
 
         <details class="faq-item">
+          <summary>What exactly is an "AI minute" — how is it measured?</summary>
+          <div class="faq-body">
+            One AI minute = one minute of wall-clock time that a background worker spends running an AI task on your
+            media (HLS encoding, transcription, face recognition, translation, frame analysis, etc.). Pure database
+            operations and live-streaming don't count. We log elapsed time even when a task fails — the compute
+            was real. Full breakdown in our <a href="/terms/#ai-minutes">Terms</a>.
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary>How many AI minutes does a typical video consume?</summary>
+          <div class="faq-body">
+            A rough rule of thumb on our hosted infrastructure:
+            <ul style="margin: 8px 0 0 18px; padding: 0;">
+              <li><strong>~4 AI minutes per minute of 4K (2160p) video</strong> for the full pipeline (HLS + Whisper + face recognition + frame analysis)</li>
+              <li><strong>~2-3 AI minutes per minute</strong> for 1080p video</li>
+              <li><strong>~1-2 AI minutes per minute</strong> for 720p and below</li>
+              <li><strong>+1-2 AI minutes per language</strong> for subtitle translation</li>
+            </ul>
+            <p style="margin-top: 10px;">Example: a 6-minute 4K video with English captions consumes roughly 25 AI minutes.
+            All hosted plans run on the same hardware, so the ratio is consistent regardless of tier.</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
           <summary>What happens to AI minutes if a task fails halfway?</summary>
           <div class="faq-body">
-            We log the elapsed compute time regardless of outcome, since the work was real. But unlimited retries
-            don't compound — Celery only retries on transient errors with bounded retry counts. Most user-facing
-            failures (bad file format, etc.) bail early before consuming significant minutes.
+            We log the elapsed compute time regardless of outcome, since the work was real. But automatic retries
+            are bounded (Celery retries on transient errors only, with a strict retry cap). Most user-facing
+            failures (bad file format, missing audio track, etc.) bail early before consuming significant minutes.
+            Internal infrastructure failures on our end are never billed to you.
           </div>
         </details>
 

@@ -558,6 +558,39 @@ def manage_plans(request):
     return render(request, 'tenants/manage_plans.html', {'plans': plans})
 
 
+# ── System health ─────────────────────────────────────────────────────────────
+
+@platform_owner_required
+def system_health(request):
+    """
+    Page shell. Renders skeleton rows for every check; the browser then fans
+    out individual fetches to system_health_check() in parallel so the page
+    feels instant and results populate as they arrive.
+    """
+    from .system_health import get_check_manifest
+    manifest = get_check_manifest()
+
+    # Group rows for the template
+    groups = {}
+    for entry in manifest:
+        groups.setdefault(entry['group'], []).append(entry)
+
+    return render(request, 'tenants/system_health.html', {
+        'check_groups': groups,
+        'total_checks': len(manifest),
+    })
+
+
+@platform_owner_required
+def system_health_check(request, check_id: str):
+    """JSON endpoint that runs a single named check and returns the result."""
+    from .system_health import run_check_by_id
+    result = run_check_by_id(check_id)
+    if result is None:
+        return JsonResponse({'error': f'Unknown check: {check_id}'}, status=404)
+    return JsonResponse(result)
+
+
 # ── Leads (contact-form inbox) ─────────────────────────────────────────────────
 
 @platform_owner_required

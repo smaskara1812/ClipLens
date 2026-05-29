@@ -12,6 +12,7 @@ ClipLens ingests video and photo libraries, transcribes every word, recognises e
 - **[Local development](#local-development)** — get running in 15 minutes
 - **[Multi-tenancy guide](docs/multitenancy.md)** — provisioning, subdomains, DB isolation
 - **[Billing & Stripe](docs/billing.md)** — plans, top-ups, webhooks
+- **[AI minutes & hardware](docs/ai-minutes-and-hardware.md)** — how compute is metered, hosted vs self-host design
 - **[Deployment](docs/deployment.md)** — production hosting + systemd + nginx
 - **[Operations](docs/operations.md)** — day-to-day server tasks
 - **[API reference](docs/api.md)** — REST endpoints
@@ -370,6 +371,7 @@ sudo systemctl restart cliplens-celery-main
 | **[CLAUDE.md](CLAUDE.md)** | Guidance for AI assistants working on this repo |
 | **[docs/multitenancy.md](docs/multitenancy.md)** | Detailed multi-tenancy architecture, nginx config, DB router internals |
 | **[docs/billing.md](docs/billing.md)** | Stripe integration, webhook events, billing lifecycle |
+| **[docs/ai-minutes-and-hardware.md](docs/ai-minutes-and-hardware.md)** | What "AI minute" measures, hardware-dependence problem, recommended fixes for hosted vs self-hosted |
 | **[docs/deployment.md](docs/deployment.md)** | Production deployment guide |
 | **[docs/operations.md](docs/operations.md)** | Day-to-day server operations |
 | **[docs/api.md](docs/api.md)** | REST API reference |

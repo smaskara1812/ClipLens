@@ -1,0 +1,302 @@
+{% extends "tenants/base.html" %}
+{% block title %}System Health — ClipLens Control Plane{% endblock %}
+{% block nav_health %}active{% endblock %}
+
+{% block content %}
+
+<style>
+  .health-hero {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 20px; margin-bottom: 28px; flex-wrap: wrap;
+  }
+  .health-pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 10px 18px; border-radius: 100px;
+    font-size: 14px; font-weight: 700;
+    transition: background .3s, color .3s, border-color .3s;
+  }
+  .health-pill.running { background: rgba(139,150,168,.12); color: #8b96a8; border: 1px solid rgba(139,150,168,.3); }
+  .health-pill.green   { background: rgba(63,185,80,.12);  color: #4ade80; border: 1px solid rgba(63,185,80,.3); }
+  .health-pill.warn    { background: rgba(245,158,11,.12); color: #fbbf24; border: 1px solid rgba(245,158,11,.3); }
+  .health-pill.red     { background: rgba(239,68,68,.12);  color: #fca5a5; border: 1px solid rgba(239,68,68,.3); }
+  .health-pill .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor; box-shadow: 0 0 10px currentColor;
+  }
+  .health-pill.running .dot {
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.8); }
+    50%      { opacity: 1;   transform: scale(1.2); }
+  }
+
+  .counters { display: flex; gap: 10px; font-size: 12px; color: #8b949e; margin-top: 10px; }
+  .counters span { padding: 2px 8px; border-radius: 4px; background: #1f2937; }
+  .counters .err  { color: #fca5a5; }
+  .counters .warn { color: #fbbf24; }
+  .counters .ok   { color: #4ade80; }
+  .counters .run  { color: #8b96a8; }
+
+  .refresh-btn {
+    background: #58a6ff; color: #fff; border: none;
+    padding: 9px 18px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .refresh-btn:hover { filter: brightness(1.1); }
+  .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .refresh-btn.spinning svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .check-table {
+    width: 100%; border-collapse: collapse;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; overflow: hidden;
+  }
+  .check-table th {
+    text-align: left; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .08em;
+    color: #8b949e; padding: 12px 18px;
+    background: #0d1117; border-bottom: 1px solid #30363d;
+  }
+  .check-table td {
+    padding: 14px 18px; border-bottom: 1px solid #1f2937;
+    font-size: 13px; vertical-align: middle;
+    transition: background .3s;
+  }
+  .check-table tr:last-child td { border-bottom: none; }
+  .check-table tr.just-updated td { background: rgba(88, 166, 255, 0.06); }
+
+  .status-icon {
+    display: inline-block; width: 24px; height: 24px;
+    border-radius: 50%; text-align: center; line-height: 24px;
+    font-weight: 700; font-size: 12px;
+    transition: background .3s, color .3s;
+  }
+  .status-ok      { background: rgba(63,185,80,.15);  color: #4ade80; }
+  .status-warn    { background: rgba(245,158,11,.15); color: #fbbf24; }
+  .status-error   { background: rgba(239,68,68,.15);  color: #fca5a5; }
+  .status-na      { background: #1f2937;              color: #8b949e; }
+  .status-running { background: rgba(139,150,168,.15); color: #8b96a8; }
+  .status-running .spinner {
+    display: inline-block; width: 10px; height: 10px;
+    border: 1.5px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+
+  .check-name { font-weight: 600; color: #c9d1d9; min-width: 200px; }
+  .check-detail { color: #8b949e; }
+  .check-detail.placeholder { color: #5b6678; font-style: italic; }
+  .check-hint  {
+    display: block; margin-top: 4px;
+    color: #fbbf24; font-size: 12px; font-style: italic;
+  }
+  .check-hint.error { color: #fca5a5; }
+  .check-elapsed {
+    text-align: right; color: #5b6678; font-family: 'SF Mono', Menlo, monospace;
+    font-size: 12px; white-space: nowrap;
+  }
+
+  .group-header {
+    background: #0d1117 !important;
+    font-size: 11px !important; font-weight: 700 !important;
+    text-transform: uppercase; letter-spacing: .12em;
+    color: #58a6ff !important; padding: 16px 18px 8px !important;
+  }
+</style>
+
+<div class="page-header">
+  <h1>System Health</h1>
+  <p>Status of every service ClipLens depends on. Checks run in parallel as the page loads.</p>
+</div>
+
+<div class="health-hero">
+  <div>
+    <span id="health-pill" class="health-pill running">
+      <span class="dot"></span>
+      <span id="health-pill-text">Running checks…</span>
+    </span>
+    <div class="counters">
+      <span class="ok">✓ <span id="cnt-ok">0</span></span>
+      <span class="warn">⚠ <span id="cnt-warn">0</span></span>
+      <span class="err">✗ <span id="cnt-error">0</span></span>
+      <span>– <span id="cnt-na">0</span></span>
+      <span class="run">⟳ <span id="cnt-running">{{ total_checks }}</span> running</span>
+      <span><span id="cnt-done">0</span> / {{ total_checks }} done</span>
+    </div>
+  </div>
+  <button id="refresh-btn" class="refresh-btn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </svg>
+    Re-run all checks
+  </button>
+</div>
+
+<table class="check-table">
+  <thead>
+    <tr>
+      <th style="width:60px;"></th>
+      <th>Check</th>
+      <th>Result</th>
+      <th style="width:80px; text-align:right;">Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for group_name, items in check_groups.items %}
+      <tr><th colspan="4" class="group-header">{{ group_name }}</th></tr>
+      {% for c in items %}
+        <tr data-check-id="{{ c.id }}">
+          <td>
+            <span class="status-icon status-running"><span class="spinner"></span></span>
+          </td>
+          <td class="check-name">{{ c.name }}</td>
+          <td>
+            <span class="check-detail placeholder">running…</span>
+          </td>
+          <td class="check-elapsed">—</td>
+        </tr>
+      {% endfor %}
+    {% endfor %}
+  </tbody>
+</table>
+
+<p style="margin-top:24px; color:#5b6678; font-size:12px;">
+  Each check is a separate HTTP request to <code style="color:#58a6ff;">/platform/system/health/check/&lt;id&gt;/</code>.
+  Browser fans them out in parallel.
+</p>
+
+<script>
+(function() {
+  const CSRF = '{{ csrf_token }}';
+  const counts = { ok: 0, warn: 0, error: 0, na: 0, done: 0, running: {{ total_checks }} };
+  const TOTAL = {{ total_checks }};
+  const pill = document.getElementById('health-pill');
+  const pillText = document.getElementById('health-pill-text');
+
+  function updateCounters() {
+    document.getElementById('cnt-ok').textContent      = counts.ok;
+    document.getElementById('cnt-warn').textContent    = counts.warn;
+    document.getElementById('cnt-error').textContent   = counts.error;
+    document.getElementById('cnt-na').textContent      = counts.na;
+    document.getElementById('cnt-running').textContent = counts.running;
+    document.getElementById('cnt-done').textContent    = counts.done;
+
+    if (counts.done < TOTAL) {
+      pill.className = 'health-pill running';
+      pillText.textContent = `Running checks… (${counts.done}/${TOTAL})`;
+    } else if (counts.error > 0) {
+      pill.className = 'health-pill red';
+      pillText.textContent = `Issues detected — ${counts.error} error${counts.error === 1 ? '' : 's'}`;
+    } else if (counts.warn > 0) {
+      pill.className = 'health-pill warn';
+      pillText.textContent = `Mostly healthy — ${counts.warn} warning${counts.warn === 1 ? '' : 's'}`;
+    } else {
+      pill.className = 'health-pill green';
+      pillText.textContent = 'All systems operational';
+    }
+  }
+
+  function renderResult(row, r) {
+    const ICON_CLASS  = { ok: 'status-ok', warn: 'status-warn', error: 'status-error', na: 'status-na' };
+    const ICON_SYMBOL = { ok: '✓',         warn: '⚠',         error: '✗',           na: '–'         };
+
+    const cells = row.children;
+
+    // Status icon
+    cells[0].innerHTML = `<span class="status-icon ${ICON_CLASS[r.status] || ''}">${ICON_SYMBOL[r.status] || '?'}</span>`;
+
+    // Detail + optional hint
+    let resultHtml = `<span class="check-detail">${escapeHtml(r.detail || '')}</span>`;
+    if (r.hint) {
+      const hintClass = r.status === 'error' ? 'check-hint error' : 'check-hint';
+      resultHtml += `<span class="${hintClass}">💡 ${escapeHtml(r.hint)}</span>`;
+    }
+    cells[2].innerHTML = resultHtml;
+
+    // Elapsed
+    cells[3].textContent = `${r.elapsed_ms || 0}ms`;
+
+    // Subtle flash to highlight the update
+    row.classList.add('just-updated');
+    setTimeout(() => row.classList.remove('just-updated'), 600);
+  }
+
+  function renderError(row, message) {
+    const cells = row.children;
+    cells[0].innerHTML = `<span class="status-icon status-error">✗</span>`;
+    cells[2].innerHTML = `<span class="check-detail">${escapeHtml(message)}</span>`;
+    cells[3].textContent = '—';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => (
+      { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+    ));
+  }
+
+  async function runCheck(row) {
+    const id = row.dataset.checkId;
+    try {
+      const res = await fetch(`/platform/system/health/check/${id}/`, {
+        credentials: 'include',
+        headers: { 'X-CSRFToken': CSRF },
+      });
+      if (!res.ok) {
+        renderError(row, `Fetch failed (HTTP ${res.status})`);
+        counts.error++;
+      } else {
+        const r = await res.json();
+        renderResult(row, r);
+        counts[r.status] = (counts[r.status] || 0) + 1;
+      }
+    } catch (err) {
+      renderError(row, `Network error: ${err.message}`);
+      counts.error++;
+    } finally {
+      counts.done++;
+      counts.running--;
+      updateCounters();
+    }
+  }
+
+  function resetAndRun() {
+    // Reset counters
+    Object.assign(counts, { ok: 0, warn: 0, error: 0, na: 0, done: 0, running: TOTAL });
+    updateCounters();
+
+    // Reset all rows to "running"
+    document.querySelectorAll('tr[data-check-id]').forEach(row => {
+      const cells = row.children;
+      cells[0].innerHTML = `<span class="status-icon status-running"><span class="spinner"></span></span>`;
+      cells[2].innerHTML = `<span class="check-detail placeholder">running…</span>`;
+      cells[3].textContent = '—';
+    });
+
+    // Fire all in parallel — browser caps at ~6 concurrent per host
+    document.querySelectorAll('tr[data-check-id]').forEach(runCheck);
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    const btn = document.getElementById('refresh-btn');
+    btn.disabled = true;
+    btn.classList.add('spinning');
+    resetAndRun();
+    // Re-enable when everything finishes
+    const interval = setInterval(() => {
+      if (counts.done >= TOTAL) {
+        btn.disabled = false;
+        btn.classList.remove('spinning');
+        clearInterval(interval);
+      }
+    }, 200);
+  });
+
+  // Kick off on page load
+  document.addEventListener('DOMContentLoaded', resetAndRun);
+})();
+</script>
+
+{% endblock %}

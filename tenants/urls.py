@@ -12,5 +12,7 @@ urlpatterns = [
     path('plans/', views.manage_plans, name='manage_plans'),
     path('topups/', views.manage_topups, name='manage_topups'),
     path('leads/',  views.manage_leads,  name='manage_leads'),
+    path('system/health/', views.system_health, name='system_health'),
+    path('system/health/check/<str:check_id>/', views.system_health_check, name='system_health_check'),
     path('api/usage/<int:tenant_id>/', views.api_usage, name='api_usage'),
 ]

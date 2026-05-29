@@ -9092,6 +9092,7 @@ def video_speakers_list(request, video_id):
             'face_name':     s.face_identity.name if s.face_identity else None,
             'face_thumbnail': s.face_identity.thumbnail_url if s.face_identity else None,
         })
+    return Response(data)
 
 
 # ─── Live Streaming ────────────────────────────────────────────────────────────

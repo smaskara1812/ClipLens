@@ -22,18 +22,19 @@
     <li><a href="#your-content">3. Your content</a></li>
     <li><a href="#acceptable-use">4. Acceptable use</a></li>
     <li><a href="#subscription">5. Subscription &amp; billing</a></li>
-    <li><a href="#topups">6. Top-ups &amp; credits</a></li>
-    <li><a href="#cancellation">7. Cancellation &amp; refunds</a></li>
-    <li><a href="#availability">8. Service availability</a></li>
-    <li><a href="#third-party">9. Third-party services</a></li>
-    <li><a href="#our-ip">10. Our intellectual property</a></li>
-    <li><a href="#disclaimers">11. Disclaimers</a></li>
-    <li><a href="#liability">12. Limitation of liability</a></li>
-    <li><a href="#indemnity">13. Indemnity</a></li>
-    <li><a href="#termination">14. Termination</a></li>
-    <li><a href="#changes">15. Changes to these terms</a></li>
-    <li><a href="#governing-law">16. Governing law</a></li>
-    <li><a href="#contact">17. Contact</a></li>
+    <li><a href="#ai-minutes">6. How AI minutes are counted</a></li>
+    <li><a href="#topups">7. Top-ups &amp; credits</a></li>
+    <li><a href="#cancellation">8. Cancellation &amp; refunds</a></li>
+    <li><a href="#availability">9. Service availability</a></li>
+    <li><a href="#third-party">10. Third-party services</a></li>
+    <li><a href="#our-ip">11. Our intellectual property</a></li>
+    <li><a href="#disclaimers">12. Disclaimers</a></li>
+    <li><a href="#liability">13. Limitation of liability</a></li>
+    <li><a href="#indemnity">14. Indemnity</a></li>
+    <li><a href="#termination">15. Termination</a></li>
+    <li><a href="#changes">16. Changes to these terms</a></li>
+    <li><a href="#governing-law">17. Governing law</a></li>
+    <li><a href="#contact">18. Contact</a></li>
   </ol>
 </div>
 
@@ -112,7 +113,79 @@
       retained for 30 days after suspension to give you time to update payment details.</li>
 </ul>
 
-<h2 id="topups">6. Top-ups &amp; credits</h2>
+<h2 id="ai-minutes">6. How AI minutes are counted</h2>
+<p>
+  Because "AI minutes" is the resource we meter, we need to be precise about what it means.
+</p>
+<p>
+  <strong>An AI minute is one minute of wall-clock time</strong> spent by a Celery background worker
+  running an AI processing task on your media. We measure the time from when the task starts on a
+  worker to when it finishes or fails, and we log that elapsed time to your account.
+</p>
+
+<h3>Which tasks count</h3>
+<p>The following Celery tasks consume AI minutes:</p>
+<ul>
+  <li>Video transcoding to HLS (<code>process_video_task</code>)</li>
+  <li>Seek-preview sprite generation (<code>generate_seek_thumbnails_task</code>)</li>
+  <li>Audio track extraction (<code>extract_audio_tracks_task</code>)</li>
+  <li>Speech transcription with Whisper (<code>generate_captions_task</code>)</li>
+  <li>Subtitle translation with NLLB-200 (<code>translate_subtitles_task</code>)</li>
+  <li>Frame analysis: YOLO + CLIP + InsightFace + BLIP (<code>analyze_video_frames_task</code>)</li>
+  <li>Photo analysis (<code>analyze_photo_task</code>)</li>
+  <li>Speaker diarization with pyannote (<code>run_diarization_task</code>)</li>
+  <li>Audio-event detection with PANNs (<code>detect_audio_events_task</code>)</li>
+  <li>AI-generated video summaries (<code>generate_video_summary_task</code>)</li>
+  <li>Manual upscaling (<code>upscale_video_task</code>, <code>upscale_photo_task</code>)</li>
+</ul>
+<p>
+  Tasks that do not consume AI minutes: subtitle re-indexing (just VTT parsing), live-stream
+  recording, and any pure database operations.
+</p>
+
+<h3>Why minutes (and not, say, "videos processed")</h3>
+<p>
+  A 5-minute clip and a 5-hour film need wildly different amounts of compute. Per-minute pricing
+  reflects what you actually consume, scales naturally with content length, and doesn't penalise
+  short clips or reward batching long ones together.
+</p>
+
+<h3>Hardware dependence (important)</h3>
+<div class="callout">
+  <strong>Wall-clock processing time depends on the hardware the worker runs on.</strong>
+  A 10-minute video may take 4 AI minutes on a high-end GPU server, or 25 AI minutes on a CPU-only
+  server. We control hardware for hosted deployments and publish a typical processing-time table on
+  the billing page; for self-hosted deployments, your hardware determines your throughput.
+</div>
+<p>
+  For hosted plans on cliplens.com:
+</p>
+<ul>
+  <li>We commit to a baseline hardware tier per plan and publish expected processing speeds
+      (see <a href="/#plans">Plans</a>).</li>
+  <li>If we materially change the hardware on which your media runs in a way that increases your AI
+      minute consumption, we will notify you and adjust your monthly allowance accordingly.</li>
+  <li>We do not bill you for compute time spent on internal retries or our own infrastructure
+      failures.</li>
+</ul>
+
+<h3>What gets logged on failure or retry</h3>
+<p>
+  If an AI task fails partway through, we still log the elapsed time, because the compute was
+  consumed. We cap automatic retries at a small bounded number per task — runaway loops cannot
+  drain your account. User-facing errors (unsupported file format, missing audio track, etc.)
+  fail early before consuming significant minutes.
+</p>
+
+<h3>Self-hosted deployments</h3>
+<p>
+  When you run ClipLens on your own infrastructure under an enterprise self-host licence, the
+  AI minute meter still runs (for your own observability), but <strong>no quotas are enforced
+  and no usage is reported to us</strong>. Your licence fee covers the platform itself, not the
+  compute — your hardware costs are your own.
+</p>
+
+<h2 id="topups">7. Top-ups &amp; credits</h2>
 <p>
   In addition to your plan, you may purchase one-time top-ups:
 </p>
@@ -125,7 +198,7 @@
       (oldest pack first). Unused credits expire 12 months after purchase and are non-refundable.</li>
 </ul>
 
-<h2 id="cancellation">7. Cancellation &amp; refunds</h2>
+<h2 id="cancellation">8. Cancellation &amp; refunds</h2>
 <ul>
   <li>You can cancel your plan or any storage add-on at any time from the Billing page in your
       organisation admin panel.</li>
@@ -140,7 +213,7 @@
       billing period pro-rata.</li>
 </ul>
 
-<h2 id="availability">8. Service availability</h2>
+<h2 id="availability">9. Service availability</h2>
 <p>
   We aim to keep ClipLens running 99.5% of the time but we don't guarantee uninterrupted service.
   Scheduled maintenance, third-party outages (Stripe, cloud providers), and emergency security
@@ -152,7 +225,7 @@
   <a href="mailto:sales@cliplens.com">sales@cliplens.com</a> for details.
 </p>
 
-<h2 id="third-party">9. Third-party services</h2>
+<h2 id="third-party">10. Third-party services</h2>
 <p>
   ClipLens integrates with third-party services that have their own terms:
 </p>
@@ -164,7 +237,7 @@
       verified our usage complies with each. You don't need to accept their licences separately.</li>
 </ul>
 
-<h2 id="our-ip">10. Our intellectual property</h2>
+<h2 id="our-ip">11. Our intellectual property</h2>
 <p>
   The ClipLens name, logo, source code, documentation, and platform design are owned by us.
   These Terms grant you a limited, non-exclusive, non-transferable right to use the service
@@ -175,7 +248,7 @@
   Self-hosted deployments are covered by a separate licence agreement that grants additional rights.
 </p>
 
-<h2 id="disclaimers">11. Disclaimers</h2>
+<h2 id="disclaimers">12. Disclaimers</h2>
 <p>
   CLIPLENS IS PROVIDED <strong>"AS IS"</strong> AND <strong>"AS AVAILABLE"</strong>. TO THE
   FULLEST EXTENT PERMITTED BY LAW, WE DISCLAIM ALL WARRANTIES — EXPRESS, IMPLIED, OR STATUTORY —
@@ -187,7 +260,7 @@
   relying on it for decisions of consequence.
 </p>
 
-<h2 id="liability">12. Limitation of liability</h2>
+<h2 id="liability">13. Limitation of liability</h2>
 <p>
   TO THE FULLEST EXTENT PERMITTED BY LAW, OUR TOTAL LIABILITY TO YOU FOR ANY CLAIM ARISING FROM
   OR RELATED TO THESE TERMS OR YOUR USE OF CLIPLENS IS LIMITED TO THE AMOUNT YOU PAID US IN THE
@@ -199,14 +272,14 @@
   BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
 </p>
 
-<h2 id="indemnity">13. Indemnity</h2>
+<h2 id="indemnity">14. Indemnity</h2>
 <p>
   You agree to indemnify and hold us harmless from any third-party claims arising from your
   use of ClipLens in violation of these Terms, including claims that Your Content infringes
   intellectual property rights or violates privacy laws.
 </p>
 
-<h2 id="termination">14. Termination</h2>
+<h2 id="termination">15. Termination</h2>
 <ul>
   <li>You may terminate at any time by cancelling your subscription and deleting your account
       from the Billing page.</li>
@@ -218,21 +291,21 @@
       indemnity, governing law) will survive.</li>
 </ul>
 
-<h2 id="changes">15. Changes to these terms</h2>
+<h2 id="changes">16. Changes to these terms</h2>
 <p>
   We may update these Terms occasionally. Material changes will be notified to organisation
   admins by email at least 30 days before they take effect. Continuing to use ClipLens after the
   effective date means you accept the new Terms.
 </p>
 
-<h2 id="governing-law">16. Governing law</h2>
+<h2 id="governing-law">17. Governing law</h2>
 <p>
   These Terms are governed by the laws of India, without regard to conflict-of-laws principles.
   Disputes will be resolved by the courts of competent jurisdiction in Mumbai, India, except
   where applicable consumer-protection law requires otherwise.
 </p>
 
-<h2 id="contact">17. Contact</h2>
+<h2 id="contact">18. Contact</h2>
 <p>
   Questions about these Terms? Email
   <a href="mailto:legal@cliplens.com">legal@cliplens.com</a>.

@@ -178,6 +178,17 @@
     </div>
   </div>
 
+  <!-- ── About AI minutes ────────────────────────────────────────────────── -->
+  <div class="section-title">About AI Minutes</div>
+  <div class="usage-card" style="margin-bottom: 28px; font-size: 13px; color: var(--text-muted); line-height: 1.7;">
+    <p style="margin: 0 0 10px;"><strong style="color: var(--text);">An AI minute is one minute of wall-clock time</strong>
+      spent by a background worker running an AI task on your media — transcription, face recognition, frame analysis,
+      translation, audio events, etc. Pure database operations and live-streaming don't count.</p>
+    <p style="margin: 0;">Processing speed depends on hardware. On our hosted infrastructure you can expect roughly
+      <strong style="color: var(--text);">3–6 minutes of compute per minute of video</strong> for the full pipeline.
+      See <a href="/terms/#ai-minutes" style="color: var(--accent);">how AI minutes are counted</a> for the full breakdown.</p>
+  </div>
+
   <!-- ── Breakdown by type ────────────────────────────────────────────────── -->
   {% if breakdown %}
   <div class="section-title">AI Minutes by Type</div>
