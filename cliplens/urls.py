@@ -12,6 +12,8 @@ from tenants.views import (
     stripe_webhook as tenant_stripe_webhook,
     landing_page as tenant_landing_page,
     submit_lead as tenant_submit_lead,
+    privacy_page as tenant_privacy_page,
+    terms_page as tenant_terms_page,
 )
 
 urlpatterns = [
@@ -35,6 +37,8 @@ urlpatterns = [
     # forwards to /player/ so the app still works at orgX.cliplens.local/
     path('', tenant_landing_page, name='landing'),
     path('contact/', tenant_submit_lead, name='submit_lead'),
+    path('privacy/', tenant_privacy_page, name='privacy'),
+    path('terms/',   tenant_terms_page,   name='terms'),
 
     # ── Control plane (accessible at admin.cliplens.* or /platform/ locally) ──
     path('platform/', include('tenants.urls', namespace='tenants')),

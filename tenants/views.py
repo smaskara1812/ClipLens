@@ -477,6 +477,16 @@ def submit_lead(request):
     return redirect('/?contact=ok#contact')
 
 
+def privacy_page(request):
+    """Public privacy policy."""
+    return render(request, 'tenants/privacy.html')
+
+
+def terms_page(request):
+    """Public terms of service."""
+    return render(request, 'tenants/terms.html')
+
+
 def onboard_success(request, token: str):
     """Landing page after Stripe Checkout for the initial plan subscription."""
     try:

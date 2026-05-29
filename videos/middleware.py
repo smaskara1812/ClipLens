@@ -31,6 +31,8 @@ class LoginRequiredMiddleware:
         r'|/api/stripe/webhook/'       # Stripe webhook — signature-verified
         r'|/$'                         # bare root → marketing landing (decides auth itself)
         r'|/contact/'                  # public contact form submission
+        r'|/privacy/'                  # public privacy policy
+        r'|/terms/'                    # public terms of service
         r')'
     )
 

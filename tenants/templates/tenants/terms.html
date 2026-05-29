@@ -1,0 +1,247 @@
+{% extends 'tenants/_legal_base.html' %}
+{% block title %}Terms of Service — ClipLens{% endblock %}
+
+{% block content %}
+<div class="eyebrow">Legal</div>
+<h1>Terms of Service</h1>
+<p class="meta">Last updated: {% now "F j, Y" %}</p>
+
+<div class="callout">
+  <strong>The short version:</strong> By using ClipLens you agree that (1) you have the right to
+  upload the media you upload, (2) you'll pay for the plan you signed up for, (3) you won't use
+  the platform for anything illegal, (4) we'll do our best to keep the service running but
+  can't guarantee zero downtime, and (5) our liability is capped at what you paid us in the
+  last 12 months. Full details below.
+</div>
+
+<div class="doc-toc">
+  <h4>On this page</h4>
+  <ol>
+    <li><a href="#agreement">1. Agreement to terms</a></li>
+    <li><a href="#account">2. Your account &amp; eligibility</a></li>
+    <li><a href="#your-content">3. Your content</a></li>
+    <li><a href="#acceptable-use">4. Acceptable use</a></li>
+    <li><a href="#subscription">5. Subscription &amp; billing</a></li>
+    <li><a href="#topups">6. Top-ups &amp; credits</a></li>
+    <li><a href="#cancellation">7. Cancellation &amp; refunds</a></li>
+    <li><a href="#availability">8. Service availability</a></li>
+    <li><a href="#third-party">9. Third-party services</a></li>
+    <li><a href="#our-ip">10. Our intellectual property</a></li>
+    <li><a href="#disclaimers">11. Disclaimers</a></li>
+    <li><a href="#liability">12. Limitation of liability</a></li>
+    <li><a href="#indemnity">13. Indemnity</a></li>
+    <li><a href="#termination">14. Termination</a></li>
+    <li><a href="#changes">15. Changes to these terms</a></li>
+    <li><a href="#governing-law">16. Governing law</a></li>
+    <li><a href="#contact">17. Contact</a></li>
+  </ol>
+</div>
+
+<h2 id="agreement">1. Agreement to terms</h2>
+<p>
+  These Terms of Service ("Terms") form a contract between you (or the organisation you represent)
+  and ClipLens. By clicking "I agree" during onboarding, creating an account, or using ClipLens,
+  you accept these Terms. If you don't agree, don't use the service.
+</p>
+<p>
+  If you're using ClipLens on behalf of an organisation, you represent that you have authority
+  to bind that organisation to these Terms.
+</p>
+
+<h2 id="account">2. Your account &amp; eligibility</h2>
+<ul>
+  <li>You must be at least 18 years old to create an account.</li>
+  <li>You're responsible for keeping your password secure and for everything that happens under
+      your account.</li>
+  <li>One person can hold one administrator account per organisation. Sharing credentials is a
+      security risk and grounds for suspension.</li>
+  <li>Notify us immediately at <a href="mailto:security@cliplens.com">security@cliplens.com</a>
+      if you suspect unauthorised access.</li>
+</ul>
+
+<h2 id="your-content">3. Your content</h2>
+<p>
+  You retain all ownership of the media, transcripts, metadata, and other content you upload
+  to ClipLens ("Your Content"). You grant us a limited licence to host, process, transcode,
+  index, and display Your Content solely to provide the service to you.
+</p>
+<p>
+  We <strong>do not</strong> claim ownership of Your Content. We <strong>do not</strong> use it
+  to train AI models. We <strong>do not</strong> share it with third parties except as described
+  in our <a href="/privacy/">Privacy Policy</a>.
+</p>
+<p>
+  You represent that:
+</p>
+<ul>
+  <li>You own Your Content or have the legal right to upload and process it</li>
+  <li>You have consent from any identifiable people in the media (especially for face recognition)</li>
+  <li>Your Content does not infringe any third-party rights</li>
+  <li>You comply with all applicable laws when uploading and using Your Content</li>
+</ul>
+
+<h2 id="acceptable-use">4. Acceptable use</h2>
+<p>You agree <strong>not</strong> to use ClipLens to:</p>
+<ul>
+  <li>Process media you do not have rights to (pirated content, etc.)</li>
+  <li>Perform face recognition on people without their consent where the law requires it
+      (e.g. biometric data laws in Illinois, Texas, EU under GDPR Article 9)</li>
+  <li>Upload CSAM, terrorist content, or content that violates applicable criminal law</li>
+  <li>Reverse-engineer, decompile, or attempt to extract source code from the service</li>
+  <li>Probe, scan, or test the vulnerability of our infrastructure without prior written permission</li>
+  <li>Use the platform to send spam, phishing, or unsolicited communications</li>
+  <li>Resell or sublicense ClipLens as your own product (white-label resale requires an enterprise agreement)</li>
+  <li>Exceed reasonable API rate limits or circumvent quota enforcement</li>
+</ul>
+<p>
+  Violation of this section may result in immediate suspension or termination without refund.
+</p>
+
+<h2 id="subscription">5. Subscription &amp; billing</h2>
+<p>
+  ClipLens is sold on a monthly subscription basis. By subscribing to a paid plan you authorise
+  us (through Stripe) to charge your payment method monthly until you cancel.
+</p>
+<ul>
+  <li>Prices are shown in USD on the plans page unless otherwise noted.</li>
+  <li>The first charge happens immediately on subscription. Subsequent charges occur on the same
+      calendar day each month.</li>
+  <li>Taxes (VAT, GST, sales tax) are <strong>not</strong> included in the displayed price unless
+      explicitly stated. You're responsible for any taxes applicable to your purchase.</li>
+  <li>Failed payments suspend your service after 7 days of unsuccessful retries. Your data is
+      retained for 30 days after suspension to give you time to update payment details.</li>
+</ul>
+
+<h2 id="topups">6. Top-ups &amp; credits</h2>
+<p>
+  In addition to your plan, you may purchase one-time top-ups:
+</p>
+<ul>
+  <li><strong>Storage add-ons</strong> are recurring monthly subscriptions that add extra GB to
+      your plan. They renew monthly until cancelled. Cancellation takes effect at the end of the
+      current paid period — you keep the extra storage until then.</li>
+  <li><strong>AI credit packs</strong> are one-time purchases of additional AI processing minutes.
+      Credits are consumed only after your monthly plan allowance is exhausted, then drained FIFO
+      (oldest pack first). Unused credits expire 12 months after purchase and are non-refundable.</li>
+</ul>
+
+<h2 id="cancellation">7. Cancellation &amp; refunds</h2>
+<ul>
+  <li>You can cancel your plan or any storage add-on at any time from the Billing page in your
+      organisation admin panel.</li>
+  <li>Cancellation takes effect at the end of the current billing period. You keep access to
+      everything you paid for until that date — no early cutoff.</li>
+  <li>Monthly subscription fees are <strong>non-refundable</strong> once paid, except where
+      required by law.</li>
+  <li>Credit pack purchases are <strong>non-refundable</strong> but always usable until the
+      12-month expiry.</li>
+  <li>If we terminate your account for cause (violation of these Terms), no refund is owed.</li>
+  <li>If we terminate your account without cause, we'll refund the unused portion of your current
+      billing period pro-rata.</li>
+</ul>
+
+<h2 id="availability">8. Service availability</h2>
+<p>
+  We aim to keep ClipLens running 99.5% of the time but we don't guarantee uninterrupted service.
+  Scheduled maintenance, third-party outages (Stripe, cloud providers), and emergency security
+  patches may cause downtime.
+</p>
+<p>
+  Enterprise customers can negotiate a written Service Level Agreement (SLA) with specific
+  uptime guarantees, response times, and service credits. Contact
+  <a href="mailto:sales@cliplens.com">sales@cliplens.com</a> for details.
+</p>
+
+<h2 id="third-party">9. Third-party services</h2>
+<p>
+  ClipLens integrates with third-party services that have their own terms:
+</p>
+<ul>
+  <li><strong>Stripe</strong> for payment processing —
+      <a href="https://stripe.com/legal/ssa" target="_blank">stripe.com/legal/ssa</a></li>
+  <li><strong>Open AI models</strong> (Whisper, CLIP, InsightFace, NLLB-200, YOLO, BLIP, PANNs,
+      pyannote) used inside ClipLens are subject to their respective open-source licences. We've
+      verified our usage complies with each. You don't need to accept their licences separately.</li>
+</ul>
+
+<h2 id="our-ip">10. Our intellectual property</h2>
+<p>
+  The ClipLens name, logo, source code, documentation, and platform design are owned by us.
+  These Terms grant you a limited, non-exclusive, non-transferable right to use the service
+  during your subscription period.
+</p>
+<p>
+  You may not copy, modify, distribute, sell, or create derivative works of the platform itself.
+  Self-hosted deployments are covered by a separate licence agreement that grants additional rights.
+</p>
+
+<h2 id="disclaimers">11. Disclaimers</h2>
+<p>
+  CLIPLENS IS PROVIDED <strong>"AS IS"</strong> AND <strong>"AS AVAILABLE"</strong>. TO THE
+  FULLEST EXTENT PERMITTED BY LAW, WE DISCLAIM ALL WARRANTIES — EXPRESS, IMPLIED, OR STATUTORY —
+  INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+</p>
+<p>
+  AI-generated outputs (transcripts, translations, face matches, scene descriptions) are
+  probabilistic and may contain errors. You're responsible for reviewing AI output before
+  relying on it for decisions of consequence.
+</p>
+
+<h2 id="liability">12. Limitation of liability</h2>
+<p>
+  TO THE FULLEST EXTENT PERMITTED BY LAW, OUR TOTAL LIABILITY TO YOU FOR ANY CLAIM ARISING FROM
+  OR RELATED TO THESE TERMS OR YOUR USE OF CLIPLENS IS LIMITED TO THE AMOUNT YOU PAID US IN THE
+  12 MONTHS PRECEDING THE CLAIM.
+</p>
+<p>
+  WE ARE NOT LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES,
+  INCLUDING LOST PROFITS, LOST REVENUE, LOST DATA, OR BUSINESS INTERRUPTION, EVEN IF WE HAVE
+  BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+</p>
+
+<h2 id="indemnity">13. Indemnity</h2>
+<p>
+  You agree to indemnify and hold us harmless from any third-party claims arising from your
+  use of ClipLens in violation of these Terms, including claims that Your Content infringes
+  intellectual property rights or violates privacy laws.
+</p>
+
+<h2 id="termination">14. Termination</h2>
+<ul>
+  <li>You may terminate at any time by cancelling your subscription and deleting your account
+      from the Billing page.</li>
+  <li>We may suspend or terminate your access if you breach these Terms, fail to pay, or use
+      the platform for illegal purposes.</li>
+  <li>On termination, your data is deleted within 30 days per our Privacy Policy. Export your
+      data before terminating if you want to keep it.</li>
+  <li>Sections that by their nature should survive termination (intellectual property, liability,
+      indemnity, governing law) will survive.</li>
+</ul>
+
+<h2 id="changes">15. Changes to these terms</h2>
+<p>
+  We may update these Terms occasionally. Material changes will be notified to organisation
+  admins by email at least 30 days before they take effect. Continuing to use ClipLens after the
+  effective date means you accept the new Terms.
+</p>
+
+<h2 id="governing-law">16. Governing law</h2>
+<p>
+  These Terms are governed by the laws of India, without regard to conflict-of-laws principles.
+  Disputes will be resolved by the courts of competent jurisdiction in Mumbai, India, except
+  where applicable consumer-protection law requires otherwise.
+</p>
+
+<h2 id="contact">17. Contact</h2>
+<p>
+  Questions about these Terms? Email
+  <a href="mailto:legal@cliplens.com">legal@cliplens.com</a>.
+</p>
+
+<div class="callout" style="margin-top: 48px;">
+  <strong>Disclaimer:</strong> These Terms are provided as a reasonable starting template for a
+  SaaS platform. They are not legal advice. Before relying on them as a binding agreement —
+  especially in regulated industries or jurisdictions with specific consumer-protection
+  requirements — consult a lawyer to adapt them to your situation.
+</div>
+{% endblock %}
