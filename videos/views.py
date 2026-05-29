@@ -26,6 +26,7 @@ from django.apps import apps
 from django.db import connection
 from django.db.models import Q, Sum, Count, F
 from django.http import FileResponse, Http404, JsonResponse, StreamingHttpResponse
+from django.contrib import messages
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
@@ -2074,6 +2075,460 @@ def photo_purge(request, photo_id):
 
 
 @superuser_required
+def org_usage_page(request):
+    """Usage & quota dashboard for org superadmins — shows AI minutes and storage vs plan limits."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_usage.html', {'no_tenant': True})
+
+    from tenants.metering import get_monthly_usage, usage_warning_level
+    from tenants.models import UsageEvent, StorageAddon, AICreditPack
+    from django.utils import timezone
+
+    usage = get_monthly_usage(tenant.slug)
+    plan  = usage.get('plan')
+
+    # Live disk usage (accurate — includes HLS, thumbnails, everything)
+    from tenants.views import _disk_usage_bytes
+    storage_bytes = _disk_usage_bytes(tenant.media_folder)
+    storage_gb    = round(storage_bytes / 1024**3, 3)
+
+    # Effective limits include addons
+    ai_minutes       = usage['ai_minutes']
+    ai_minutes_limit = usage['ai_minutes_effective']     # plan + credits
+    storage_limit    = usage['storage_limit_effective']  # plan + addons
+
+    # Warning levels (computed against effective limits)
+    ai_warn      = usage_warning_level(ai_minutes, ai_minutes_limit)
+    storage_warn = usage_warning_level(storage_gb, storage_limit)
+
+    # Active addons + credit packs (for display) — same rule as billing page
+    from django.db.models import Q as _Qu
+    _now = timezone.now()
+    active_addons = list(StorageAddon.objects.using('control').filter(
+        _Qu(tenant=tenant) & (
+            (_Qu(cancelled_at__isnull=True) & _Qu(expires_at__isnull=True)) |
+            _Qu(expires_at__gt=_now)
+        )
+    ).order_by('-started_at'))
+    active_packs = list(AICreditPack.objects.using('control').filter(
+        tenant=tenant, expires_at__gt=timezone.now()
+    ).order_by('purchased_at'))
+
+    # Recent usage events (last 50, this month)
+    now         = timezone.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    recent_events = (
+        UsageEvent.objects.using('control')
+        .filter(tenant=tenant, timestamp__gte=month_start)
+        .exclude(event_type=UsageEvent.TYPE_STORAGE_DELTA)
+        .order_by('-timestamp')[:50]
+    )
+
+    # Breakdown by event type
+    from django.db.models import Sum
+    breakdown = (
+        UsageEvent.objects.using('control')
+        .filter(tenant=tenant, timestamp__gte=month_start)
+        .exclude(event_type=UsageEvent.TYPE_STORAGE_DELTA)
+        .values('event_type')
+        .annotate(total=Sum('value'))
+        .order_by('-total')
+    )
+
+    return render(request, 'videos/org_usage.html', {
+        'tenant':                tenant,
+        'plan':                  plan,
+        'ai_minutes':            round(ai_minutes, 1),
+        'ai_minutes_limit':      ai_minutes_limit,
+        'ai_minutes_limit_plan': usage['ai_minutes_limit_plan'],
+        'ai_minutes_credits':    usage['ai_minutes_credits'],
+        'ai_pct':                min(100, round(ai_minutes / max(ai_minutes_limit, 1) * 100)) if ai_minutes_limit else 0,
+        'ai_warn':               ai_warn,
+        'storage_gb':            storage_gb,
+        'storage_gb_display':    round(storage_gb * 1024, 1),  # in MB for small values
+        'storage_limit':         storage_limit,
+        'storage_limit_plan':    usage['storage_limit_plan'],
+        'storage_addon_gb':      usage['storage_addon_gb'],
+        'storage_pct':           min(100, round(storage_gb / max(storage_limit, 1) * 100)) if storage_limit else 0,
+        'storage_warn':          storage_warn,
+        'recent_events':         recent_events,
+        'breakdown':             list(breakdown),
+        'active_addons':         active_addons,
+        'active_packs':          active_packs,
+        'month':                 now.strftime('%B %Y'),
+    })
+
+
+# ── Top-up purchase (Stripe later — mock checkout for now) ───────────────────
+
+@superuser_required
+def org_topup_page(request):
+    """Browse + purchase top-ups (storage addons, AI credit packs)."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_topup.html', {'no_tenant': True})
+
+    from tenants.models import StorageAddon, AICreditPack, TopUpProduct
+    from django.utils import timezone
+
+    storage_options = list(TopUpProduct.objects.using('control').filter(
+        kind=TopUpProduct.KIND_STORAGE, is_active=True
+    ).order_by('sort_order', 'amount'))
+    credit_options = list(TopUpProduct.objects.using('control').filter(
+        kind=TopUpProduct.KIND_CREDITS, is_active=True
+    ).order_by('sort_order', 'amount'))
+
+    # Same "still-granting-GB" rule as billing page
+    from django.db.models import Q as _Q
+    now_ts2 = timezone.now()
+    active_addons = list(StorageAddon.objects.using('control').filter(
+        _Q(tenant=tenant) & (
+            (_Q(cancelled_at__isnull=True) & _Q(expires_at__isnull=True)) |
+            _Q(expires_at__gt=now_ts2)
+        )
+    ).order_by('-started_at'))
+    active_packs = list(AICreditPack.objects.using('control').filter(
+        tenant=tenant, expires_at__gt=timezone.now()
+    ).order_by('purchased_at'))
+
+    return render(request, 'videos/org_topup.html', {
+        'tenant':          tenant,
+        'storage_options': storage_options,
+        'credit_options':  credit_options,
+        'active_addons':   active_addons,
+        'active_packs':    active_packs,
+        'stripe_enabled':  getattr(settings, 'STRIPE_ENABLED', False),
+    })
+
+
+@superuser_required
+def org_topup_purchase(request):
+    """
+    Mock purchase endpoint — creates a StorageAddon or AICreditPack from a TopUpProduct.
+    Will be replaced by a Stripe Checkout redirect later.
+    """
+    if request.method != 'POST':
+        return redirect('org_topup')
+
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        messages.error(request, 'No tenant context.')
+        return redirect('org_topup')
+
+    product_id = request.POST.get('product_id', '')
+    from tenants.models import StorageAddon, AICreditPack, TopUpProduct
+    from datetime import timedelta
+    from django.utils import timezone
+
+    try:
+        product = TopUpProduct.objects.using('control').get(pk=int(product_id), is_active=True)
+    except (TopUpProduct.DoesNotExist, ValueError):
+        messages.error(request, 'Top-up product not found.')
+        return redirect('org_topup')
+
+    # If Stripe is configured, send the user to Stripe Checkout (hosted).
+    # The webhook will create the StorageAddon / AICreditPack on payment success.
+    if getattr(settings, 'STRIPE_ENABLED', False):
+        from tenants.stripe_utils import create_checkout_session
+        base_url     = request.build_absolute_uri('/').rstrip('/')
+        success_url  = base_url + '/admin-panel/topup/success/'
+        cancel_url   = base_url + '/admin-panel/topup/?cancelled=1'
+        try:
+            checkout_url = create_checkout_session(
+                tenant=tenant,
+                product=product,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                customer_email=getattr(tenant, 'admin_email', '') or '',
+            )
+        except Exception as exc:
+            _task_logger.exception("Stripe checkout failed for tenant=%s product=%s", tenant.slug, product.pk)
+            messages.error(request, f'Could not start checkout: {exc}')
+            return redirect('org_topup')
+        if checkout_url:
+            return redirect(checkout_url)
+        # fall through to mock path if Stripe failed silently
+        messages.error(request, 'Could not start Stripe checkout.')
+        return redirect('org_topup')
+
+    # ── Mock purchase (Stripe disabled) ──────────────────────────────────────
+    if product.kind == TopUpProduct.KIND_STORAGE:
+        StorageAddon.objects.using('control').create(
+            tenant=tenant,
+            product=product,
+            gb_amount=product.amount,
+            price_usd=product.price_usd,
+        )
+        messages.success(request, f'Added +{product.amount} GB storage to your plan.')
+
+    elif product.kind == TopUpProduct.KIND_CREDITS:
+        AICreditPack.objects.using('control').create(
+            tenant=tenant,
+            product=product,
+            minutes_purchased=product.amount,
+            price_usd=product.price_usd,
+            expires_at=timezone.now() + timedelta(days=365),
+        )
+        messages.success(request, f'Added {product.amount} AI credit minutes (expire in 12 months).')
+
+    else:
+        messages.error(request, 'Unknown top-up type.')
+
+    return redirect('org_topup')
+
+
+@superuser_required
+def org_storage_addon_cancel(request, addon_id: int):
+    """Cancel a storage addon subscription."""
+    if request.method != 'POST':
+        return redirect('org_topup')
+
+    tenant = getattr(request, 'tenant', None)
+    from tenants.models import StorageAddon
+    from django.utils import timezone
+    from datetime import datetime, timezone as dt_tz
+    try:
+        addon = StorageAddon.objects.using('control').get(pk=addon_id, tenant=tenant)
+        addon.cancelled_at = timezone.now()
+
+        # If linked to a real Stripe subscription, schedule cancellation at period end
+        # so the user keeps the storage they already paid for this month.
+        if addon.stripe_subscription_id and getattr(settings, 'STRIPE_ENABLED', False):
+            from tenants.stripe_utils import cancel_stripe_subscription
+            sub = cancel_stripe_subscription(addon.stripe_subscription_id, at_period_end=True)
+            period_end = (sub or {}).get('current_period_end')
+            if period_end:
+                addon.expires_at = datetime.fromtimestamp(period_end, tz=dt_tz.utc)
+        else:
+            # Mock mode — give them ~30 days from cancellation as the "paid period"
+            from datetime import timedelta
+            addon.expires_at = timezone.now() + timedelta(days=30)
+
+        addon.save(using='control')
+        if addon.expires_at:
+            messages.success(
+                request,
+                f'+{addon.gb_amount} GB storage addon will remain active until '
+                f'{addon.expires_at.strftime("%b %d, %Y")} and will not renew.'
+            )
+        else:
+            messages.success(request, f'Cancelled +{addon.gb_amount} GB storage addon.')
+    except StorageAddon.DoesNotExist:
+        messages.error(request, 'Addon not found.')
+    return redirect('org_billing' if request.POST.get('source') == 'billing' else 'org_topup')
+
+
+@superuser_required
+def org_billing_page(request):
+    """
+    Org admin billing center — current plan, active subscriptions, credit packs,
+    invoices from Stripe, and a link to the Stripe Customer Portal to update
+    payment method.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_billing.html', {'no_tenant': True})
+
+    from tenants.models import StorageAddon, AICreditPack, Plan
+    from tenants.stripe_utils import list_tenant_invoices, get_payment_method_summary
+    from django.utils import timezone
+
+    # Active = still granting GB. Includes:
+    #   • Renewing subscriptions (cancelled_at IS NULL, expires_at IS NULL)
+    #   • Cancelled but paid period not yet over (expires_at > now)
+    from django.db.models import Q
+    from django.utils import timezone as _tz
+    now_ts = _tz.now()
+    active_addons = list(StorageAddon.objects.using('control').filter(
+        Q(tenant=tenant) & (
+            (Q(cancelled_at__isnull=True) & Q(expires_at__isnull=True)) |
+            Q(expires_at__gt=now_ts)
+        )
+    ).order_by('-started_at'))
+    cancelled_addons = list(StorageAddon.objects.using('control').filter(
+        tenant=tenant, expires_at__lte=now_ts
+    ).order_by('-expires_at')[:20])
+
+    all_packs = list(AICreditPack.objects.using('control').filter(
+        tenant=tenant
+    ).order_by('-purchased_at')[:50])
+
+    # Invoices + payment method via Stripe API
+    stripe_enabled = getattr(settings, 'STRIPE_ENABLED', False)
+    invoices       = list_tenant_invoices(tenant) if stripe_enabled else []
+    payment_method = get_payment_method_summary(tenant) if stripe_enabled else None
+
+    return render(request, 'videos/org_billing.html', {
+        'tenant':           tenant,
+        'active_addons':    active_addons,
+        'cancelled_addons': cancelled_addons,
+        'all_packs':        all_packs,
+        'invoices':         invoices,
+        'payment_method':   payment_method,
+        'stripe_enabled':   stripe_enabled,
+        'plan_status':      tenant.plan_status,
+    })
+
+
+@superuser_required
+def org_portal_redirect(request):
+    """Open Stripe Customer Portal to manage payment method / cancel subscriptions."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant or not getattr(settings, 'STRIPE_ENABLED', False):
+        messages.error(request, 'Billing portal is not available.')
+        return redirect('org_billing')
+    from tenants.stripe_utils import create_billing_portal_session
+    return_url = request.build_absolute_uri('/admin-panel/billing/')
+    url = create_billing_portal_session(tenant=tenant, return_url=return_url)
+    if url:
+        return redirect(url)
+    messages.error(request, 'Could not open billing portal. Set a payment method first by subscribing.')
+    return redirect('org_billing')
+
+
+@superuser_required
+def org_plan_upgrade_page(request):
+    """Plan upgrade/change page — shows all plans with current one highlighted."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_plan_upgrade.html', {'no_tenant': True})
+
+    from tenants.models import Plan
+    plans = list(Plan.objects.using('control').all().order_by('price_usd'))
+
+    return render(request, 'videos/org_plan_upgrade.html', {
+        'tenant':         tenant,
+        'plans':          plans,
+        'current_plan':   tenant.plan,
+        'stripe_enabled': getattr(settings, 'STRIPE_ENABLED', False),
+    })
+
+
+@superuser_required
+def org_plan_change(request):
+    """Switch to a different plan. Paid plan → Stripe Checkout, free → immediate."""
+    if request.method != 'POST':
+        return redirect('org_plan_upgrade')
+
+    tenant = getattr(request, 'tenant', None)
+    plan_id = request.POST.get('plan_id')
+
+    from tenants.models import Plan, Tenant
+    try:
+        plan = Plan.objects.using('control').get(pk=int(plan_id))
+    except (Plan.DoesNotExist, ValueError):
+        messages.error(request, 'Plan not found.')
+        return redirect('org_plan_upgrade')
+
+    if tenant.plan_id == plan.pk:
+        messages.info(request, "You're already on this plan.")
+        return redirect('org_plan_upgrade')
+
+    # Free plan switch — immediate
+    if plan.is_free:
+        # Cancel existing paid subscription if any
+        if tenant.stripe_plan_subscription_id and getattr(settings, 'STRIPE_ENABLED', False):
+            from tenants.stripe_utils import cancel_stripe_subscription
+            cancel_stripe_subscription(tenant.stripe_plan_subscription_id)
+        tenant.plan                       = plan
+        tenant.plan_status                = Tenant.PLAN_STATUS_ACTIVE
+        tenant.stripe_plan_subscription_id = ''
+        tenant.save(using='control', update_fields=[
+            'plan', 'plan_status', 'stripe_plan_subscription_id',
+        ])
+        messages.success(request, f"Switched to {plan.name}.")
+        return redirect('org_plan_upgrade')
+
+    # Paid plan — Stripe Checkout
+    if not getattr(settings, 'STRIPE_ENABLED', False):
+        # Mock mode — just swap the plan
+        tenant.plan        = plan
+        tenant.plan_status = Tenant.PLAN_STATUS_ACTIVE
+        tenant.save(using='control', update_fields=['plan', 'plan_status'])
+        messages.success(request, f"Switched to {plan.name} (mock mode).")
+        return redirect('org_plan_upgrade')
+
+    from tenants.stripe_utils import create_plan_checkout_session
+    base_url = request.build_absolute_uri('/').rstrip('/')
+    try:
+        checkout_url = create_plan_checkout_session(
+            tenant=tenant,
+            plan=plan,
+            success_url=base_url + '/admin-panel/billing/?upgraded=1',
+            cancel_url=base_url + '/admin-panel/plan/',
+            customer_email=tenant.admin_email,
+        )
+    except Exception as exc:
+        _task_logger.exception("Plan upgrade checkout failed for tenant=%s", tenant.slug)
+        messages.error(request, f'Could not start checkout: {exc}')
+        return redirect('org_plan_upgrade')
+    if checkout_url:
+        return redirect(checkout_url)
+    messages.error(request, 'Could not start checkout.')
+    return redirect('org_plan_upgrade')
+
+
+@superuser_required
+def org_plan_cancel(request):
+    """Cancel the current plan subscription via Stripe."""
+    if request.method != 'POST':
+        return redirect('org_billing')
+
+    tenant = getattr(request, 'tenant', None)
+    if not tenant or not tenant.stripe_plan_subscription_id:
+        messages.error(request, 'No active plan subscription to cancel.')
+        return redirect('org_billing')
+
+    from tenants.stripe_utils import cancel_stripe_subscription
+    from tenants.models import Tenant
+    if cancel_stripe_subscription(tenant.stripe_plan_subscription_id):
+        # Webhook will flip plan_status to cancelled, but be eager
+        tenant.plan_status = Tenant.PLAN_STATUS_CANCELLED
+        tenant.save(using='control', update_fields=['plan_status'])
+        messages.success(request, 'Your plan has been cancelled. You retain access until the end of the billing period.')
+    else:
+        messages.error(request, 'Could not cancel the subscription. Please try again or use the Customer Portal.')
+    return redirect('org_billing')
+
+
+@superuser_required
+def org_topup_success(request):
+    """Landing page after Stripe Checkout completes. The webhook does the real work."""
+    messages.success(
+        request,
+        "Thank you! Your purchase was successful. "
+        "It may take a few seconds to appear below as our system confirms the payment."
+    )
+    return redirect('org_topup')
+
+
+@superuser_required
+def org_credit_pack_expire(request, pack_id: int):
+    """
+    Voluntarily expire a credit pack (e.g. for accounting). Forfeits any
+    remaining minutes. Does NOT issue a refund — pure ledger action.
+    """
+    if request.method != 'POST':
+        return redirect('org_topup')
+
+    tenant = getattr(request, 'tenant', None)
+    from tenants.models import AICreditPack
+    from django.utils import timezone
+    try:
+        pack = AICreditPack.objects.using('control').get(pk=pack_id, tenant=tenant)
+        pack.expires_at = timezone.now()
+        pack.save(using='control')
+        messages.success(
+            request,
+            f'Expired credit pack ({pack.minutes_remaining:.1f} min forfeited).'
+        )
+    except AICreditPack.DoesNotExist:
+        messages.error(request, 'Credit pack not found.')
+    return redirect('org_topup')
+
+
+@superuser_required
 def admin_trash_page(request):
     """Superadmin-only listing of soft-deleted videos and photos.
 
@@ -2309,6 +2764,10 @@ def storage_dashboard_page(request):
     grand       = {k: 0 for k in ASSET_KEYS}
     grand['total'] = 0
 
+    # Use the tenant-aware media root so paths resolve correctly in multi-tenant mode
+    from videos.tasks import _media_root
+    tenant_media = _media_root()
+
     for v in videos:
         s = {}
 
@@ -2316,19 +2775,19 @@ def storage_dashboard_page(request):
         s['original'] = _path_size(v.original_file.path) if (v.original_file and v.original_file.name) else 0
 
         # HLS segments directory
-        s['hls'] = _path_size(media / 'hls' / str(v.id))
+        s['hls'] = _path_size(tenant_media / 'hls' / str(v.id))
 
         # Upscaled MP4 files
-        s['upscaled'] = _path_size(media / 'upscaled' / str(v.id))
+        s['upscaled'] = _path_size(tenant_media / 'upscaled' / str(v.id))
 
         # Thumbnail image
         s['thumbnail'] = _path_size(v.thumbnail.path) if (v.thumbnail and v.thumbnail.name) else 0
 
-        # Seek sprite
-        s['sprite'] = _path_size(media / v.seek_sprite) if v.seek_sprite else 0
+        # Seek sprite — stored as MEDIA_ROOT-relative CharField, resolve via settings
+        s['sprite'] = _path_size(Path(settings.MEDIA_ROOT) / v.seek_sprite) if v.seek_sprite else 0
 
         # Face crop images
-        s['faces'] = _path_size(media / 'faces' / str(v.id))
+        s['faces'] = _path_size(tenant_media / 'faces' / str(v.id))
 
         # Subtitle / caption VTT files
         sub_total = 0
@@ -2341,7 +2800,7 @@ def storage_dashboard_page(request):
         s['subtitles'] = sub_total
 
         # Diarization audio WAV
-        s['audio'] = _path_size(media / 'audio' / f'{v.id}.wav')
+        s['audio'] = _path_size(tenant_media / 'audio' / f'{v.id}.wav')
 
         s['total'] = sum(s[k] for k in ASSET_KEYS)
 
@@ -2381,7 +2840,7 @@ def storage_dashboard_page(request):
         ps = {}
         ps['file']      = _path_size(p.file.path)      if (p.file      and p.file.name)      else 0
         ps['thumbnail'] = _path_size(p.thumbnail.path) if (p.thumbnail and p.thumbnail.name) else 0
-        ps['faces']     = _path_size(media / 'faces' / 'photos' / str(p.id))
+        ps['faces']     = _path_size(tenant_media / 'faces' / 'photos' / str(p.id))
         ps['total']     = sum(ps[k] for k in PHOTO_KEYS)
 
         for k in PHOTO_KEYS:

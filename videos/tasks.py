@@ -177,6 +177,14 @@ def generate_seek_thumbnails_task(self, video_id: str, **kwargs):
     Stores the relative media path in Video.seek_sprite.
     Safe to re-run — overwrites the previous sprite.
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     if not getattr(settings, 'SEEK_THUMBNAILS_ENABLED', True):
         return
 
@@ -239,7 +247,9 @@ def generate_seek_thumbnails_task(self, video_id: str, **kwargs):
         logger.error(f'[seek_thumbnails] FFmpeg failed for {video_id}: {err}')
         raise self.retry(exc=Exception(f'FFmpeg exit {result.returncode}'))
 
-    relative_path = f'seek_sprites/{video_id}.jpg'
+    # Store path relative to global MEDIA_ROOT so /media/<path> resolves correctly
+    from pathlib import Path as _Path2
+    relative_path = str(_Path2(sprite_file).relative_to(settings.MEDIA_ROOT))
     Video.objects.filter(id=video_id).update(seek_sprite=relative_path)
     logger.info(f'[seek_thumbnails] sprite saved → {relative_path}')
 
@@ -255,6 +265,14 @@ def generate_seek_thumbnails_task(self, video_id: str, **kwargs):
     acks_late=True,
 )
 def upscale_video_task(self, video_id: str, target_long_edge: int, **kwargs):
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     from .upscale import run_video_upscale_pipeline
 
     try:
@@ -273,6 +291,14 @@ def upscale_video_task(self, video_id: str, target_long_edge: int, **kwargs):
     acks_late=True,
 )
 def upscale_photo_task(self, photo_id: str, target_long_edge: int, **kwargs):
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     from .upscale import run_photo_upscale_pipeline
 
     try:
@@ -416,7 +442,7 @@ def generate_captions_task(self, video_id: str, language: str = 'en', **kwargs):
         logger.info(f'generate_captions_task: captions already exist for {video_id}/{language}')
         return
 
-    source_path = _media_root() / video.original_file.name
+    source_path = Path(video.original_file.path)
     if not source_path.exists():
         logger.warning(f'generate_captions_task: source file missing for {video_id}')
         return
@@ -510,6 +536,14 @@ def generate_video_summary_task(self, video_id: str, **kwargs):
     Behaviour when USE_OLLAMA=False: logs and returns immediately (no-op).
     Existing summaries are never overwritten unless force=True is passed.
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     import urllib.request
     import urllib.error
     import json as _json
@@ -766,7 +800,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
         logger.info(f'analyze_video_frames_task: video {video_id} not ready, skipping')
         return
 
-    source_path = _media_root() / video.original_file.name
+    source_path = Path(video.original_file.path)
     if not source_path.exists():
         logger.warning(f'analyze_video_frames_task: source file missing for {video_id}')
         return
@@ -1259,7 +1293,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
                         if crop.size > 0:
                             crop_name = f'face_{rf["frame_idx"]:05d}_{face_idx:03d}.jpg'
                             cv2.imwrite(str(faces_dir / crop_name), crop)
-                            crop_rel = f'faces/{video_id}/{crop_name}'
+                            crop_rel = str((faces_dir / crop_name).relative_to(settings.MEDIA_ROOT))
                             saved_crop_paths[face_idx] = crop_rel
                 except Exception as exc:
                     logger.debug(f'analyze_video_frames_task: crop error face {face_idx}: {exc}')
@@ -1556,6 +1590,14 @@ def translate_subtitles_task(self, video_id: str, target_languages: list,
         3. For each target language: batch-translate cue texts via NLLB
         4. Rebuild VTT and save a new Subtitle record (is_translation=True)
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     from .models import Video, Subtitle
     from django.core.files.base import ContentFile
 
@@ -1672,6 +1714,14 @@ def extract_audio_tracks_task(self, video_id: str, **kwargs):
     Detect all audio streams in the source file and produce an HLS audio-only
     playlist for each one so the player can offer audio track switching.
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     from .models import Video, AudioTrack
 
     try:
@@ -1679,7 +1729,7 @@ def extract_audio_tracks_task(self, video_id: str, **kwargs):
     except Video.DoesNotExist:
         return
 
-    source_path = _media_root() / video.original_file.name
+    source_path = Path(video.original_file.path)
     if not source_path.exists():
         logger.warning(f'extract_audio_tracks_task: source missing for {video_id}')
         return
@@ -1748,7 +1798,7 @@ def extract_audio_tracks_task(self, video_id: str, **kwargs):
             logger.error(f'extract_audio_tracks_task: ffmpeg failed for track {idx}: {res.stderr[-500:]}')
             continue
 
-        rel_path = f'hls/{video_id}/audio/track{idx}/playlist.m3u8'
+        rel_path = str((out_dir / 'playlist.m3u8').relative_to(settings.MEDIA_ROOT))
         AudioTrack.objects.create(
             video=video,
             label=label,
@@ -1939,7 +1989,7 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
     photo.status = Photo.STATUS_PROCESSING
     photo.save(update_fields=['status'])
 
-    img_path = _media_root() / photo.file.name
+    img_path = Path(photo.file.path)
     if not img_path.exists():
         photo.status = Photo.STATUS_FAILED
         photo.processing_error = 'Source file missing'
@@ -2217,7 +2267,7 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
                     if crop.size > 0:
                         crop_name = f'face_{idx:03d}.jpg'
                         cv2.imwrite(str(faces_dir / crop_name), crop)
-                        crop_rel = f'faces/photos/{photo.id}/{crop_name}'
+                        crop_rel = str((faces_dir / crop_name).relative_to(settings.MEDIA_ROOT))
                 except Exception as exc:
                     logger.debug(f'analyze_photo_task: crop error for {photo_id} face {idx}: {exc}')
 
@@ -2261,8 +2311,8 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
         try:
             thumb = pil_img.copy()
             thumb.thumbnail((480, 480), _PILImage.LANCZOS)
-            thumb_rel = f'photos/thumbnails/{photo.id}.jpg'
-            thumb_path = _media_root() / thumb_rel
+            thumb_path = _media_root() / 'photos' / 'thumbnails' / f'{photo.id}.jpg'
+            thumb_rel = str(thumb_path.relative_to(_media_root()))
             thumb_path.parent.mkdir(parents=True, exist_ok=True)
             thumb.save(str(thumb_path), 'JPEG', quality=82)
             photo.thumbnail = thumb_rel
@@ -2520,6 +2570,14 @@ def run_diarization_task(self, video_id: str, **kwargs):
       - HF_TOKEN set in .env (HuggingFace token with access to pyannote models)
       - Accept terms at https://hf.co/pyannote/speaker-diarization-3.1
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     from pathlib import Path
     from .models import Video, VideoSegment
 
@@ -2572,7 +2630,7 @@ def run_diarization_task(self, video_id: str, **kwargs):
         audio_dir.mkdir(parents=True, exist_ok=True)
         source = None
         if video.original_file and video.original_file.name:
-            candidate = _media_root() / video.original_file.name
+            candidate = Path(video.original_file.path)
             if candidate.exists():
                 source = candidate
         if source is None:
@@ -3108,6 +3166,14 @@ def detect_audio_events_task(self, video_id: str, **kwargs):
     Never raises on library/weight errors — logs and returns an error dict so
     diarization results stay intact.  Re-queues once on transient exceptions.
     """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
     import tempfile
     from .models import Video, AudioEvent
 
@@ -3121,7 +3187,7 @@ def detect_audio_events_task(self, video_id: str, **kwargs):
         logger.warning(f'detect_audio_events_task: video {video_id} not found')
         return {'ok': False, 'error': 'video-not-found'}
 
-    source_path = _media_root() / video.original_file.name
+    source_path = Path(video.original_file.path)
     if not video.original_file or not video.original_file.name or not source_path.exists():
         logger.warning(f'detect_audio_events_task: source file missing for {video_id}')
         return {'ok': False, 'error': 'source-missing'}

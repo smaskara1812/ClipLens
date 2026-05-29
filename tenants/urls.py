@@ -10,5 +10,7 @@ urlpatterns = [
     path('tenants/<int:tenant_id>/change-plan/', views.change_plan, name='change_plan'),
     path('tenants/<int:tenant_id>/toggle/', views.toggle_tenant, name='toggle_tenant'),
     path('plans/', views.manage_plans, name='manage_plans'),
+    path('topups/', views.manage_topups, name='manage_topups'),
+    path('leads/',  views.manage_leads,  name='manage_leads'),
     path('api/usage/<int:tenant_id>/', views.api_usage, name='api_usage'),
 ]

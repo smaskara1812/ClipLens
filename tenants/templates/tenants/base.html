@@ -109,6 +109,8 @@
     <nav class="topbar-nav">
       <a href="{% url 'tenants:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
       <a href="{% url 'tenants:manage_plans' %}" class="{% block nav_plans %}{% endblock %}">Plans</a>
+      <a href="{% url 'tenants:manage_topups' %}" class="{% block nav_topups %}{% endblock %}">Top-ups</a>
+      <a href="{% url 'tenants:manage_leads' %}" class="{% block nav_leads %}{% endblock %}">Leads</a>
       <a href="{% url 'tenants:create_tenant' %}" class="{% block nav_new %}{% endblock %}">+ New Org</a>
     </nav>
     <div class="topbar-user" style="display:flex;align-items:center;gap:16px;">
@@ -128,6 +130,9 @@
       <a href="{% url 'tenants:create_tenant' %}">Provision New</a>
       <div class="sidebar-section">Billing</div>
       <a href="{% url 'tenants:manage_plans' %}">Plans</a>
+      <a href="{% url 'tenants:manage_topups' %}">Top-up Products</a>
+      <div class="sidebar-section">Sales</div>
+      <a href="{% url 'tenants:manage_leads' %}">Leads</a>
       <div class="sidebar-section">System</div>
       <a href="/admin/">Django Admin</a>
     </div>

@@ -1,0 +1,218 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Top Up — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .topup-section { margin-bottom: 36px; }
+  .topup-title {
+    font-size: 13px; font-weight: 700; margin: 0 0 12px;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px;
+  }
+  .topup-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .topup-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 22px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .topup-amount {
+    font-size: 28px; font-weight: 800; line-height: 1;
+  }
+  .topup-unit {
+    font-size: 14px; color: var(--text-muted); margin-top: 2px;
+  }
+  .topup-meta {
+    font-size: 12px; color: var(--text-muted); margin-bottom: 12px;
+  }
+  .topup-price {
+    font-size: 18px; font-weight: 700; margin: 8px 0;
+  }
+  .topup-btn {
+    background: var(--accent); color: #fff; border: none;
+    padding: 10px 16px; border-radius: 5px;
+    font-weight: 600; font-size: 13px; cursor: pointer;
+    transition: all .15s;
+  }
+  .topup-btn:hover { filter: brightness(1.15); }
+
+  .active-list {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 18px;
+  }
+  .active-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .active-row:last-child { border-bottom: none; }
+  .active-meta { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .cancel-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); padding: 6px 12px;
+    border-radius: 4px; font-size: 12px; cursor: pointer;
+  }
+  .cancel-btn:hover { color: #ef4444; border-color: #ef4444; }
+
+  .messages-list { list-style: none; padding: 0; margin: 0 0 16px; }
+  .message {
+    padding: 10px 14px; border-radius: 5px; margin-bottom: 8px; font-size: 13px;
+  }
+  .message-error { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+  .message-success { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #4ade80; }
+
+  .stripe-notice {
+    background: rgba(88,166,255,.05); border: 1px dashed rgba(88,166,255,.3);
+    padding: 12px 14px; border-radius: 6px; font-size: 12px;
+    color: var(--text-muted); margin-bottom: 24px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_topup' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Top Up</h1>
+    <p class="admin-hero-sub">Add extra storage or AI processing minutes to your plan.</p>
+  </div>
+
+  {% if messages %}
+  <ul class="messages-list">
+    {% for m in messages %}
+    <li class="message message-{{ m.tags }}">{{ m }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="stripe-notice">
+    {% if stripe_enabled %}
+    🧪 Stripe is in <strong>test mode</strong> — use card <code style="color:var(--accent)">4242 4242 4242 4242</code>,
+    any future expiry, any CVC. No real money is charged.
+    {% else %}
+    🧪 Payments are in <strong>dev mock mode</strong> — clicking Subscribe or Buy Credits instantly
+    activates the top-up without charging. Add <code style="color:var(--accent)">STRIPE_SECRET_KEY</code>
+    to <code>.env</code> to enable real test checkout.
+    {% endif %}
+  </div>
+
+  <div style="background:rgba(63,185,80,.05); border:1px solid rgba(63,185,80,.2); padding:10px 14px;
+              border-radius:6px; margin-bottom:24px; font-size:12px; color:var(--text-muted); line-height:1.6;">
+    <strong style="color:var(--text);">How purchases work:</strong>
+    Each subscription &amp; credit pack <strong>locks in the price and amount at the time of purchase</strong>.
+    If the platform later changes the SKU's price or storage amount, your existing subscriptions stay the same —
+    you only pay (or receive) the new amount if you cancel and re-subscribe.
+  </div>
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Top-ups are only available in multi-tenant mode.</p>
+  {% else %}
+
+  <!-- ── Storage addons ───────────────────────────────────────────────────── -->
+  <div class="topup-section">
+    <p class="topup-title">Extra Storage (monthly subscription)</p>
+    <div class="topup-grid">
+      {% for opt in storage_options %}
+      <div class="topup-card">
+        <div>
+          <div class="topup-amount">+{{ opt.amount }} GB</div>
+          <div class="topup-unit">{{ opt.name }}</div>
+        </div>
+        <div class="topup-meta">Renews monthly. Cancel anytime.</div>
+        <div class="topup-price">${{ opt.price_usd }}<span style="font-size:13px; color:var(--text-muted); font-weight:400;">/mo</span></div>
+        <form method="post" action="{% url 'org_topup_purchase' %}">
+          {% csrf_token %}
+          <input type="hidden" name="product_id" value="{{ opt.pk }}">
+          <button type="submit" class="topup-btn" style="width:100%">Subscribe</button>
+        </form>
+      </div>
+      {% empty %}
+      <p style="color:var(--text-muted); font-size:13px;">No storage addons available right now.</p>
+      {% endfor %}
+    </div>
+
+    {% if active_addons %}
+    <p class="topup-title" style="margin-top:24px;">Your Active Storage Addons</p>
+    <div class="active-list">
+      {% for a in active_addons %}
+      <div class="active-row">
+        <div>
+          <strong>+{{ a.gb_amount }} GB</strong>
+          {% if a.price_usd %}<span style="color:var(--text-muted); font-size:12px;">&nbsp;·&nbsp;${{ a.price_usd }}/mo</span>{% endif %}
+          <div class="active-meta">
+            Started {{ a.started_at|date:"M d, Y" }}
+            {% if a.is_pending_cancel %}
+              <br><span style="color:#fbbf24;">Cancelled — active until {{ a.expires_at|date:"M d, Y" }}</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if a.is_pending_cancel %}
+          <span style="font-size:11px; color:var(--text-muted); padding:4px 10px; border:1px solid var(--border); border-radius:10px;">Cancelled</span>
+        {% else %}
+          <form method="post" action="{% url 'org_addon_cancel' a.pk %}"
+                onsubmit="return confirm('Cancel this storage addon?\n\nYou will keep the {{ a.gb_amount }} GB until the end of the current billing period, then it will not renew.')">
+            {% csrf_token %}
+            <button type="submit" class="cancel-btn">Cancel</button>
+          </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── AI credit packs ──────────────────────────────────────────────────── -->
+  <div class="topup-section">
+    <p class="topup-title">AI Minute Credits (one-time, expire in 12 months)</p>
+    <div class="topup-grid">
+      {% for opt in credit_options %}
+      <div class="topup-card">
+        <div>
+          <div class="topup-amount">{{ opt.amount }} min</div>
+          <div class="topup-unit">{{ opt.name }}</div>
+        </div>
+        <div class="topup-meta">Credits used after monthly allowance is exhausted.</div>
+        <div class="topup-price">${{ opt.price_usd }}</div>
+        <form method="post" action="{% url 'org_topup_purchase' %}">
+          {% csrf_token %}
+          <input type="hidden" name="product_id" value="{{ opt.pk }}">
+          <button type="submit" class="topup-btn" style="width:100%">Buy Credits</button>
+        </form>
+      </div>
+      {% empty %}
+      <p style="color:var(--text-muted); font-size:13px;">No credit packs available right now.</p>
+      {% endfor %}
+    </div>
+
+    {% if active_packs %}
+    <p class="topup-title" style="margin-top:24px;">Your Active Credit Packs</p>
+    <div class="active-list">
+      {% for p in active_packs %}
+      <div class="active-row">
+        <div>
+          <strong>{{ p.minutes_remaining|floatformat:1 }} / {{ p.minutes_purchased }} min</strong> remaining
+          <div class="active-meta">
+            Purchased {{ p.purchased_at|date:"M d, Y" }}
+            · Expires {{ p.expires_at|date:"M d, Y" }}
+            {% if p.price_usd %} · ${{ p.price_usd }}{% endif %}
+          </div>
+        </div>
+        <form method="post" action="{% url 'org_pack_expire' p.pk %}"
+              onsubmit="return confirm('Expire this credit pack now? Any unused minutes ({{ p.minutes_remaining|floatformat:1 }}) will be forfeited and no refund will be issued.')">
+          {% csrf_token %}
+          <button type="submit" class="cancel-btn">Expire</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

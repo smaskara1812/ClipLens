@@ -1,0 +1,262 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Billing — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .b-section { margin-bottom: 36px; }
+  .b-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted); margin: 0 0 12px;
+  }
+  .b-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+  }
+  .b-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .b-row:first-child { padding-top: 0; }
+  .b-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .b-meta { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
+  .b-pill {
+    display: inline-block; padding: 3px 10px; border-radius: 10px;
+    font-size: 11px; font-weight: 600;
+  }
+  .b-pill.active { background: rgba(63,185,80,.15); color: #4ade80; }
+  .b-pill.cancelled { background: rgba(239,68,68,.15); color: #fca5a5; }
+  .b-pill.past_due { background: rgba(245,158,11,.15); color: #fbbf24; }
+  .b-pill.incomplete { background: rgba(88,166,255,.15); color: #93c5fd; }
+  .b-pill.expired { background: var(--surface-2, #2a2a2a); color: var(--text-muted); }
+
+  .cancel-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); padding: 6px 12px;
+    border-radius: 4px; font-size: 12px; cursor: pointer;
+  }
+  .cancel-btn:hover { color: #ef4444; border-color: #ef4444; }
+
+  .primary-btn {
+    background: var(--accent); color: #fff; border: none;
+    padding: 8px 16px; border-radius: 5px; cursor: pointer;
+    font-size: 13px; font-weight: 600; text-decoration: none;
+    display: inline-block;
+  }
+  .primary-btn:hover { filter: brightness(1.15); }
+
+  table.invoices { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.invoices th {
+    text-align: left; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px;
+    color: var(--text-muted); padding: 0 0 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.invoices td { padding: 9px 0; border-bottom: 1px solid var(--border); }
+  table.invoices tr:last-child td { border-bottom: none; }
+  table.invoices a { color: var(--accent); text-decoration: none; }
+  table.invoices a:hover { text-decoration: underline; }
+
+  .messages-list { list-style: none; padding: 0; margin: 0 0 16px; }
+  .message { padding: 10px 14px; border-radius: 5px; margin-bottom: 8px; font-size: 13px; }
+  .message-error { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+  .message-success { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #4ade80; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_billing' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Billing</h1>
+    <p class="admin-hero-sub">Manage your plan subscription, top-ups, payment method, and view invoices.</p>
+  </div>
+
+  {% if messages %}
+  <ul class="messages-list">
+    {% for m in messages %}<li class="message message-{{ m.tags }}">{{ m }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Billing is only available in multi-tenant mode.</p>
+  {% else %}
+
+  <!-- ── Current plan ─────────────────────────────────────────────────────── -->
+  <div class="b-section">
+    <p class="b-title">Current Plan</p>
+    <div class="b-card">
+      <div class="b-row">
+        <div>
+          <strong style="font-size:16px;">{{ tenant.plan.name|default:"— No plan —" }}</strong>
+          <span class="b-pill {{ plan_status }}" style="margin-left:8px;">
+            {{ tenant.get_plan_status_display }}
+          </span>
+          <div class="b-meta">
+            {% if tenant.plan %}
+              {% if tenant.plan.is_free %}Free tier{% else %}${{ tenant.plan.price_usd }} per month{% endif %}
+              · {{ tenant.plan.storage_limit_gb }} GB · {{ tenant.plan.ai_minutes_limit }} AI min/mo
+            {% endif %}
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <a href="{% url 'org_plan_upgrade' %}" class="primary-btn">Change Plan</a>
+          {% if tenant.stripe_plan_subscription_id and plan_status == 'active' %}
+          <form method="post" action="{% url 'org_plan_cancel' %}" style="display:inline;"
+                onsubmit="return confirm('Cancel your plan subscription? You will keep access until the end of this billing period.')">
+            {% csrf_token %}
+            <button type="submit" class="cancel-btn">Cancel Plan</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Payment method ───────────────────────────────────────────────────── -->
+  <div class="b-section">
+    <p class="b-title">Payment Method</p>
+    <div class="b-card">
+      {% if payment_method %}
+      <div class="b-row">
+        <div>
+          <strong style="text-transform:capitalize;">{{ payment_method.brand }}</strong>
+          ending in <strong>•••• {{ payment_method.last4 }}</strong>
+          <div class="b-meta">Expires {{ payment_method.exp_month }}/{{ payment_method.exp_year }}</div>
+        </div>
+        {% if stripe_enabled %}
+        <a href="{% url 'org_billing_portal' %}" class="primary-btn">Manage in Stripe</a>
+        {% endif %}
+      </div>
+      {% else %}
+      <p style="color:var(--text-muted); margin:0 0 12px; font-size:13px;">
+        No payment method on file yet.
+        {% if not stripe_enabled %}(Stripe is not configured.){% endif %}
+      </p>
+      {% if stripe_enabled and tenant.stripe_customer_id %}
+      <a href="{% url 'org_billing_portal' %}" class="primary-btn">Add Payment Method</a>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Active storage subscriptions ─────────────────────────────────────── -->
+  {% if active_addons %}
+  <div class="b-section">
+    <p class="b-title">Active Storage Subscriptions</p>
+    <div class="b-card">
+      {% for a in active_addons %}
+      <div class="b-row">
+        <div>
+          <strong>+{{ a.gb_amount }} GB</strong>
+          {% if a.price_usd %}<span style="color:var(--text-muted); font-size:12px;">· ${{ a.price_usd }}/mo</span>{% endif %}
+          {% if a.is_pending_cancel %}
+            <span class="b-pill cancelled" style="margin-left:8px;">Pending cancellation</span>
+          {% endif %}
+          <div class="b-meta">
+            Active since {{ a.started_at|date:"M d, Y" }} · {{ a.product.name|default:"(custom)" }}
+            {% if a.is_pending_cancel %}
+              <br><span style="color:#fbbf24;">Will not renew — active until {{ a.expires_at|date:"M d, Y" }}</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if a.is_pending_cancel %}
+          <span class="b-pill cancelled">Cancelled</span>
+        {% else %}
+          <form method="post" action="{% url 'org_addon_cancel' a.pk %}"
+                onsubmit="return confirm('Cancel +{{ a.gb_amount }} GB storage subscription?\n\nYou will keep this storage until the end of the current billing period, then it will not renew.')">
+            {% csrf_token %}
+            <input type="hidden" name="source" value="billing">
+            <button type="submit" class="cancel-btn">Cancel</button>
+          </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Cancelled storage subscriptions (history) ────────────────────────── -->
+  {% if cancelled_addons %}
+  <div class="b-section">
+    <p class="b-title">Cancelled Subscriptions</p>
+    <div class="b-card">
+      {% for a in cancelled_addons %}
+      <div class="b-row">
+        <div>
+          <strong>+{{ a.gb_amount }} GB</strong>
+          {% if a.price_usd %}<span style="color:var(--text-muted); font-size:12px;">· ${{ a.price_usd }}/mo</span>{% endif %}
+          <div class="b-meta">{{ a.started_at|date:"M d, Y" }} – {{ a.cancelled_at|date:"M d, Y" }}</div>
+        </div>
+        <span class="b-pill cancelled">Cancelled</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Credit packs history ─────────────────────────────────────────────── -->
+  {% if all_packs %}
+  <div class="b-section">
+    <p class="b-title">AI Credit Pack History</p>
+    <div class="b-card">
+      {% for p in all_packs %}
+      <div class="b-row">
+        <div>
+          <strong>{{ p.minutes_remaining|floatformat:1 }}</strong> / {{ p.minutes_purchased }} min remaining
+          {% if p.price_usd %}<span style="color:var(--text-muted); font-size:12px;">· ${{ p.price_usd }}</span>{% endif %}
+          <div class="b-meta">
+            Purchased {{ p.purchased_at|date:"M d, Y" }} · Expires {{ p.expires_at|date:"M d, Y" }}
+          </div>
+        </div>
+        {% if p.is_expired %}<span class="b-pill expired">Expired</span>
+        {% elif p.minutes_remaining == 0 %}<span class="b-pill expired">Depleted</span>
+        {% else %}<span class="b-pill active">Active</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Invoices ─────────────────────────────────────────────────────────── -->
+  <div class="b-section">
+    <p class="b-title">Invoices &amp; Receipts</p>
+    <div class="b-card">
+      {% if invoices %}
+      <table class="invoices">
+        <thead>
+          <tr>
+            <th>Date</th><th>Number</th><th>Amount</th><th>Status</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for inv in invoices %}
+          <tr>
+            <td>{{ inv.created|date:"M d, Y" }}</td>
+            <td style="font-family:monospace;">{{ inv.number }}</td>
+            <td>${{ inv.amount_paid }} {{ inv.currency }}</td>
+            <td><span class="b-pill {% if inv.status == 'paid' %}active{% else %}past_due{% endif %}">{{ inv.status }}</span></td>
+            <td>
+              {% if inv.hosted_url %}<a href="{{ inv.hosted_url }}" target="_blank">View</a>{% endif %}
+              {% if inv.pdf_url %} · <a href="{{ inv.pdf_url }}" target="_blank">PDF</a>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color:var(--text-muted); font-size:13px; margin:0;">
+        {% if stripe_enabled %}No invoices yet — you'll see them here after your first paid subscription or top-up.
+        {% else %}Stripe is not configured. Set <code>STRIPE_SECRET_KEY</code> in <code>.env</code> to see real invoices.
+        {% endif %}
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

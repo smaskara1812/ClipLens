@@ -27,6 +27,10 @@ class LoginRequiredMiddleware:
         r'|/api/streams/'              # live streams list — public
         r'|/live/\d+/'                 # live watch page — public
         r'|/api/v1/'                   # external API — has its own key-based auth
+        r'|/onboard/'                  # tenant onboarding flow — claimed via invite token
+        r'|/api/stripe/webhook/'       # Stripe webhook — signature-verified
+        r'|/$'                         # bare root → marketing landing (decides auth itself)
+        r'|/contact/'                  # public contact form submission
         r')'
     )
 

@@ -76,9 +76,11 @@ class TenantMiddleware:
             return self.get_response(request)
 
         # ── Look up tenant in control DB ──────────────────────────────────────
+        # Allow inactive tenants through ONLY for the /onboard/ flow so the
+        # admin can claim their invite. Everything else is gated by is_active.
         try:
             from .models import Tenant
-            tenant = Tenant.objects.using('control').get(slug=subdomain, is_active=True)
+            tenant = Tenant.objects.using('control').get(slug=subdomain)
         except Exception:
             tenant = None
 
@@ -87,6 +89,23 @@ class TenantMiddleware:
                 f"<h1>Organisation '{subdomain}' not found</h1>"
                 f"<p>This subdomain is not registered. Please check the URL.</p>",
                 status=404,
+                content_type='text/html',
+            )
+
+        # Paths that must work even on inactive tenants (so the admin can
+        # actually claim their invite + redirect to login afterwards)
+        public_inactive_paths = (
+            '/onboard/',
+            '/login/',
+            '/static/',
+            '/favicon.ico',
+        )
+        is_public_path = any(request.path.startswith(p) for p in public_inactive_paths)
+        if not tenant.is_active and not is_public_path:
+            return HttpResponse(
+                f"<h1>Organisation '{subdomain}' is not active yet</h1>"
+                f"<p>The administrator hasn't completed onboarding. Please use the invite link.</p>",
+                status=403,
                 content_type='text/html',
             )
 

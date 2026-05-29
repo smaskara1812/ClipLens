@@ -283,6 +283,153 @@ def provision_tenant(
         return {'success': False, 'error': str(exc)}
 
 
+def provision_tenant_with_invite(
+    *,
+    slug: str,
+    name: str,
+    admin_email: str,
+    admin_username: str,
+    invite_ttl_days: int = 7,
+) -> dict:
+    """
+    Invite-based provisioning: creates the tenant DB and media folder but
+    leaves the org INACTIVE.  The org admin must claim it via the invite
+    token to set their password and pick a plan.
+
+    Returns:
+        {'success': True, 'tenant_id': <pk>, 'token': <str>, 'expires_at': <datetime>}
+        or
+        {'success': False, 'error': '<message>'}
+    """
+    import secrets
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import Tenant, OnboardingInvite
+
+    slug = slug.lower().strip()
+    db_name = f"freestream_{slug.replace('-', '_')}"
+    media_folder = f"tenants/{slug}/"
+
+    tenant = Tenant(
+        slug=slug,
+        name=name,
+        db_name=db_name,
+        media_folder=media_folder,
+        plan=None,             # picked during onboarding
+        admin_email=admin_email,
+        is_active=False,       # activated when invite is consumed
+    )
+    try:
+        tenant.save(using='control')
+    except Exception as exc:
+        return {'success': False, 'error': f"Could not create tenant record: {exc}"}
+
+    try:
+        _create_postgres_db(db_name)
+        _enable_extensions(db_name)
+        _register_db_alias(db_name)
+        _run_migrations(db_name)
+        _create_media_folder(media_folder)
+
+        # Generate invite token
+        token = secrets.token_urlsafe(32)
+        invite = OnboardingInvite.objects.using('control').create(
+            tenant=tenant,
+            token=token,
+            admin_email=admin_email,
+            admin_username=admin_username,
+            expires_at=timezone.now() + timedelta(days=invite_ttl_days),
+        )
+
+        logger.info("Tenant '%s' provisioned in invite mode → token expires %s",
+                    slug, invite.expires_at)
+        return {
+            'success':    True,
+            'tenant_id':  tenant.pk,
+            'token':      token,
+            'expires_at': invite.expires_at,
+        }
+
+    except Exception as exc:
+        logger.exception("Invite provisioning failed for tenant '%s'", slug)
+        return {'success': False, 'error': str(exc)}
+
+
+def claim_onboarding_invite(
+    *,
+    token: str,
+    password: str,
+    plan_id: int,
+) -> dict:
+    """
+    Called when an org admin clicks the invite link, sets their password,
+    and picks a plan.
+
+    For FREE plans (price_usd == 0):
+      • Creates the admin user
+      • Assigns the plan, activates the tenant
+      • Consumes the invite
+
+    For PAID plans:
+      • Creates the admin user (so the org can log in immediately)
+      • Assigns the plan but leaves tenant inactive + plan_status='incomplete'
+      • Consumes the invite
+      • Returns 'needs_payment': True so the view can redirect to Stripe Checkout
+      • Tenant becomes active once `checkout.session.completed` webhook fires
+
+    Returns:
+        {'success': True, 'tenant': <Tenant>, 'username': <str>, 'needs_payment': bool}
+        or
+        {'success': False, 'error': '<message>'}
+    """
+    from django.utils import timezone
+    from .models import OnboardingInvite, Plan, Tenant
+
+    try:
+        invite = OnboardingInvite.objects.using('control').select_related('tenant').get(token=token)
+    except OnboardingInvite.DoesNotExist:
+        return {'success': False, 'error': 'Invalid invite link.'}
+
+    if not invite.is_valid():
+        if invite.consumed_at:
+            return {'success': False, 'error': 'This invite has already been used.'}
+        return {'success': False, 'error': 'This invite link has expired.'}
+
+    try:
+        plan = Plan.objects.using('control').get(pk=plan_id)
+    except Plan.DoesNotExist:
+        return {'success': False, 'error': 'Selected plan not found.'}
+
+    tenant = invite.tenant
+    try:
+        _register_db_alias(tenant.db_name)
+        _create_admin_user(tenant.db_name, invite.admin_email, password, invite.admin_username)
+
+        tenant.plan = plan
+        if plan.is_free:
+            tenant.plan_status = Tenant.PLAN_STATUS_ACTIVE
+            tenant.is_active   = True
+        else:
+            tenant.plan_status = Tenant.PLAN_STATUS_INCOMPLETE
+            tenant.is_active   = False   # gated until first invoice paid
+        tenant.save(using='control')
+
+        invite.consumed_at = timezone.now()
+        invite.save(using='control')
+
+        logger.info("Invite claimed for tenant '%s' (plan=%s, free=%s)",
+                    tenant.slug, plan.name, plan.is_free)
+        return {
+            'success':       True,
+            'tenant':        tenant,
+            'username':      invite.admin_username,
+            'needs_payment': not plan.is_free,
+        }
+    except Exception as exc:
+        logger.exception("Failed to claim invite for tenant '%s'", tenant.slug)
+        return {'success': False, 'error': str(exc)}
+
+
 def load_all_tenant_dbs() -> None:
     """
     Called at Django startup (AppConfig.ready) to load all active tenant

@@ -29,6 +29,31 @@
   </div>
 </div>
 
+{% if invite %}
+<div style="background:#1e3a5f; border:1px solid #58a6ff; border-radius:6px; padding:14px 16px; margin-bottom:16px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+    <span style="font-size:18px;">📨</span>
+    <strong style="color:#58a6ff;">Onboarding invite pending</strong>
+    <span style="color:#8b949e; font-size:12px;">expires {{ invite.expires_at|date:"M d, Y H:i" }}</span>
+  </div>
+  <p style="color:#c9d1d9; font-size:13px; margin:0 0 10px;">
+    Share this link with <code style="color:#58a6ff;">{{ invite.admin_email }}</code>.
+    They'll set their password and pick a plan to activate the org.
+  </p>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <input type="text" readonly value="{{ onboard_url }}"
+           id="invite-link" onclick="this.select()"
+           style="flex:1; background:#0d1117; border:1px solid #30363d; color:#58a6ff;
+                  padding:8px 10px; border-radius:4px; font-family:monospace; font-size:12px;">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="
+      navigator.clipboard.writeText(document.getElementById('invite-link').value);
+      this.textContent='✓ Copied';
+      setTimeout(()=>this.textContent='Copy link', 2000);
+    ">Copy link</button>
+  </div>
+</div>
+{% endif %}
+
 <!-- Summary stat cards -->
 <div class="stat-grid">
   <div class="stat-card">
@@ -46,24 +71,43 @@
   <div class="stat-card">
     <div class="stat-value">{{ usage.ai_minutes }}</div>
     <div class="stat-label">AI Minutes (this month)</div>
+    {% if tenant.plan %}
     <div class="progress-bar" style="margin-top:8px;">
-      <div class="progress-fill {% if usage.ai_minutes >= tenant.plan.ai_minutes_limit %}critical{% endif %}"
-           style="width:{% widthratio usage.ai_minutes tenant.plan.ai_minutes_limit 100 %}%"></div>
+      <div class="progress-fill {% if usage.ai_minutes >= usage.ai_minutes_effective %}critical{% endif %}"
+           style="width:{% widthratio usage.ai_minutes usage.ai_minutes_effective 100 %}%"></div>
     </div>
-    <small style="color:#8b949e; font-size:11px;">Limit: {{ tenant.plan.ai_minutes_limit }} min</small>
+    <small style="color:#8b949e; font-size:11px;">
+      Plan: {{ tenant.plan.ai_minutes_limit }} min
+      {% if usage.credit_minutes %}
+        + <span style="color:#58a6ff;">{{ usage.credit_minutes }} min credits</span>
+      {% endif %}
+    </small>
+    {% else %}
+    <small style="color:#8b949e; font-size:11px;">No plan yet</small>
+    {% endif %}
   </div>
   <div class="stat-card">
     <div class="stat-value">{{ usage.storage_gb }} GB</div>
     <div class="stat-label">Storage Used</div>
+    {% if tenant.plan %}
     <div class="progress-bar" style="margin-top:8px;">
-      <div class="progress-fill {% if usage.storage_gb >= tenant.plan.storage_limit_gb %}critical{% endif %}"
-           style="width:{% widthratio usage.storage_gb tenant.plan.storage_limit_gb 100 %}%"></div>
+      <div class="progress-fill {% if usage.storage_gb >= usage.storage_limit_effective %}critical{% endif %}"
+           style="width:{% widthratio usage.storage_gb usage.storage_limit_effective 100 %}%"></div>
     </div>
-    <small style="color:#8b949e; font-size:11px;">Limit: {{ tenant.plan.storage_limit_gb }} GB</small>
+    <small style="color:#8b949e; font-size:11px;">
+      Plan: {{ tenant.plan.storage_limit_gb }} GB
+      {% if usage.addon_storage_gb %}
+        + <span style="color:#58a6ff;">{{ usage.addon_storage_gb }} GB addon</span>
+      {% endif %}
+    </small>
+    {% else %}
+    <small style="color:#8b949e; font-size:11px;">No plan yet</small>
+    {% endif %}
   </div>
   <div class="stat-card">
-    <div class="stat-value" style="font-size:20px;">{{ tenant.plan.name }}</div>
+    <div class="stat-value" style="font-size:20px;">{{ tenant.plan.name|default:"— No plan —" }}</div>
     <div class="stat-label">Current Plan</div>
+    {% if tenant.plan %}
     <form method="post" action="{% url 'tenants:change_plan' tenant.pk %}" style="display:flex; gap:6px; margin-top:10px;">
       {% csrf_token %}
       <select name="plan_id" style="flex:1; font-size:12px; padding:4px 8px;">
@@ -73,8 +117,72 @@
       </select>
       <button type="submit" class="btn btn-secondary btn-sm">Change</button>
     </form>
+    {% else %}
+    <small style="color:#8b949e; font-size:11px;">Set during onboarding</small>
+    {% endif %}
   </div>
 </div>
+
+<!-- Active subscriptions & credit packs -->
+{% if active_storage_addons or active_credit_packs %}
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-title">Active Top-ups</div>
+
+  {% if active_storage_addons %}
+  <div style="margin-bottom:14px;">
+    <div style="font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#8b949e; font-weight:700; margin-bottom:8px;">Storage Addons</div>
+    <table style="width:100%;">
+      <thead>
+        <tr>
+          <th style="text-align:left;">Amount</th>
+          <th style="text-align:left;">Price</th>
+          <th style="text-align:left;">Started</th>
+          <th style="text-align:left;">Source SKU</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in active_storage_addons %}
+        <tr>
+          <td><strong>+{{ a.gb_amount }} GB</strong></td>
+          <td style="color:#8b949e;">{% if a.price_usd %}${{ a.price_usd }}/mo{% else %}—{% endif %}</td>
+          <td style="color:#8b949e;">{{ a.started_at|date:"M d, Y" }}</td>
+          <td style="color:#8b949e;">{{ a.product.name|default:"(deleted)" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if active_credit_packs %}
+  <div>
+    <div style="font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#8b949e; font-weight:700; margin-bottom:8px;">AI Credit Packs</div>
+    <table style="width:100%;">
+      <thead>
+        <tr>
+          <th style="text-align:left;">Remaining / Purchased</th>
+          <th style="text-align:left;">Price</th>
+          <th style="text-align:left;">Purchased</th>
+          <th style="text-align:left;">Expires</th>
+          <th style="text-align:left;">Source SKU</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in active_credit_packs %}
+        <tr>
+          <td><strong>{{ p.minutes_remaining|floatformat:1 }}</strong> / {{ p.minutes_purchased }} min</td>
+          <td style="color:#8b949e;">{% if p.price_usd %}${{ p.price_usd }}{% else %}—{% endif %}</td>
+          <td style="color:#8b949e;">{{ p.purchased_at|date:"M d, Y" }}</td>
+          <td style="color:#8b949e;">{{ p.expires_at|date:"M d, Y" }}</td>
+          <td style="color:#8b949e;">{{ p.product.name|default:"(deleted)" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 <!-- Users -->
 <div class="card" style="margin-bottom:16px;">

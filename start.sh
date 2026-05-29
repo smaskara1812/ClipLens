@@ -101,7 +101,7 @@ echo "  [4/6] Celery translation      (translation)"
 celery -A cliplens worker -l info \
   -Q translation \
   -n translation@%h \
-  --concurrency=1 &
+  --pool=solo &
 TRANSLATION_CELERY_PID=$!
 
 # ── 5. Live worker ────────────────────────────────────────────────────────────
@@ -121,6 +121,33 @@ celery -A cliplens flower \
   --basic_auth="${FLOWER_BASIC_AUTH}" &
 FLOWER_PID=$!
 
+# ── 7. Stripe CLI webhook tunnel (optional) ──────────────────────────────────
+# Forwards real Stripe test events to localhost so checkout completions
+# create StorageAddon / AICreditPack rows in the control DB.
+# Only starts if:
+#   • the `stripe` CLI is installed (brew install stripe/stripe-cli/stripe)
+#   • STRIPE_SECRET_KEY is set in .env (otherwise mock-purchase path is used)
+STRIPE_PID=""
+if [ -n "$STRIPE_SECRET_KEY" ]; then
+  if command -v stripe &>/dev/null; then
+    echo "  [+]  Stripe webhook tunnel    → forwarding to /api/stripe/webhook/"
+    # --skip-verify lets the tunnel start even if you haven't accepted the host key
+    stripe listen --forward-to localhost:8000/api/stripe/webhook/ \
+      --skip-verify > /tmp/stripe-listen.log 2>&1 &
+    STRIPE_PID=$!
+    # Wait a moment then surface the signing secret it printed
+    sleep 2
+    if grep -q "webhook signing secret" /tmp/stripe-listen.log; then
+      echo "        $(grep "webhook signing secret" /tmp/stripe-listen.log | tail -1)"
+      echo "        (set this as STRIPE_WEBHOOK_SECRET in .env if not already)"
+    fi
+  else
+    echo "  [!]  STRIPE_SECRET_KEY is set but 'stripe' CLI not found."
+    echo "       Install:  brew install stripe/stripe-cli/stripe"
+    echo "       Then:     stripe login"
+  fi
+fi
+
 # ── Ready ─────────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -129,6 +156,9 @@ echo ""
 echo "  App       → http://localhost:8000"
 echo "  Flower    → http://localhost:5556  (${FLOWER_BASIC_AUTH%%:*} / ${FLOWER_BASIC_AUTH##*:})"
 echo "  API test  → open api_tester.html in your browser"
+if [ -n "$STRIPE_PID" ]; then
+  echo "  Stripe    → tunnel active (log: /tmp/stripe-listen.log)"
+fi
 echo ""
 echo "  Press Ctrl-C to stop everything."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -138,7 +168,7 @@ echo ""
 trap "
   echo ''
   echo 'Stopping all services...'
-  kill \$DJANGO_PID \$CELERY_PID \$AUDIO_CELERY_PID \$TRANSLATION_CELERY_PID \$LIVE_CELERY_PID \$FLOWER_PID 2>/dev/null
+  kill \$DJANGO_PID \$CELERY_PID \$AUDIO_CELERY_PID \$TRANSLATION_CELERY_PID \$LIVE_CELERY_PID \$FLOWER_PID \$STRIPE_PID 2>/dev/null
   echo 'Done.'
   exit 0
 " INT TERM

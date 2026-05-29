@@ -15,6 +15,7 @@
       <thead>
         <tr>
           <th>Plan Name</th>
+          <th>Price</th>
           <th>Storage</th>
           <th>AI Minutes/mo</th>
           <th>Max Users</th>
@@ -26,6 +27,7 @@
         {% for plan in plans %}
         <tr>
           <td><strong>{{ plan.name }}</strong></td>
+          <td>{% if plan.is_free %}<span style="color:#3fb950;">Free</span>{% else %}${{ plan.price_usd }}/mo{% endif %}</td>
           <td>{{ plan.storage_limit_gb }} GB</td>
           <td>{{ plan.ai_minutes_limit }}</td>
           <td>{{ plan.max_users }}</td>
@@ -34,7 +36,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="6" style="text-align:center; color:#8b949e; padding:24px;">No plans yet.</td>
+          <td colspan="7" style="text-align:center; color:#8b949e; padding:24px;">No plans yet.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -49,6 +51,11 @@
       <div class="form-group">
         <label>Plan Name</label>
         <input type="text" name="name" placeholder="Starter" required>
+      </div>
+      <div class="form-group">
+        <label>Price / month (USD)</label>
+        <input type="number" name="price_usd" value="0" min="0" step="0.01" required>
+        <small style="color:#8b949e;">Enter 0 for a free tier.</small>
       </div>
       <div class="form-group">
         <label>Storage Limit (GB)</label>

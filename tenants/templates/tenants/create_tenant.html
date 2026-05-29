@@ -5,7 +5,8 @@
 {% block content %}
 <div class="page-header">
   <h1>Provision New Organisation</h1>
-  <p>Creates the PostgreSQL database, enables extensions, runs migrations, and sets up media folders automatically.</p>
+  <p>Creates the database and media folder, then generates an onboarding invite link.
+     The org admin will set their own password and choose a plan when they claim it.</p>
 </div>
 
 <div class="card" style="max-width: 560px;">
@@ -27,19 +28,8 @@
       <small style="color:#8b949e; font-size:12px;">Lowercase letters, numbers, hyphens only. Cannot be changed later.</small>
     </div>
 
-    <div class="form-group">
-      <label for="plan_id">Plan</label>
-      <select name="plan_id" id="plan_id" required>
-        {% for plan in plans %}
-          <option value="{{ plan.pk }}">
-            {{ plan.name }} — {{ plan.storage_limit_gb }} GB / {{ plan.ai_minutes_limit }} AI min / {{ plan.max_users }} users
-          </option>
-        {% endfor %}
-      </select>
-    </div>
-
     <hr style="border-color:#30363d; margin: 20px 0;">
-    <p style="font-size:13px; color:#8b949e; margin-bottom:16px;">First admin account for this organisation:</p>
+    <p style="font-size:13px; color:#8b949e; margin-bottom:16px;">Invitee details — they will receive an onboarding link:</p>
 
     <div class="form-group">
       <label for="admin_username">Admin Username</label>
@@ -51,14 +41,9 @@
       <input type="email" name="admin_email" id="admin_email" placeholder="admin@acmecorp.com" required>
     </div>
 
-    <div class="form-group">
-      <label for="admin_password">Admin Password</label>
-      <input type="password" name="admin_password" id="admin_password" placeholder="Temporary password" required>
-    </div>
-
     <div style="display:flex; gap:10px; margin-top:24px; align-items:center;">
       <button type="submit" class="btn btn-primary" id="submit-btn">
-        Provision Organisation
+        Provision &amp; Generate Invite
       </button>
       <a href="{% url 'tenants:dashboard' %}" class="btn btn-secondary">Cancel</a>
       <span id="loading-msg" style="display:none; color:#8b949e; font-size:13px;">
@@ -69,14 +54,12 @@
 </div>
 
 <script>
-  // Live slug preview
   document.getElementById('slug').addEventListener('input', function() {
     const val = this.value.toLowerCase().replace(/[^a-z0-9\-]/g, '');
     this.value = val;
     document.getElementById('slug-preview').textContent = (val || 'yourslug') + '.cliplens.*';
   });
 
-  // Disable submit while provisioning
   document.getElementById('provision-form').addEventListener('submit', function() {
     document.getElementById('submit-btn').disabled = true;
     document.getElementById('submit-btn').textContent = 'Provisioning…';

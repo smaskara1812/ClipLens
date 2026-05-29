@@ -205,7 +205,9 @@ def _convert_single(video_id: str, source_path: str,
                 f'[{video_id}] Duration OK: output={out_duration:.1f}s / source={source_duration:.1f}s'
             )
 
-    return f'hls/{video_id}/playlist.m3u8', []
+    # Return path relative to global MEDIA_ROOT so /media/<path> resolves correctly
+    hls_dir = _media_root() / 'hls' / str(video_id)
+    return str((hls_dir / 'playlist.m3u8').relative_to(settings.MEDIA_ROOT)), []
 
 
 # ── Multi-quality HLS ────────────────────────────────────────────────────────
@@ -332,7 +334,9 @@ def _write_master_playlist(video_id: str, encoded: list,
 
     master.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     logger.info(f'[{video_id}] Master playlist written with {len(encoded)} rendition(s)')
-    return f'hls/{video_id}/master.m3u8'
+    # Return path relative to global MEDIA_ROOT so /media/<path> resolves correctly
+    hls_dir = _media_root() / 'hls' / str(video_id)
+    return str((hls_dir / 'master.m3u8').relative_to(settings.MEDIA_ROOT))
 
 
 def _convert_multi(video_id: str, source_path: str,
@@ -424,7 +428,9 @@ def extract_thumbnail(video_id: str, source_path: str, timestamp: float = 5.0) -
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode == 0 and thumb_path.exists():
-        return f'thumbnails/{video_id}.jpg'
+        # Return path relative to the tenant media root (not global MEDIA_ROOT) so that
+        # ImageField.url = base_url + name resolves correctly with the tenant-aware base_url.
+        return str(thumb_path.relative_to(_media_root()))
     return ''
 
 
@@ -444,7 +450,7 @@ def process_video(video_id: str) -> None:
     video.status = Video.STATUS_PROCESSING
     video.save(update_fields=['status'])
 
-    source_path = _media_root() / video.original_file.name
+    source_path = Path(video.original_file.path)
 
     try:
         # Step 1: metadata

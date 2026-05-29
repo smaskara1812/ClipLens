@@ -1,0 +1,140 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Plan — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .plan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .plan-tile {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    position: relative;
+    display: flex; flex-direction: column;
+  }
+  .plan-tile.current {
+    border-color: var(--accent);
+    background: rgba(88, 166, 255, .05);
+  }
+  .plan-tile.current::before {
+    content: "Current plan";
+    position: absolute; top: -10px; left: 14px;
+    background: var(--accent); color: #fff;
+    padding: 2px 10px; border-radius: 10px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .plan-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .plan-price { font-size: 28px; font-weight: 800; margin: 8px 0; }
+  .plan-price .per { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+  .plan-specs {
+    font-size: 13px; color: var(--text-muted); line-height: 1.8;
+    margin: 12px 0 18px; flex: 1;
+  }
+  .plan-specs strong { color: var(--text); }
+  .plan-btn {
+    width: 100%; padding: 10px;
+    border: none; border-radius: 5px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: all .15s;
+  }
+  .plan-btn.upgrade { background: var(--accent); color: #fff; }
+  .plan-btn.downgrade { background: var(--surface-2, #2a2a2a); color: var(--text); border: 1px solid var(--border); }
+  .plan-btn.current { background: transparent; color: var(--text-muted); border: 1px solid var(--border); cursor: not-allowed; }
+  .plan-btn:hover:not(.current) { filter: brightness(1.15); }
+
+  .messages-list { list-style: none; padding: 0; margin: 0 0 16px; }
+  .message { padding: 10px 14px; border-radius: 5px; margin-bottom: 8px; font-size: 13px; }
+  .message-error { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+  .message-success { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #4ade80; }
+  .message-info { background: rgba(88,166,255,.1); border: 1px solid rgba(88,166,255,.3); color: #93c5fd; }
+
+  .stripe-notice {
+    background: rgba(88,166,255,.05); border: 1px dashed rgba(88,166,255,.3);
+    padding: 12px 14px; border-radius: 6px; font-size: 12px;
+    color: var(--text-muted); margin-bottom: 24px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_plan_upgrade' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Plan &amp; Pricing</h1>
+    <p class="admin-hero-sub">Compare and switch between plans. Upgrades take effect immediately; downgrades apply at the next billing cycle.</p>
+  </div>
+
+  {% if messages %}
+  <ul class="messages-list">
+    {% for m in messages %}<li class="message message-{{ m.tags }}">{{ m }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if stripe_enabled %}
+  <div class="stripe-notice">
+    🧪 Stripe is in <strong>test mode</strong> — use card <code style="color:var(--accent)">4242 4242 4242 4242</code>, any future expiry, any CVC.
+  </div>
+  {% else %}
+  <div class="stripe-notice">
+    🧪 <strong>Mock mode</strong> — plan changes apply instantly without a payment step.
+  </div>
+  {% endif %}
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Plan management is only available in multi-tenant mode.</p>
+  {% else %}
+
+  <div class="plan-grid">
+    {% for plan in plans %}
+    {% with is_current=False %}
+    {% if current_plan and current_plan.pk == plan.pk %}{% with is_current=True %}{% endwith %}{% endif %}
+
+    <div class="plan-tile {% if current_plan and current_plan.pk == plan.pk %}current{% endif %}">
+      <div class="plan-name">{{ plan.name }}</div>
+      <div class="plan-price">
+        {% if plan.is_free %}<span style="color:#3fb950;">Free</span>{% else %}${{ plan.price_usd }}<span class="per">/mo</span>{% endif %}
+      </div>
+      <div class="plan-specs">
+        <strong>{{ plan.storage_limit_gb }} GB</strong> storage<br>
+        <strong>{{ plan.ai_minutes_limit }}</strong> AI minutes / month<br>
+        <strong>{% if plan.max_users %}{{ plan.max_users }}{% else %}Unlimited{% endif %}</strong> users<br>
+        <strong>{% if plan.max_videos %}{{ plan.max_videos }}{% else %}Unlimited{% endif %}</strong> videos
+      </div>
+
+      {% if current_plan and current_plan.pk == plan.pk %}
+        <button class="plan-btn current" disabled>Current Plan</button>
+      {% else %}
+      <form method="post" action="{% url 'org_plan_change' %}">
+        {% csrf_token %}
+        <input type="hidden" name="plan_id" value="{{ plan.pk }}">
+        {% if current_plan and plan.price_usd > current_plan.price_usd %}
+          <button type="submit" class="plan-btn upgrade">Upgrade to this</button>
+        {% elif current_plan and plan.price_usd < current_plan.price_usd %}
+          <button type="submit" class="plan-btn downgrade"
+                  onclick="return confirm('Switch to {{ plan.name }}? You may lose features when the change takes effect.')">
+            Downgrade
+          </button>
+        {% else %}
+          <button type="submit" class="plan-btn upgrade">Switch to this</button>
+        {% endif %}
+      </form>
+      {% endif %}
+    </div>
+    {% endwith %}
+    {% empty %}
+    <p style="color:var(--text-muted);">No plans available.</p>
+    {% endfor %}
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

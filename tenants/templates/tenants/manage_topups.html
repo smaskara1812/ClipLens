@@ -1,0 +1,168 @@
+{% extends "tenants/base.html" %}
+{% block title %}Top-up Products — ClipLens Control Plane{% endblock %}
+{% block nav_topups %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Top-up Products</h1>
+  <p>SKUs that org admins can purchase to extend their plan — storage subscriptions and AI minute credit packs.</p>
+</div>
+
+<style>
+  .product-table { width: 100%; }
+  .product-table input[type="text"],
+  .product-table input[type="number"] {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 5px 8px; border-radius: 4px; font-size: 13px;
+    font-family: inherit; width: 100%;
+  }
+  .product-table td { vertical-align: middle; padding: 8px 6px; }
+  .product-table .col-narrow { width: 90px; }
+  .product-table .col-medium { width: 130px; }
+  .row-actions { display: flex; gap: 6px; }
+  .pill-storage { background: #1e3a5f; color: #58a6ff; padding: 3px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+  .pill-credits { background: #2d2235; color: #a78bfa; padding: 3px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+  .section-header {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing:.5px;
+    color: #8b949e; margin: 32px 0 12px;
+  }
+</style>
+
+<!-- ── STORAGE ADDONS ─────────────────────────────────────────────────────── -->
+<div class="section-header">Storage Addons <span style="color:#484f58; font-weight:normal; text-transform:none;">— monthly subscription, adds GB to plan</span></div>
+
+<div class="card" style="padding:14px;">
+  <table class="product-table">
+    <thead>
+      <tr>
+        <th class="col-narrow">Active?</th>
+        <th>Name</th>
+        <th class="col-narrow">GB</th>
+        <th class="col-narrow">USD/mo</th>
+        <th class="col-narrow">Sort</th>
+        <th class="col-medium">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in storage_products %}
+      <tr>
+        <form method="post" style="display:contents;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update">
+          <input type="hidden" name="product_id" value="{{ p.pk }}">
+          <td style="text-align:center;">
+            <input type="checkbox" name="is_active" {% if p.is_active %}checked{% endif %}>
+          </td>
+          <td><input type="text" name="name" value="{{ p.name }}"></td>
+          <td><input type="number" name="amount" value="{{ p.amount }}" min="1"></td>
+          <td><input type="number" name="price_usd" value="{{ p.price_usd }}" step="0.01" min="0"></td>
+          <td><input type="number" name="sort_order" value="{{ p.sort_order }}" min="0"></td>
+          <td class="row-actions">
+            <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+        </form>
+        <form method="post" style="display:inline;" onsubmit="return confirm('Delete this product? Existing subscriptions are not affected.')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="product_id" value="{{ p.pk }}">
+          <button type="submit" class="btn btn-danger btn-sm">×</button>
+        </form>
+          </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" style="text-align:center; color:#8b949e; padding:24px;">No storage products yet.</td></tr>
+      {% endfor %}
+
+      <!-- ── New storage row ──────────────────────────────────────────── -->
+      <tr style="background:#1a1f29;">
+        <form method="post" style="display:contents;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create">
+          <input type="hidden" name="kind" value="storage">
+          <td style="text-align:center;">
+            <input type="checkbox" name="is_active" checked>
+          </td>
+          <td><input type="text" name="name" placeholder="e.g. +1 TB Pack" required></td>
+          <td><input type="number" name="amount" placeholder="GB" min="1" required></td>
+          <td><input type="number" name="price_usd" placeholder="USD" step="0.01" min="0" required></td>
+          <td><input type="number" name="sort_order" placeholder="0" min="0"></td>
+          <td><button type="submit" class="btn btn-primary btn-sm">+ Add</button></td>
+        </form>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── AI CREDIT PACKS ───────────────────────────────────────────────────── -->
+<div class="section-header">AI Credit Packs <span style="color:#484f58; font-weight:normal; text-transform:none;">— one-time purchase, minutes expire after 12 months</span></div>
+
+<div class="card" style="padding:14px;">
+  <table class="product-table">
+    <thead>
+      <tr>
+        <th class="col-narrow">Active?</th>
+        <th>Name</th>
+        <th class="col-narrow">Minutes</th>
+        <th class="col-narrow">USD</th>
+        <th class="col-narrow">Sort</th>
+        <th class="col-medium">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in credit_products %}
+      <tr>
+        <form method="post" style="display:contents;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update">
+          <input type="hidden" name="product_id" value="{{ p.pk }}">
+          <td style="text-align:center;">
+            <input type="checkbox" name="is_active" {% if p.is_active %}checked{% endif %}>
+          </td>
+          <td><input type="text" name="name" value="{{ p.name }}"></td>
+          <td><input type="number" name="amount" value="{{ p.amount }}" min="1"></td>
+          <td><input type="number" name="price_usd" value="{{ p.price_usd }}" step="0.01" min="0"></td>
+          <td><input type="number" name="sort_order" value="{{ p.sort_order }}" min="0"></td>
+          <td class="row-actions">
+            <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+        </form>
+        <form method="post" style="display:inline;" onsubmit="return confirm('Delete this product? Existing credit packs are not affected.')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="product_id" value="{{ p.pk }}">
+          <button type="submit" class="btn btn-danger btn-sm">×</button>
+        </form>
+          </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" style="text-align:center; color:#8b949e; padding:24px;">No credit packs yet.</td></tr>
+      {% endfor %}
+
+      <!-- ── New credit row ──────────────────────────────────────────── -->
+      <tr style="background:#1a1f29;">
+        <form method="post" style="display:contents;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create">
+          <input type="hidden" name="kind" value="credits">
+          <td style="text-align:center;">
+            <input type="checkbox" name="is_active" checked>
+          </td>
+          <td><input type="text" name="name" placeholder="e.g. 2000 min Pack" required></td>
+          <td><input type="number" name="amount" placeholder="min" min="1" required></td>
+          <td><input type="number" name="price_usd" placeholder="USD" step="0.01" min="0" required></td>
+          <td><input type="number" name="sort_order" placeholder="0" min="0"></td>
+          <td><button type="submit" class="btn btn-primary btn-sm">+ Add</button></td>
+        </form>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div style="background:#1e3a5f; border:1px solid #58a6ff; border-radius:6px; padding:14px 18px; margin-top:24px; font-size:13px; color:#c9d1d9;">
+  <strong style="color:#58a6ff;">ℹ How edits affect existing customers</strong>
+  <ul style="margin:8px 0 0 18px; padding:0; color:#8b949e; line-height:1.7;">
+    <li><strong style="color:#c9d1d9;">Editing</strong> a product (name, GB, minutes, price) — only changes <em>new</em> purchases. Existing subscriptions and credit packs keep their original amount and price.</li>
+    <li><strong style="color:#c9d1d9;">Deactivating</strong> a product — hides it from the org top-up page. Existing subs continue uninterrupted until cancelled by the org admin.</li>
+    <li><strong style="color:#c9d1d9;">Deleting</strong> a product — same as deactivating, plus the product link on past purchases becomes null. Customer keeps what they paid for.</li>
+    <li>To roll out a price change, mark the old SKU inactive and add a new one. Existing customers keep their legacy pricing until they manually re-subscribe.</li>
+  </ul>
+</div>
+{% endblock %}

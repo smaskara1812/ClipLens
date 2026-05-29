@@ -32,6 +32,15 @@ from django.core.files.base import ContentFile
 
 logger = logging.getLogger(__name__)
 
+
+def _media_root() -> Path:
+    """Tenant-aware media root — mirrors the helper in tasks.py / services.py."""
+    try:
+        from tenants.storage import get_media_root
+        return Path(get_media_root())
+    except ImportError:
+        return Path(settings.MEDIA_ROOT)
+
 # (id, label, long_edge_px) — long edge is max(width, height) after upscale for that tier
 UPSCALE_PRESETS: list[dict] = [
     {"id": "480p",   "label": "480p (SD)",      "long_edge": 854},
@@ -260,7 +269,7 @@ def run_video_upscale_pipeline(video_id: str, target_long_edge: int) -> None:
     if not video.original_file or not video.original_file.name:
         raise ValueError("No original video file attached to this video record.")
 
-    src = Path(settings.MEDIA_ROOT) / video.original_file.name
+    src = Path(video.original_file.path)
     if not src.is_file():
         raise ValueError(f"Original file missing on disk: {src}")
 
@@ -301,7 +310,7 @@ def run_video_upscale_pipeline(video_id: str, target_long_edge: int) -> None:
         _ffmpeg_upscale_to_mp4(src, tmp_mp4, tw, th)
 
         # ── Store upscaled MP4 separately ─────────────────────────────────────
-        upscale_dir = Path(settings.MEDIA_ROOT) / "upscaled" / str(video_id)
+        upscale_dir = _media_root() / "upscaled" / str(video_id)
         upscale_dir.mkdir(parents=True, exist_ok=True)
         upscaled_mp4 = upscale_dir / f"{preset_id}.mp4"
         shutil.move(str(tmp_mp4), str(upscaled_mp4))
@@ -309,7 +318,7 @@ def run_video_upscale_pipeline(video_id: str, target_long_edge: int) -> None:
 
         # ── Encode new HLS quality track ──────────────────────────────────────
         if video.hls_path:
-            hls_dir = Path(settings.MEDIA_ROOT) / "hls" / str(video_id)
+            hls_dir = _media_root() / "hls" / str(video_id)
             quality_dir = hls_dir / preset_id
             _encode_hls_from_mp4(upscaled_mp4, quality_dir, tw, th)
             logger.info("HLS track created at %s", quality_dir)
@@ -383,7 +392,7 @@ def run_photo_upscale_pipeline(photo_id: str, target_long_edge: int) -> None:
     if not photo.file or not photo.file.name:
         raise ValueError("No photo file attached to this record.")
 
-    orig_path = Path(settings.MEDIA_ROOT) / photo.file.name
+    orig_path = Path(photo.file.path)
     if not orig_path.is_file():
         raise ValueError(f"Photo file missing on disk: {orig_path}")
 
@@ -463,13 +472,13 @@ def run_photo_upscale_pipeline(photo_id: str, target_long_edge: int) -> None:
         # Inline thumbnail generation — mirrors the logic inside analyze_photo_task.
         try:
             from PIL import Image as _PILImage
-            thumb_path = Path(settings.MEDIA_ROOT) / "photos" / "thumbnails" / f"{photo_id}.jpg"
+            thumb_path = _media_root() / "photos" / "thumbnails" / f"{photo_id}.jpg"
             thumb_path.parent.mkdir(parents=True, exist_ok=True)
-            with _PILImage.open(Path(settings.MEDIA_ROOT) / photo.file.name) as _im:
+            with _PILImage.open(Path(photo.file.path)) as _im:
                 _thumb = _im.copy()
             _thumb.thumbnail((480, 480), _PILImage.LANCZOS if hasattr(_PILImage, "LANCZOS") else _PILImage.Resampling.LANCZOS)
             _thumb.convert("RGB").save(str(thumb_path), "JPEG", quality=82)
-            thumb_rel = f"photos/thumbnails/{photo_id}.jpg"
+            thumb_rel = str(thumb_path.relative_to(_media_root()))
             Photo.objects.filter(id=photo_id).update(thumbnail=thumb_rel)
             logger.info("Thumbnail regenerated for %s after upscale", photo_id)
         except Exception as exc:

@@ -176,6 +176,13 @@ else:
 # When False the app behaves exactly as before (single DB, no tenant isolation).
 MULTI_TENANT = os.getenv('MULTI_TENANT', 'false').lower() == 'true'
 
+# ── Stripe (sandbox / test mode) ─────────────────────────────────────────────
+# Set STRIPE_SECRET_KEY to enable real checkout; leave blank for mock purchases.
+STRIPE_SECRET_KEY      = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
+STRIPE_WEBHOOK_SECRET  = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+STRIPE_ENABLED         = bool(STRIPE_SECRET_KEY)
+
 if MULTI_TENANT and _use_postgres:
     # Control plane DB — stores Tenant, Plan, UsageEvent rows
     DATABASES['control'] = {

@@ -94,14 +94,18 @@ def tenant_usage_warning(request):
 
     try:
         from tenants.metering import get_monthly_usage, usage_warning_level
+        from tenants.views import _disk_usage_bytes
         usage = get_monthly_usage(tenant.slug)
         plan = usage.get('plan')
         if not plan:
             return {'usage_warning': None, 'usage_warning_detail': None}
 
+        # Live disk usage — matches admin platform + org usage page
+        storage_gb = _disk_usage_bytes(tenant.media_folder) / 1024**3
+
         # Check both resources; surface the most severe
-        ai_level = usage_warning_level(usage['ai_minutes'], plan.ai_minutes_limit)
-        storage_level = usage_warning_level(usage['storage_gb'], plan.storage_limit_gb)
+        ai_level      = usage_warning_level(usage['ai_minutes'], plan.ai_minutes_limit)
+        storage_level = usage_warning_level(storage_gb, plan.storage_limit_gb)
 
         severity_rank = {None: 0, 'warning': 1, 'critical': 2}
         if severity_rank.get(ai_level, 0) >= severity_rank.get(storage_level, 0):
@@ -121,9 +125,9 @@ def tenant_usage_warning(request):
             if storage_level and plan.storage_limit_gb > 0:
                 detail = {
                     'resource': 'Storage',
-                    'used': round(usage['storage_gb'], 2),
+                    'used': round(storage_gb, 2),
                     'limit': plan.storage_limit_gb,
-                    'pct': round(usage['storage_gb'] / plan.storage_limit_gb * 100, 1),
+                    'pct': round(storage_gb / plan.storage_limit_gb * 100, 1),
                     'unit': 'GB',
                 }
             else:

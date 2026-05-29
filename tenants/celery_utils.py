@@ -40,17 +40,26 @@ logger = logging.getLogger(__name__)
 _task_timing = threading.local()
 
 # Map Celery task names → metering event types
+# Maps every metered Celery task name → UsageEvent.event_type.
+# Unknown task names fall back to 'video_processing' in _log_task_duration.
+# Tasks intentionally excluded (no AI compute): reindex_segments_task, run_live_ffmpeg.
 _TASK_EVENT_TYPES = {
-    'videos.tasks.process_video_task':        'video_processing',
-    'videos.tasks.generate_captions_task':    'captions',
-    'videos.tasks.analyze_video_frames_task': 'frame_analysis',
-    'videos.tasks.analyze_photo_task':        'photo_processing',
-    'videos.tasks.translate_subtitles_task':  'translation',
-    'videos.tasks.run_diarization_task':      'diarization',
-    'videos.tasks.detect_audio_events_task':  'audio_events',
-    'videos.tasks.upscale_video_task':        'video_processing',
-    'videos.tasks.upscale_photo_task':        'photo_processing',
-    'videos.tasks.generate_video_summary_task': 'video_processing',
+    # ── Video pipeline ────────────────────────────────────────────────────────
+    'videos.tasks.process_video_task':            'video_processing',   # FFmpeg HLS + thumbnail
+    'videos.tasks.generate_seek_thumbnails_task': 'video_processing',   # FFmpeg sprite sheet
+    'videos.tasks.extract_audio_tracks_task':     'video_processing',   # FFmpeg audio tracks
+    'videos.tasks.upscale_video_task':            'video_processing',   # Lanczos upscale
+    'videos.tasks.generate_video_summary_task':   'video_processing',   # Ollama LLM summary
+    # ── AI analysis ───────────────────────────────────────────────────────────
+    'videos.tasks.analyze_video_frames_task':     'frame_analysis',     # YOLO + InsightFace + BLIP + CLIP
+    'videos.tasks.analyze_photo_task':            'photo_processing',   # YOLO + InsightFace + BLIP + CLIP
+    'videos.tasks.upscale_photo_task':            'photo_processing',   # Lanczos upscale
+    # ── Speech & language ─────────────────────────────────────────────────────
+    'videos.tasks.generate_captions_task':        'captions',           # Whisper transcription
+    'videos.tasks.translate_subtitles_task':      'translation',        # NLLB-200 translation
+    'videos.tasks.run_diarization_task':          'diarization',        # pyannote speaker diarization
+    # ── Audio ─────────────────────────────────────────────────────────────────
+    'videos.tasks.detect_audio_events_task':      'audio_events',       # PANNs CNN14 event detection
 }
 
 
@@ -111,45 +120,48 @@ def _log_task_duration(task_id: str, task_name: str, tenant_slug: str, start_ts:
         logger.exception("metering: failed to log AI minutes for task=%s", task_id)
 
 
+def _on_task_prerun(task_id, task, args, kwargs, **_):
+    slug = (kwargs or {}).get('tenant_slug', '')
+    if slug:
+        setup_tenant_context(slug)
+    # Record start time for metering (always, even for unknown slugs)
+    if not hasattr(_task_timing, 'tasks'):
+        _task_timing.tasks = {}
+    _task_timing.tasks[task_id] = (time.monotonic(), slug)
+
+
+def _on_task_postrun(task_id, task, args, kwargs, retval, state, **_):
+    slug = (kwargs or {}).get('tenant_slug', '')
+    timing = getattr(_task_timing, 'tasks', {}).pop(task_id, None)
+    if timing and slug:
+        start_ts, _ = timing
+        _log_task_duration(task_id, task.name, slug, start_ts)
+    clear_tenant_context()
+
+
+def _on_task_failure(task_id, exception, args, kwargs, **_):
+    slug = (kwargs or {}).get('tenant_slug', '')
+    timing = getattr(_task_timing, 'tasks', {}).pop(task_id, None)
+    if timing and slug:
+        start_ts, _ = timing
+        # Still log partial usage on failure — AI compute was consumed
+        _log_task_duration(task_id, '', slug, start_ts)
+    clear_tenant_context()
+
+
 def connect_celery_signals() -> None:
     """
     Connect task_prerun and task_postrun signals.
     Called once from TenantsConfig.ready() when MULTI_TENANT=True.
+
+    Handlers are defined at module level (not as inner functions) so that
+    Celery's weak-reference signal system does not garbage-collect them
+    immediately after connect_celery_signals() returns.
     """
     from celery.signals import task_prerun, task_postrun, task_failure
 
-    @task_prerun.connect
-    def _on_task_prerun(task_id, task, args, kwargs, **_):
-        slug = (kwargs or {}).get('tenant_slug', '')
-        if slug:
-            setup_tenant_context(slug)
-        # Record start time for metering (always, even for unknown slugs)
-        if not hasattr(_task_timing, 'tasks'):
-            _task_timing.tasks = {}
-        _task_timing.tasks[task_id] = (time.monotonic(), slug)
-
-    @task_postrun.connect
-    def _on_task_postrun(task_id, task, args, kwargs, retval, state, **_):
-        slug = (kwargs or {}).get('tenant_slug', '')
-        timing = getattr(_task_timing, 'tasks', {}).pop(task_id, None)
-        if timing and slug:
-            start_ts, _ = timing
-            _log_task_duration(task_id, task.name, slug, start_ts)
-        clear_tenant_context()
-
-    @task_failure.connect
-    def _on_task_failure(task_id, exception, args, kwargs, **_):
-        slug = (kwargs or {}).get('tenant_slug', '')
-        timing = getattr(_task_timing, 'tasks', {}).pop(task_id, None)
-        if timing and slug:
-            start_ts, _ = timing
-            # Still log partial usage on failure — AI compute was consumed
-            try:
-                from celery import current_app
-                task_name = ''  # name not available in failure signal kwargs
-                _log_task_duration(task_id, task_name, slug, start_ts)
-            except Exception:
-                pass
-        clear_tenant_context()
+    task_prerun.connect(_on_task_prerun,   weak=False)
+    task_postrun.connect(_on_task_postrun, weak=False)
+    task_failure.connect(_on_task_failure, weak=False)
 
     logger.info("Celery tenant context signals connected.")

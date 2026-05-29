@@ -1,0 +1,137 @@
+{% extends "tenants/base.html" %}
+{% block title %}Leads — ClipLens Control Plane{% endblock %}
+{% block nav_leads %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Leads</h1>
+  <p>Contact-form submissions from the public landing page ({{ counts.total }} total).</p>
+</div>
+
+<style>
+  .filter-bar {
+    display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .filter-pill {
+    padding: 6px 14px; border-radius: 16px;
+    background: #161b22; border: 1px solid #30363d;
+    color: #8b949e; font-size: 12px; font-weight: 600;
+    text-decoration: none;
+  }
+  .filter-pill:hover { color: #c9d1d9; }
+  .filter-pill.active { background: #58a6ff; color: #fff; border-color: #58a6ff; }
+  .filter-pill .count { opacity: .7; margin-left: 6px; }
+
+  .lead-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 18px; margin-bottom: 14px;
+  }
+  .lead-head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; margin-bottom: 10px;
+  }
+  .lead-name { font-size: 16px; font-weight: 700; color: #c9d1d9; }
+  .lead-email { color: #58a6ff; font-size: 13px; }
+  .lead-meta { color: #8b949e; font-size: 12px; margin-top: 4px; }
+  .lead-message {
+    background: #0d1117; border-radius: 6px; padding: 12px;
+    color: #c9d1d9; font-size: 13px; margin: 12px 0;
+    white-space: pre-wrap;
+  }
+  .lead-actions {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    border-top: 1px solid #1f2937; padding-top: 12px;
+  }
+  .lead-status-form { display: flex; gap: 6px; }
+  .lead-status-form select { padding: 5px 8px; }
+  .lead-notes {
+    width: 100%; min-height: 60px;
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 8px 10px; border-radius: 4px; font-size: 12px;
+    font-family: inherit; margin-top: 8px;
+  }
+  .lead-pill {
+    display: inline-block; padding: 2px 10px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .pill-new       { background: #1e3a5f; color: #58a6ff; }
+  .pill-contacted { background: #422a14; color: #f59e0b; }
+  .pill-qualified { background: #1a3320; color: #3fb950; }
+  .pill-closed    { background: #1f2937; color: #8b949e; }
+  .pill-spam      { background: #422020; color: #ef4444; }
+</style>
+
+<div class="filter-bar">
+  <a href="?" class="filter-pill {% if not status_filter %}active{% endif %}">All <span class="count">{{ counts.total }}</span></a>
+  {% for code, label in status_choices %}
+    <a href="?status={{ code }}" class="filter-pill {% if status_filter == code %}active{% endif %}">
+      {{ label }} <span class="count">{{ counts|default_if_none:0|safe }}{{ counts|default:0 }}</span>
+    </a>
+  {% endfor %}
+</div>
+
+{% if leads %}
+  {% for lead in leads %}
+  <div class="lead-card">
+    <div class="lead-head">
+      <div>
+        <div class="lead-name">
+          {{ lead.name }}
+          <span class="lead-pill pill-{{ lead.status }}">{{ lead.get_status_display }}</span>
+        </div>
+        <div>
+          <a href="mailto:{{ lead.email }}" class="lead-email">{{ lead.email }}</a>
+        </div>
+        <div class="lead-meta">
+          {% if lead.company %}🏢 {{ lead.company }} · {% endif %}
+          {% if lead.phone %}📞 {{ lead.phone }} · {% endif %}
+          {% if lead.interest %}🎯 {{ lead.interest }} · {% endif %}
+          📅 {{ lead.created_at|date:"M d, Y H:i" }}
+          {% if lead.ip_address %} · 🌐 {{ lead.ip_address }}{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if lead.message %}
+    <div class="lead-message">{{ lead.message }}</div>
+    {% endif %}
+
+    <div class="lead-actions">
+      <form method="post" class="lead-status-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_status">
+        <input type="hidden" name="lead_id" value="{{ lead.pk }}">
+        <select name="status">
+          {% for code, label in status_choices %}
+            <option value="{{ code }}" {% if lead.status == code %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-secondary btn-sm">Update</button>
+      </form>
+
+      <a href="mailto:{{ lead.email }}?subject=Re: Your ClipLens enquiry" class="btn btn-primary btn-sm">Reply by email</a>
+
+      <form method="post" style="margin-left:auto;" onsubmit="return confirm('Delete this lead permanently?')">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="lead_id" value="{{ lead.pk }}">
+        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+      </form>
+    </div>
+
+    <form method="post" style="margin-top:8px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="update_notes">
+      <input type="hidden" name="lead_id" value="{{ lead.pk }}">
+      <textarea name="notes" class="lead-notes" placeholder="Internal notes (your follow-up plan, qualification details, etc.)">{{ lead.notes }}</textarea>
+      <button type="submit" class="btn btn-secondary btn-sm" style="margin-top:4px;">Save notes</button>
+    </form>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="card" style="text-align:center; padding:48px; color:#8b949e;">
+    {% if status_filter %}No leads with status "{{ status_filter }}".{% else %}No leads yet. They'll appear here when visitors submit the contact form.{% endif %}
+  </div>
+{% endif %}
+{% endblock %}

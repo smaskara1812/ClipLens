@@ -1,0 +1,223 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Usage & Quota — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .usage-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 640px) { .usage-grid { grid-template-columns: 1fr; } }
+
+  .usage-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+  }
+  .usage-card-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .usage-card-value {
+    font-size: 32px; font-weight: 800; line-height: 1; margin-bottom: 4px;
+  }
+  .usage-card-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+
+  .quota-bar-track {
+    height: 8px; border-radius: 4px;
+    background: var(--border); overflow: hidden; margin-bottom: 6px;
+  }
+  .quota-bar-fill {
+    height: 100%; border-radius: 4px;
+    background: var(--accent); transition: width .4s;
+  }
+  .quota-bar-fill.warn    { background: #f59e0b; }
+  .quota-bar-fill.critical { background: #ef4444; }
+  .quota-bar-label {
+    font-size: 11px; color: var(--text-muted);
+    display: flex; justify-content: space-between;
+  }
+
+  .breakdown-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  .breakdown-table th {
+    text-align: left; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px;
+    color: var(--text-muted); padding: 0 0 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .breakdown-table td {
+    padding: 9px 0; border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .breakdown-table td:last-child { text-align: right; color: var(--text-muted); }
+  .breakdown-table tr:last-child td { border-bottom: none; }
+
+  .event-list { font-size: 12px; }
+  .event-row {
+    display: grid;
+    grid-template-columns: 130px 1fr 70px;
+    gap: 8px; padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .event-row:last-child { border-bottom: none; }
+  .event-ts   { color: var(--text-muted); white-space: nowrap; }
+  .event-type {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 10px;
+    background: var(--surface-2, #2a2a2a); color: var(--accent);
+  }
+  .event-val  { text-align: right; color: var(--text-muted); }
+
+  .plan-badge {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: 10px;
+    background: var(--accent); color: #fff; margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  .section-title {
+    font-size: 13px; font-weight: 700; margin: 28px 0 12px;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_usage' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">
+      Usage &amp; Quota
+      {% if plan %}<span class="plan-badge">{{ plan.name }}</span>{% endif %}
+    </h1>
+    <p class="admin-hero-sub">{{ month }} — AI compute minutes and storage used by your organisation.</p>
+  </div>
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Usage is only available in multi-tenant mode.</p>
+  {% else %}
+
+  <!-- ── Quota cards ──────────────────────────────────────────────────────── -->
+  <div class="usage-grid">
+
+    <!-- AI Minutes -->
+    <div class="usage-card">
+      <div class="usage-card-label">AI Processing Minutes</div>
+      <div class="usage-card-value">{{ ai_minutes }}</div>
+      <div class="usage-card-sub">
+        {% if ai_minutes_limit %}
+          of <strong>{{ ai_minutes_limit }} min</strong> available
+          {% if ai_minutes_credits %}
+            (plan {{ ai_minutes_limit_plan }} + <span style="color:var(--accent)">+{{ ai_minutes_credits|floatformat:1 }} credits</span>)
+          {% endif %}
+        {% else %}Unlimited{% endif %}
+      </div>
+      {% if ai_minutes_limit %}
+      <div class="quota-bar-track">
+        <div class="quota-bar-fill {% if ai_warn == 'critical' %}critical{% elif ai_warn == 'warning' %}warn{% endif %}"
+             style="width:{{ ai_pct }}%"></div>
+      </div>
+      <div class="quota-bar-label">
+        <span>{{ ai_pct }}% used</span>
+        <span>{{ ai_minutes_limit|add:0 }} min remaining: {{ ai_minutes_limit }} − {{ ai_minutes }} = {% widthratio ai_minutes 1 1 %}</span>
+      </div>
+      {% if ai_warn == 'critical' %}
+        <p style="color:#ef4444;font-size:12px;margin-top:8px;font-weight:600">
+          ⚠ Critical — at 95%+ of your plan limit. Contact support to upgrade.
+        </p>
+      {% elif ai_warn == 'warning' %}
+        <p style="color:#f59e0b;font-size:12px;margin-top:8px;font-weight:600">
+          ⚠ Warning — over 80% of your AI minutes used this month.
+        </p>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    <!-- Storage -->
+    <div class="usage-card">
+      <div class="usage-card-label">Storage Used</div>
+      <div class="usage-card-value">
+        {% if storage_gb < 0.1 %}{{ storage_gb_display }} MB{% else %}{{ storage_gb }} GB{% endif %}
+      </div>
+      <div class="usage-card-sub">
+        {% if storage_limit %}
+          of <strong>{{ storage_limit }} GB</strong> available
+          {% if storage_addon_gb %}
+            (plan {{ storage_limit_plan }} + <span style="color:var(--accent)">+{{ storage_addon_gb }} GB addon</span>)
+          {% endif %}
+        {% else %}Unlimited{% endif %}
+      </div>
+      {% if storage_limit %}
+      <div class="quota-bar-track">
+        <div class="quota-bar-fill {% if storage_warn == 'critical' %}critical{% elif storage_warn == 'warning' %}warn{% endif %}"
+             style="width:{{ storage_pct }}%"></div>
+      </div>
+      <div class="quota-bar-label">
+        <span>{{ storage_pct }}% used</span>
+        <span>Includes videos, HLS, thumbnails, face crops, captions</span>
+      </div>
+      {% if storage_warn == 'critical' %}
+        <p style="color:#ef4444;font-size:12px;margin-top:8px;font-weight:600">
+          ⚠ Critical — storage almost full. Delete unused videos or upgrade.
+        </p>
+      {% elif storage_warn == 'warning' %}
+        <p style="color:#f59e0b;font-size:12px;margin-top:8px;font-weight:600">
+          ⚠ Warning — over 80% of storage used.
+        </p>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Breakdown by type ────────────────────────────────────────────────── -->
+  {% if breakdown %}
+  <div class="section-title">AI Minutes by Type</div>
+  <div class="usage-card" style="margin-bottom:28px">
+    <table class="breakdown-table">
+      <thead>
+        <tr><th>Type</th><th>Minutes this month</th></tr>
+      </thead>
+      <tbody>
+        {% for row in breakdown %}
+        <tr>
+          <td><span class="event-type">{{ row.event_type }}</span></td>
+          <td>{{ row.total|floatformat:1 }} min</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- ── Recent events ────────────────────────────────────────────────────── -->
+  <div class="section-title">Recent Activity (this month)</div>
+  <div class="usage-card">
+    {% if recent_events %}
+    <div class="event-list">
+      {% for e in recent_events %}
+      <div class="event-row">
+        <span class="event-ts">{{ e.timestamp|date:"M d, H:i" }}</span>
+        <span><span class="event-type">{{ e.event_type }}</span></span>
+        <span class="event-val">{{ e.value|floatformat:1 }} min</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted);font-size:13px;padding:8px 0">
+      No AI processing activity this month yet.
+    </p>
+    {% endif %}
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

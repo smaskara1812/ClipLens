@@ -13,8 +13,8 @@ from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 
-from .models import Plan, Tenant, UsageEvent
-from .provisioning import provision_tenant
+from .models import Plan, Tenant, UsageEvent, OnboardingInvite, LeadRequest
+from .provisioning import provision_tenant, provision_tenant_with_invite, claim_onboarding_invite
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,24 @@ def platform_owner_required(view_func):
 
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
+
+def _disk_usage_bytes(media_folder: str) -> int:
+    """
+    Walk the tenant's media directory and return actual bytes on disk.
+    This is more accurate than summing storage_delta events because it
+    includes HLS segments, thumbnails, face crops, captions, etc. that
+    Celery generates after the original upload.
+    """
+    from pathlib import Path
+    from django.conf import settings
+    path = Path(settings.MEDIA_ROOT) / media_folder
+    if not path.exists():
+        return 0
+    try:
+        return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+    except Exception:
+        return 0
+
 
 def _tenant_content_counts(db_alias):
     """
@@ -91,33 +109,49 @@ def dashboard(request):
     tenant_data = []
     total_users = total_videos = total_photos = 0
 
+    pending_slugs = set(
+        OnboardingInvite.objects.using('control')
+        .filter(consumed_at__isnull=True)
+        .values_list('tenant__slug', flat=True)
+    )
+
     for t in tenants:
         events = UsageEvent.objects.using('control').filter(
             tenant=t, timestamp__gte=month_start
         )
-        ai_minutes = events.filter(
-            event_type__in=[UsageEvent.TYPE_VIDEO_PROCESSING,
-                            UsageEvent.TYPE_PHOTO_PROCESSING,
-                            UsageEvent.TYPE_TRANSLATION]
-        ).aggregate(total=Sum('value'))['total'] or 0
-
-        storage_bytes = events.filter(
+        ai_minutes = events.exclude(
             event_type=UsageEvent.TYPE_STORAGE_DELTA
         ).aggregate(total=Sum('value'))['total'] or 0
+
+        storage_bytes = _disk_usage_bytes(t.media_folder)
 
         counts = _tenant_content_counts(t.db_name)
         total_users  += counts['user_count']
         total_videos += counts['video_count']
         total_photos += counts['photo_count']
 
+        # Effective limits = plan + addons (credits & storage subscriptions)
+        from .metering import get_credit_minutes_available, get_storage_addon_gb
+        plan_ai      = t.plan.ai_minutes_limit if t.plan else 0
+        plan_storage = t.plan.storage_limit_gb if t.plan else 0
+        credit_min   = get_credit_minutes_available(t)
+        addon_gb     = get_storage_addon_gb(t)
+        ai_limit      = plan_ai      + credit_min
+        storage_limit = plan_storage + addon_gb
+
         tenant_data.append({
-            'tenant':          t,
-            'ai_minutes_used': round(ai_minutes, 1),
-            'ai_minutes_pct':  min(100, round(ai_minutes / max(t.plan.ai_minutes_limit, 1) * 100)),
-            'storage_gb_used': round(storage_bytes / 1024**3, 2),
-            'storage_pct':     min(100, round(
-                (storage_bytes / 1024**3) / max(t.plan.storage_limit_gb, 1) * 100
-            )),
+            'tenant':              t,
+            'has_pending_invite':  t.slug in pending_slugs,
+            'ai_minutes_used':     round(ai_minutes, 1),
+            'ai_minutes_limit':    round(ai_limit, 1),
+            'ai_minutes_pct':      min(100, round(ai_minutes / max(ai_limit, 1) * 100)) if ai_limit else 0,
+            'ai_credit_minutes':   round(credit_min, 1),
+            'storage_gb_used':     round(storage_bytes / 1024**3, 2),
+            'storage_gb_limit':    storage_limit,
+            'storage_pct':         min(100, round(
+                (storage_bytes / 1024**3) / max(storage_limit, 1) * 100
+            )) if storage_limit else 0,
+            'storage_addon_gb':    addon_gb,
             **counts,
         })
 
@@ -159,15 +193,30 @@ def tenant_detail(request, tenant_id):
         tenant=tenant, timestamp__gte=month_start
     )
 
+    from .metering import get_credit_minutes_available, get_storage_addon_gb
+    from .models import StorageAddon, AICreditPack
+    credits_minutes = get_credit_minutes_available(tenant)
+    addon_storage   = get_storage_addon_gb(tenant)
+    from django.db.models import Q as _Q
+    active_storage_addons = list(StorageAddon.objects.using('control').filter(
+        _Q(tenant=tenant) & (
+            (_Q(cancelled_at__isnull=True) & _Q(expires_at__isnull=True)) |
+            _Q(expires_at__gt=now)
+        )
+    ).order_by('-started_at'))
+    active_credit_packs = list(AICreditPack.objects.using('control').filter(
+        tenant=tenant, expires_at__gt=now
+    ).order_by('purchased_at'))
+
     usage = {
-        'ai_minutes': round(events_this_month.filter(
-            event_type__in=[UsageEvent.TYPE_VIDEO_PROCESSING,
-                            UsageEvent.TYPE_PHOTO_PROCESSING,
-                            UsageEvent.TYPE_TRANSLATION]
-        ).aggregate(total=Sum('value'))['total'] or 0, 1),
-        'storage_gb': round((events_this_month.filter(
+        'ai_minutes': round(events_this_month.exclude(
             event_type=UsageEvent.TYPE_STORAGE_DELTA
-        ).aggregate(total=Sum('value'))['total'] or 0) / 1024**3, 2),
+        ).aggregate(total=Sum('value'))['total'] or 0, 1),
+        'storage_gb':              round(_disk_usage_bytes(tenant.media_folder) / 1024**3, 2),
+        'credit_minutes':          round(credits_minutes, 1),
+        'addon_storage_gb':        addon_storage,
+        'ai_minutes_effective':    (tenant.plan.ai_minutes_limit if tenant.plan else 0) + credits_minutes,
+        'storage_limit_effective': (tenant.plan.storage_limit_gb if tenant.plan else 0) + addon_storage,
     }
 
     # ── Cross-DB: users, videos, photos in this tenant's DB ───────────────────
@@ -211,13 +260,23 @@ def tenant_detail(request, tenant_id):
 
     plans = Plan.objects.using('control').all()
 
+    # Pending invite (if onboarding not yet completed)
+    invite = OnboardingInvite.objects.using('control').filter(
+        tenant=tenant, consumed_at__isnull=True
+    ).first()
+    onboard_url = f"{scheme}://{org_host}/onboard/{invite.token}/" if invite else None
+
     return render(request, 'tenants/tenant_detail.html', {
-        'tenant':        tenant,
-        'recent_events': recent_events,
-        'usage':         usage,
-        'plans':         plans,
-        'users':         users,
-        'org_url':       org_url,
+        'tenant':                tenant,
+        'recent_events':         recent_events,
+        'usage':                 usage,
+        'plans':                 plans,
+        'users':                 users,
+        'org_url':               org_url,
+        'invite':                invite,
+        'onboard_url':           onboard_url,
+        'active_storage_addons': active_storage_addons,
+        'active_credit_packs':   active_credit_packs,
         **counts,
     })
 
@@ -226,37 +285,211 @@ def tenant_detail(request, tenant_id):
 
 @platform_owner_required
 def create_tenant(request):
+    """Provision a new org in INVITE mode — admin sets password + plan later."""
     if request.method == 'GET':
-        plans = Plan.objects.using('control').all()
-        return render(request, 'tenants/create_tenant.html', {'plans': plans})
+        return render(request, 'tenants/create_tenant.html')
 
-    # POST — provision the new org
-    plan_id = request.POST.get('plan_id')
-    slug = request.POST.get('slug', '').strip().lower()
-    name = request.POST.get('name', '').strip()
-    admin_email = request.POST.get('admin_email', '').strip()
+    slug           = request.POST.get('slug', '').strip().lower()
+    name           = request.POST.get('name', '').strip()
+    admin_email    = request.POST.get('admin_email', '').strip()
     admin_username = request.POST.get('admin_username', '').strip()
-    admin_password = request.POST.get('admin_password', '').strip()
 
-    if not all([plan_id, slug, name, admin_email, admin_username, admin_password]):
+    if not all([slug, name, admin_email, admin_username]):
         messages.error(request, "All fields are required.")
         return redirect('tenants:create_tenant')
 
-    result = provision_tenant(
+    result = provision_tenant_with_invite(
         slug=slug,
         name=name,
-        plan_id=int(plan_id),
         admin_email=admin_email,
         admin_username=admin_username,
-        admin_password=admin_password,
     )
 
     if result['success']:
-        messages.success(request, f"Organisation '{name}' provisioned successfully!")
+        messages.success(
+            request,
+            f"Organisation '{name}' provisioned. Share the onboarding link with the admin."
+        )
         return redirect('tenants:tenant_detail', tenant_id=result['tenant_id'])
     else:
         messages.error(request, f"Provisioning failed: {result['error']}")
         return redirect('tenants:create_tenant')
+
+
+def onboard(request, token: str):
+    """
+    Public onboarding page reached via invite link.
+    Org admin sets their password and chooses a plan; the tenant becomes active.
+    Lives at: <slug>.cliplens.local/onboard/<token>/
+    """
+    try:
+        invite = OnboardingInvite.objects.using('control').select_related('tenant').get(token=token)
+    except OnboardingInvite.DoesNotExist:
+        return render(request, 'tenants/onboard_invalid.html',
+                      {'reason': 'This invite link is invalid.'}, status=404)
+
+    if not invite.is_valid():
+        reason = ('This invite has already been used.' if invite.consumed_at
+                  else 'This invite link has expired.')
+        return render(request, 'tenants/onboard_invalid.html',
+                      {'reason': reason}, status=410)
+
+    plans = list(Plan.objects.using('control').all().order_by('storage_limit_gb'))
+
+    if request.method == 'GET':
+        return render(request, 'tenants/onboard.html', {
+            'invite':  invite,
+            'tenant':  invite.tenant,
+            'plans':   plans,
+        })
+
+    # POST — claim
+    password         = request.POST.get('password', '')
+    password_confirm = request.POST.get('password_confirm', '')
+    plan_id          = request.POST.get('plan_id', '')
+
+    if len(password) < 8:
+        messages.error(request, 'Password must be at least 8 characters.')
+        return render(request, 'tenants/onboard.html', {
+            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
+        }, status=400)
+
+    if password != password_confirm:
+        messages.error(request, 'Passwords do not match.')
+        return render(request, 'tenants/onboard.html', {
+            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
+        }, status=400)
+
+    if not plan_id:
+        messages.error(request, 'Please choose a plan.')
+        return render(request, 'tenants/onboard.html', {
+            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
+        }, status=400)
+
+    result = claim_onboarding_invite(token=token, password=password, plan_id=int(plan_id))
+    if not result['success']:
+        messages.error(request, result['error'])
+        return render(request, 'tenants/onboard.html', {
+            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
+        }, status=400)
+
+    tenant = result['tenant']
+
+    # Paid plan — redirect to Stripe Checkout. Tenant stays inactive until webhook fires.
+    if result.get('needs_payment'):
+        from django.conf import settings as dj_settings
+        if not getattr(dj_settings, 'STRIPE_ENABLED', False):
+            # Stripe not configured — fall through to mock activation
+            tenant.is_active   = True
+            tenant.plan_status = Tenant.PLAN_STATUS_ACTIVE
+            tenant.save(using='control', update_fields=['is_active', 'plan_status'])
+            messages.success(request, "Plan activated in mock mode (Stripe not configured).")
+            return redirect('/login/')
+
+        from .stripe_utils import create_plan_checkout_session
+        # Build URLs on the tenant subdomain (the user is already on it)
+        scheme   = 'https' if request.is_secure() else 'http'
+        base_url = f"{scheme}://{request.get_host()}"
+        success_url = base_url + f'/onboard/{token}/success/'
+        cancel_url  = base_url + f'/onboard/{token}/'
+        try:
+            checkout_url = create_plan_checkout_session(
+                tenant=tenant,
+                plan=tenant.plan,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                customer_email=invite.admin_email,
+            )
+        except Exception as exc:
+            logger.exception("Stripe plan checkout failed for tenant=%s", tenant.slug)
+            messages.error(request, f'Could not start checkout: {exc}')
+            return render(request, 'tenants/onboard.html', {
+                'invite': invite, 'tenant': invite.tenant, 'plans': plans,
+            }, status=500)
+        if checkout_url:
+            return redirect(checkout_url)
+        messages.error(request, 'Could not start Stripe checkout.')
+        return redirect(request.path)
+
+    # Free plan — already activated, log in
+    messages.success(
+        request,
+        f"Welcome! Your account '{result['username']}' is ready. Please log in."
+    )
+    return redirect('/login/')
+
+
+def landing_page(request):
+    """
+    Public marketing site shown at the BARE root domain (cliplens.local / cliplens.com).
+    Shows product overview, plans, and a contact form.
+    Logged-in users get redirected to their app, tenant subdomains get the app directly.
+    """
+    # If a tenant subdomain set this request, just send them to the app
+    if getattr(request, 'tenant', None) is not None:
+        return redirect('/player/')
+
+    # Logged in to the bare domain (rare — e.g. platform owner) → control plane
+    if request.user.is_authenticated:
+        return redirect('/platform/')
+
+    plans = list(Plan.objects.using('control').all().order_by('price_usd'))
+    return render(request, 'tenants/landing.html', {
+        'plans': plans,
+    })
+
+
+def submit_lead(request):
+    """
+    Public contact form POST → creates a LeadRequest in the control DB.
+    Open to unauthenticated visitors. Basic anti-abuse: honeypot field.
+    """
+    if request.method != 'POST':
+        return redirect('/')
+
+    # Honeypot — bots will fill this; humans won't see it
+    if request.POST.get('hp_company_website', '').strip():
+        return redirect('/?contact=1')   # silently accept
+
+    name    = request.POST.get('name', '').strip()
+    email   = request.POST.get('email', '').strip()
+    company = request.POST.get('company', '').strip()
+    phone   = request.POST.get('phone', '').strip()
+    interest = request.POST.get('interest', '').strip()
+    message = request.POST.get('message', '').strip()
+
+    if not name or not email:
+        messages.error(request, 'Please provide your name and email.')
+        return redirect('/?contact=1')
+
+    LeadRequest.objects.using('control').create(
+        name=name,
+        email=email,
+        company=company,
+        phone=phone,
+        interest=interest,
+        message=message,
+        referrer=request.META.get('HTTP_REFERER', '')[:300],
+        user_agent=request.META.get('HTTP_USER_AGENT', '')[:300],
+        ip_address=(request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '').split(',')[0].strip() or None,
+    )
+    messages.success(request, "Thanks! We'll be in touch within one business day.")
+    return redirect('/?contact=ok#contact')
+
+
+def onboard_success(request, token: str):
+    """Landing page after Stripe Checkout for the initial plan subscription."""
+    try:
+        invite = OnboardingInvite.objects.using('control').select_related('tenant').get(token=token)
+    except OnboardingInvite.DoesNotExist:
+        return render(request, 'tenants/onboard_invalid.html',
+                      {'reason': 'Invite not found.'}, status=404)
+    messages.success(
+        request,
+        "Payment received! Your organisation is being activated. "
+        "Please log in — if the page says 'not active' yet, just refresh in a few seconds."
+    )
+    return redirect('/login/')
 
 
 # ── Change plan ────────────────────────────────────────────────────────────────
@@ -300,6 +533,7 @@ def manage_plans(request):
     if request.method == 'POST':
         data = {
             'name': request.POST.get('name', '').strip(),
+            'price_usd': float(request.POST.get('price_usd', 0) or 0),
             'storage_limit_gb': int(request.POST.get('storage_limit_gb', 100)),
             'ai_minutes_limit': int(request.POST.get('ai_minutes_limit', 300)),
             'max_users': int(request.POST.get('max_users', 3)),
@@ -312,6 +546,159 @@ def manage_plans(request):
     from django.db.models import Count
     plans = Plan.objects.using('control').annotate(tenant_count=Count('tenants'))
     return render(request, 'tenants/manage_plans.html', {'plans': plans})
+
+
+# ── Leads (contact-form inbox) ─────────────────────────────────────────────────
+
+@platform_owner_required
+def manage_leads(request):
+    """Inbox of contact-form submissions from the public landing page."""
+    if request.method == 'POST':
+        lead_id = request.POST.get('lead_id')
+        action  = request.POST.get('action', '')
+        try:
+            lead = LeadRequest.objects.using('control').get(pk=int(lead_id))
+        except (LeadRequest.DoesNotExist, ValueError):
+            messages.error(request, "Lead not found.")
+            return redirect('tenants:manage_leads')
+
+        if action == 'update_status':
+            new_status = request.POST.get('status', '')
+            valid_statuses = dict(LeadRequest.STATUS_CHOICES)
+            if new_status in valid_statuses:
+                lead.status = new_status
+                lead.save(using='control', update_fields=['status', 'updated_at'])
+                messages.success(request, f"Marked '{lead.name}' as {valid_statuses[new_status]}.")
+        elif action == 'update_notes':
+            lead.notes = request.POST.get('notes', '').strip()
+            lead.save(using='control', update_fields=['notes', 'updated_at'])
+            messages.success(request, "Notes saved.")
+        elif action == 'delete':
+            lead.delete(using='control')
+            messages.success(request, f"Deleted lead '{lead.name}'.")
+        return redirect('tenants:manage_leads')
+
+    status_filter = request.GET.get('status', '').strip()
+    qs = LeadRequest.objects.using('control').all()
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    leads = list(qs[:200])
+
+    # Counts per status for the filter pills
+    from django.db.models import Count
+    counts_qs = LeadRequest.objects.using('control').values('status').annotate(n=Count('pk'))
+    counts = {row['status']: row['n'] for row in counts_qs}
+    counts['total'] = LeadRequest.objects.using('control').count()
+
+    return render(request, 'tenants/manage_leads.html', {
+        'leads':         leads,
+        'status_filter': status_filter,
+        'counts':        counts,
+        'status_choices': LeadRequest.STATUS_CHOICES,
+    })
+
+
+# ── Top-up product management (platform owner) ────────────────────────────────
+
+@platform_owner_required
+def manage_topups(request):
+    """CRUD for TopUpProduct SKUs — storage addons and AI credit packs."""
+    from .models import TopUpProduct
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'create')
+
+        if action == 'create':
+            try:
+                TopUpProduct.objects.using('control').create(
+                    kind=request.POST.get('kind', ''),
+                    name=request.POST.get('name', '').strip(),
+                    amount=int(request.POST.get('amount', 0)),
+                    price_usd=float(request.POST.get('price_usd', 0)),
+                    sort_order=int(request.POST.get('sort_order', 0) or 0),
+                    is_active=bool(request.POST.get('is_active')),
+                )
+                messages.success(request, "Top-up product created.")
+            except Exception as exc:
+                messages.error(request, f"Could not create product: {exc}")
+
+        elif action == 'update':
+            try:
+                p = TopUpProduct.objects.using('control').get(pk=int(request.POST.get('product_id')))
+                p.name       = request.POST.get('name', '').strip() or p.name
+                p.amount     = int(request.POST.get('amount', p.amount))
+                p.price_usd  = float(request.POST.get('price_usd', p.price_usd))
+                p.sort_order = int(request.POST.get('sort_order', p.sort_order) or 0)
+                p.is_active  = bool(request.POST.get('is_active'))
+                p.save(using='control')
+                messages.success(request, f"Updated '{p.name}'.")
+            except Exception as exc:
+                messages.error(request, f"Could not update: {exc}")
+
+        elif action == 'delete':
+            try:
+                p = TopUpProduct.objects.using('control').get(pk=int(request.POST.get('product_id')))
+                name = p.name
+                p.delete(using='control')
+                messages.success(request, f"Deleted '{name}'.")
+            except Exception as exc:
+                messages.error(request, f"Could not delete: {exc}")
+
+        return redirect('tenants:manage_topups')
+
+    products = TopUpProduct.objects.using('control').order_by('kind', 'sort_order', 'amount')
+    storage_products = [p for p in products if p.kind == TopUpProduct.KIND_STORAGE]
+    credit_products  = [p for p in products if p.kind == TopUpProduct.KIND_CREDITS]
+
+    return render(request, 'tenants/manage_topups.html', {
+        'storage_products': storage_products,
+        'credit_products':  credit_products,
+    })
+
+
+# ── Stripe webhook ─────────────────────────────────────────────────────────────
+
+from django.views.decorators.csrf import csrf_exempt
+from django.http import HttpResponse
+
+
+@csrf_exempt
+def stripe_webhook(request):
+    """
+    Receives signed events from Stripe (test or live).
+    Forward locally with:
+        stripe listen --forward-to localhost:8000/api/stripe/webhook/
+    """
+    from django.conf import settings as dj_settings
+
+    if request.method != 'POST':
+        return HttpResponse(status=405)
+
+    payload   = request.body
+    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+    secret     = dj_settings.STRIPE_WEBHOOK_SECRET
+
+    try:
+        import stripe
+        stripe.api_key = dj_settings.STRIPE_SECRET_KEY
+        if secret:
+            event = stripe.Webhook.construct_event(payload, sig_header, secret)
+        else:
+            # No secret configured — parse without verification (DEV ONLY).
+            event = json.loads(payload.decode('utf-8'))
+    except Exception as exc:
+        logger.warning("Stripe webhook: invalid signature/payload: %s", exc)
+        return HttpResponse(status=400)
+
+    from .stripe_utils import handle_webhook_event
+    try:
+        result = handle_webhook_event(event)
+        logger.info("Stripe webhook handled: %s", result)
+    except Exception as exc:
+        logger.exception("Stripe webhook handler crashed: %s", exc)
+        return HttpResponse(status=500)
+
+    return HttpResponse(status=200)
 
 
 # ── API: Usage data (JSON) ─────────────────────────────────────────────────────
