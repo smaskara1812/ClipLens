@@ -1,316 +1,387 @@
-# ClipStream — Product Specification
+# ClipLens
 
-## Visual Intelligence & Asset Management Platform
+**AI-powered media intelligence platform for organisations.**
 
-**Version:** 2.0 (post-fork from LMS branch)
-**Focus:** Media ingestion, AI processing, semantic search, and digital asset management
-
----
-
-## 1. Vision
-
-ClipStream is a self-hosted media intelligence platform. Its primary value is not playback — it is the ability to **ingest videos/photos and images, automatically extract structured knowledge from them, and make that knowledge instantly searchable** via natural language, object labels, face identities, speaker identities, visual semantics, and **named geographic places** (where GPS metadata exists).
+ClipLens ingests video and photo libraries, transcribes every word, recognises every face, tags every object, and translates captions to 200+ languages — making any archive instantly searchable. Built as a multi-tenant SaaS with per-organisation data isolation, Stripe billing, and a self-host option.
 
 ---
 
-## 2. Core Capabilities
+## Quick links
 
-### 2.1 Video Ingestion Pipeline
-
-
-| Stage                | Technology                   | Output                                                |
-| -------------------- | ---------------------------- | ----------------------------------------------------- |
-| Transcoding          | FFmpeg → HLS (multi-quality) | Adaptive bitrate stream                               |
-| Frame extraction     | FFmpeg `fps=1/N`             | JPEG frames at configurable interval                  |
-| Object detection     | YOLOv8n                      | Per-frame label set (comma-separated)                 |
-| Scene captioning     | BLIP or Florence-2           | Per-frame natural language description                |
-| CLIP encoding        | CLIP ViT-B/32                | Per-frame 512-d embedding (pgvector)                  |
-| Face detection       | InsightFace buffalo_l        | ArcFace 512-d embeddings, bounding boxes, crop images |
-| Face clustering      | Greedy cosine clustering     | Automatic identity grouping across all frames         |
-| Speech transcription | faster-whisper               | WebVTT subtitles + searchable transcript segments     |
-
-
-All stages run asynchronously via **Celery** (`processing` and `captions` queues backed by Redis).
-
-### 2.2 Photo / Image Ingestion Pipeline
-
-
-| Stage            | Technology         | Output                                                    |
-| ---------------- | ------------------ | --------------------------------------------------------- |
-| Upload           | Django ImageField  | Stored in `photos/originals/`                             |
-| Thumbnail        | Pillow             | 480×480 JPEG stored in `photos/thumbnails/`               |
-| Object detection | YOLOv8n            | `Photo.labels`                                            |
-| Scene captioning | BLIP or Florence-2 | `Photo.scene_description`                                 |
-| CLIP encoding    | CLIP ViT-B/32      | `Photo.clip_embedding` (pgvector)                         |
-| Face detection   | InsightFace        | `Photo.face_count`, `Photo.face_names`, identity matching |
-
-
-No HLS, no Whisper — photos need neither.
-
-### 2.3 Search System
-
-ClipStream implements a **four-layer search stack** over every piece of processed content:
-
-#### Layer 1 — Keyword / FTS
-
-- Postgres full-text search (`to_tsvector / to_tsquery`) with GIN expression indexes
-- Covers: video title/description/tags, frame labels, frame descriptions, transcript text, photo title/description/tags/labels/scene_description, channel names, playlist titles, face identity names
-- Stemming, stop-word removal, English lexeme matching via the `english` text-search configuration
-
-#### Layer 2 — Fuzzy (pg_trgm)
-
-- Trigram similarity ≥ 0.22 threshold (configurable)
-- Catches: typos, partial words, different word forms
-- GIN trigram indexes on all text fields (no full-table scan)
-- Combined with FTS via SQL `OR pk IN (...)`
-
-#### Layer 3 — Semantic / CLIP (visual meaning)
-
-- Triggered by `?semantic=1` in the query
-- Query text is encoded via CLIP's text encoder to a 512-d vector
-- pgvector HNSW cosine ANN search returns the top-N visually matching frames and photos
-- Threshold configurable (`CLIP_SIMILARITY_THRESHOLD`, default 0.20)
-- Caps: 250 video frames, 50 photos per query
-
-#### Layer 4 — Structural (faces, channels, playlists, places)
-
-- Face identity name search across all DetectedFace records, grouped by person then video
-- Channel name and playlist title fuzzy search
-- Named place name/description search → **Places** tab and place detail URLs (`/places/<slug>/`)
-- Results grouped into tabbed UI: All / Videos / People / Scenes / Speech / Channels / Playlists / Photos / **Places** (named locations; each row links to a place detail page so similarly named sites stay distinguishable)
-
-#### Filter propagation
-
-All four filter parameters (channel, category, duration, date) apply uniformly to the main video grid **and** to every AI sub-search (speech, scenes, CLIP). This means a user can search "person walking" within a specific channel and duration range and the semantic results will be scoped accordingly.
-
-### 2.4 Digital Asset Management (DAM)
-
-Photos are first-class assets alongside videos:
-
-- **Library** (`/photos/`) — infinite-scroll grid, filter by category/sort, keyword search
-- **Upload** (`/photos/upload/`) — drag-and-drop with live preview, post-upload polling for processing status
-- **Detail** (`/photos/<id>/`) — full image viewer with AI metadata sidebar; polls for processing completion
-- **Search integration** — photos appear in the Photos tab of the main search results
-
-### 2.5 Named places, geolocation & media map
-
-- **`NamedPlace` model** — Curated locations (name, unique slug, lat/lng, radius in metres, optional description, map colour). Slugs are generated from the name and deduplicated automatically when names collide.
-- **Photos and videos** — Both support optional `latitude`, `longitude`, and optional `named_place` foreign key. Bulk tools can auto-assign items whose coordinates fall inside a place’s radius.
-- **Named Places admin** (`/named-places/`, editors and superadmins) — Leaflet map with inline address search (geocoding via **OpenStreetMap Nominatim** when the browser calls that API), create/edit places, and table with photo and video counts per place.
-- **Media Map** (`/media/map/`) — Unified map of geotagged **photos and videos**; statistics distinguish total markers vs distinct named places. **Map** vs **Grouped** view: grouped sections show media per named place with “View more” to the place page. Map tile theme can be toggled light/dark independently of the global site theme (stored in `localStorage`).
-- **Place detail** (`/places/<slug>/`) — Browse all photos and videos linked to one named place, with counts and a small map.
-- **Search suggestions** — Matching named places appear in autocomplete with short disambiguating text (description snippet or rounded coordinates) when names are similar.
-- **Admin chrome** — Users, Categories, Named Places, Commands, and Storage share the same top tab navigation. **Superadmins** see all tabs; **editors** only see **Categories** and **Named Places** (no links to superadmin-only routes).
-
-### 2.6 Face Recognition & Identity Management
-
-- InsightFace `buffalo_l` model (ArcFace) runs per frame and per photo
-- Detected faces are clustered per-video using greedy cosine similarity (threshold: 0.35 for within-video clustering)
-- New clusters are matched against all existing `FaceIdentity` records (named: 0.45 threshold; auto-named: 0.50 threshold)
-- Unmatched clusters create a new `FaceIdentity` with name `Person N`
-- Editors can rename, merge, and tag identities via the People page
-- Running-average embeddings are maintained per identity as the system sees more faces
-
-### 2.7 Speaker Identity & Voice Recognition (Diarization)
-
-- Speaker diarization uses **pyannote.audio** (`pyannote/speaker-diarization-3.1`) to label who spoke when
-- Each Whisper transcript segment (`VideoSegment`) can be tagged with:
-  - `speaker_label` — a stable global label like `SPEAKER_02`
-  - `speaker_identity` — a resolved `SpeakerIdentity` row (name, role, optional face link)
-- Cross-video “same voice” matching uses a **256-d WeSpeaker** embedding (`pyannote/wespeaker-voxceleb-resnet34-LM`) with cosine similarity (threshold `SPEAKER_MATCH_THRESHOLD`, default `0.75`)
-- Speakers have a dedicated UI: `/speakers/` list + `/speakers/<id>/` detail (rename, role, link face, merge, delete)
-
-**Implementation details:** see `documentation files/SPEAKER_IDENTITY.md`.
+- **[Architecture overview](#architecture)** — how the pieces fit together
+- **[Local development](#local-development)** — get running in 15 minutes
+- **[Multi-tenancy guide](docs/multitenancy.md)** — provisioning, subdomains, DB isolation
+- **[Billing & Stripe](docs/billing.md)** — plans, top-ups, webhooks
+- **[Deployment](docs/deployment.md)** — production hosting + systemd + nginx
+- **[Operations](docs/operations.md)** — day-to-day server tasks
+- **[API reference](docs/api.md)** — REST endpoints
+- **[Future roadmap](future_plans.md)** — what's coming next
 
 ---
 
-## 3. Data Models (Processing-relevant)
+## What it does
 
-### 3.1 Video
+| Capability | Stack |
+|------------|-------|
+| Adaptive video streaming | FFmpeg HLS encoding, scrub-thumbnail sprite sheets |
+| Transcription | OpenAI Whisper (faster-whisper) — word-level timestamps |
+| Translation | Meta NLLB-200 — 200+ languages |
+| Face recognition | InsightFace buffalo_l (ArcFace embeddings) |
+| Object detection | Ultralytics YOLOv8n |
+| Scene description | Salesforce BLIP / Microsoft Florence-2 |
+| Semantic visual search | OpenAI CLIP ViT-B/32 → pgvector HNSW |
+| Speaker diarization | pyannote.audio 3.x |
+| Audio events | PANNs CNN14 (applause, music, silence, etc.) |
+| Geo search | Leaflet + per-tenant NamedPlace records |
+| Multi-tenant DB | Postgres per organisation + control DB |
+| Billing | Stripe (subscriptions, top-ups, customer portal, webhooks) |
 
-```
-id (UUID) | title | channel | category | tags
-original_file | hls_path | thumbnail
-duration | file_size | resolution | available_qualities
-status (pending/processing/ready/failed)
-visibility (public/private/subscribers_only)
-latitude | longitude | named_place (FK → NamedPlace, optional)
-```
-
-### 3.2 VideoFrame (one per sampled frame)
-
-```
-video (FK) | timestamp (seconds)
-labels       — YOLO class labels, comma-separated, FTS+trgm indexed
-description  — BLIP/Florence-2 caption, FTS+trgm indexed
-clip_embedding — vector(512), HNSW indexed
-face_count | face_names
-```
-
-### 3.3 VideoSegment (one per Whisper segment)
-
-```
-video (FK) | start_seconds | end_seconds
-text  — transcript text, FTS+trgm indexed
-speaker_label — diarization label (e.g. SPEAKER_02)
-speaker_identity — FK to SpeakerIdentity (resolved identity after diarization)
-```
-
-### 3.4 DetectedFace (one per face detected in a frame)
-
-```
-video (FK) | frame (FK) | identity (FK)
-timestamp | bbox (JSON) | embedding (JSON 512-d)
-confidence | crop_path | status (unreviewed/confirmed/rejected)
-```
-
-### 3.5 FaceIdentity
-
-```
-name | is_auto_named | ref_embedding (JSON running average) | thumbnail
-```
-
-### 3.6 Photo
-
-```
-id (UUID) | title | description | channel | category | tags
-file | thumbnail | width | height | file_size
-labels       — YOLO class labels, FTS+trgm indexed
-scene_description — BLIP/Florence-2 caption, FTS+trgm indexed
-clip_embedding — vector(512), HNSW indexed
-face_count | face_names
-latitude | longitude | named_place (FK → NamedPlace, optional)
-status (pending/processing/ready/failed)
-visibility (public/private)
-```
-
-### 3.7 NamedPlace
-
-```
-name | slug (unique) | latitude | longitude
-radius_meters | color (hex) | description (optional)
-created_by (FK User) | created_at
-```
-
-### 3.8 SpeakerIdentity
-
-```
-name | is_auto_named | role (speaker/narrator/background)
-speaker_embedding — vector(256) for cross-video voice matching
-face_identity (optional FK) — manual bridge between voice and face identity
-```
+**Every AI model runs locally** on your infrastructure. No tenant data ever leaves your boundary — not to OpenAI, not to Anthropic, not to anyone.
 
 ---
 
-## 4. Processing Architecture
+## Architecture
 
 ```
-Upload (HTTP multipart)
-        │
-        ▼
-Django view creates Video/Photo record (status=pending)
-        │
-        ▼
-Celery task queued (queue='processing')
-        │
-        ├── process_video_task
-        │       │── FFmpeg → HLS segments
-        │       │── status = ready
-        │       └── triggers →
-        │               ├── generate_captions_task  (queue='captions')
-        │               └── analyze_video_frames_task (queue='processing')
-        │
-        └── analyze_photo_task
-                │── YOLO labels
-                │── BLIP/Florence-2 scene description
-                │── CLIP 512-d embedding
-                │── InsightFace face detection + identity matching
-                │── Pillow thumbnail generation
-                └── status = ready
+                                  ┌──────────────────────────────┐
+                                  │   admin.cliplens.com         │
+   *.cliplens.com  ───┐           │   Control Plane              │
+                      │           │   - tenants list             │
+                      │  nginx    │   - plans + top-up products  │
+                      │ (wildcard │   - leads inbox              │
+                      │  cert)    │   - usage / billing overview │
+                      ▼           └──────────────────────────────┘
+            ┌──────────────────┐                ▲
+            │  Django :8000    │ ── subdomain ──┤
+            │                  │     routing    │
+            │  TenantMiddleware│                ▼
+            │  TenantDBRouter  │  ┌──────────────────────────────┐
+            │  TenantStorage   │  │  org1.cliplens.com           │
+            └──────────────────┘  │  org2.cliplens.com           │
+                  │      │       │  org3.cliplens.com           │
+                  │      │       │  ┌────────────────────────┐   │
+                  ▼      ▼       │  │ Per-org App            │   │
+          ┌────────┐ ┌──────────┐│  │ - upload, search       │   │
+          │ Redis  │ │ Postgres ││  │ - usage page           │   │
+          └────────┘ │  - control  │ - billing + top-ups    │   │
+              │     │  - freestream_<slug> per tenant   │   │
+              ▼     └───────────┘  └────────────────────────┘   │
+        ┌──────────────────────────────────────────────────────┘
+        │ Celery Workers (--pool=solo for AI fork-safety)
+        │ - main (HLS, captions, default)
+        │ - audio (PANNs, silence)
+        │ - translation (NLLB-200)
+        │ - live (FFmpeg live streaming)
+        └─────────────────────────────────────────────────────
 ```
 
-### Task queues
+### Three-tier subdomain model
 
+| Subdomain | Purpose | Authentication |
+|-----------|---------|----------------|
+| `cliplens.com` (bare) | Public marketing landing + Privacy + Terms + contact form | None |
+| `admin.cliplens.com` | Control plane — platform owner manages all orgs, plans, leads | Platform owner role |
+| `<slug>.cliplens.com` | Per-organisation app — uploads, search, admin panel, billing | Org user (admin/editor/viewer) |
 
-| Queue        | Tasks                                                          | Typical runtime |
-| ------------ | -------------------------------------------------------------- | --------------- |
-| `processing` | HLS encoding, frame analysis, photo analysis, audio extraction | 1–30 min        |
-| `captions`   | faster-whisper transcription, speaker diarization (pyannote)    | 30s–10 min      |
-| `default`    | segment re-indexing, misc                                      | <5s             |
+### Database layout
 
+- **`freestream_control`** — single shared DB holding `Tenant`, `Plan`, `TopUpProduct`, `StorageAddon`, `AICreditPack`, `UsageEvent`, `OnboardingInvite`, `LeadRequest`
+- **`freestream_<slug>`** — one isolated DB per tenant holding all media records (Videos, Photos, Channels, FaceIdentity, etc.) and user accounts
+- **TenantDatabaseRouter** reads a thread-local set by `TenantMiddleware` (from subdomain) or by `setup_tenant_context()` inside Celery tasks (from `tenant_slug` kwarg)
 
----
+### Media layout
 
-## 5. Search Caps & Performance Characteristics
+```
+media/
+├── tenants/
+│   ├── org1/
+│   │   ├── originals/         ← uploaded video/photo source files
+│   │   ├── hls/<video_id>/    ← adaptive bitrate streams + master.m3u8
+│   │   ├── thumbnails/
+│   │   ├── seek_sprites/      ← scrub-preview JPEG grids
+│   │   ├── faces/<video_id>/  ← cropped face images
+│   │   ├── subtitles/         ← VTT files (auto + translated)
+│   │   ├── audio/             ← extracted WAVs for diarization
+│   │   └── photos/
+│   └── org2/...
+└── live/                       ← live stream HLS segments (not tenant-scoped)
+```
 
-
-| Search type                 | Row cap                           | Index used         | Typical latency |
-| --------------------------- | --------------------------------- | ------------------ | --------------- |
-| Video FTS (title/desc/tags) | 100                               | GIN FTS expression | <10 ms          |
-| Video fuzzy (trgm)          | 100                               | GIN trgm           | <20 ms          |
-| Speech FTS + fuzzy          | 500 segments → per-video grouping | GIN FTS + trgm     | <30 ms          |
-| YOLO frame labels           | 400 frames                        | GIN FTS + trgm     | <30 ms          |
-| Scene description           | 400 frames                        | GIN FTS + trgm     | <30 ms          |
-| CLIP semantic (video)       | 250 frames                        | HNSW ANN           | <50 ms          |
-| CLIP semantic (photo)       | 50 photos                         | HNSW ANN           | <10 ms          |
-| Face identity name          | 300 faces                         | B-tree + trgm      | <20 ms          |
-| Photo FTS + fuzzy           | 60 photos                         | GIN FTS + trgm     | <15 ms          |
-
-
-All caps apply after active filters (channel/category/duration/date) have narrowed the dataset.
-
----
-
-## 6. AI Model Registry
-
-
-| Model                             | Purpose                             | Disk    | RAM     |
-| --------------------------------- | ----------------------------------- | ------- | ------- |
-| YOLOv8n                           | Object detection                    | ~6 MB   | ~150 MB |
-| BLIP (blip-image-captioning-base) | Scene captioning                    | ~990 MB | ~1.5 GB |
-| Florence-2-base                   | Scene captioning (alternative)      | ~900 MB | ~2 GB   |
-| CLIP ViT-B/32                     | Visual embeddings + semantic search | ~600 MB | ~1 GB   |
-| faster-whisper (medium)           | Speech transcription                | ~1.5 GB | ~2 GB   |
-| InsightFace buffalo_l             | Face detection + ArcFace embeddings | ~300 MB | ~600 MB |
-| pyannote speaker-diarization-3.1  | Speaker diarization (who spoke when) | ~?     | ~?      |
-| WeSpeaker ResNet34 (voxceleb)     | Speaker embeddings (256-d)          | ~?     | ~?      |
-
-
-**Cache strategy:** CLIP model is loaded once per Django process (module-level cache with threading lock). All other models are loaded inside the Celery task and released when the task completes — Celery workers are typically long-lived so models may stay warm across tasks.
+`TenantFileSystemStorage` overrides `location` and `base_url` per request so `FileField.url` automatically produces `/media/tenants/org1/...` without any extra logic in views.
 
 ---
 
-## 7. Settings Reference
+## Local development
 
-```python
-FRAME_INTERVAL_SECONDS        = 5       # sample 1 frame every N seconds of video
-FRAME_ANALYSIS_ENABLED        = True
-SCENE_DESCRIPTION_ENABLED     = True
-SCENE_CAPTION_MODEL           = 'blip'  # or 'florence2'
-CLIP_ENABLED                  = True
-CLIP_SIMILARITY_THRESHOLD     = 0.20    # cosine similarity floor for CLIP matches
-FACE_RECOGNITION_ENABLED      = True
-YOLO_MODEL                    = 'yolov8n'
-FUZZY_SEARCH_ENABLED          = True
-FUZZY_SEARCH_SIMILARITY_THRESHOLD = 0.22
-AUTO_CAPTION_ON_UPLOAD        = True
-SPEAKER_MATCH_THRESHOLD       = 0.75
-HF_TOKEN                      = ''   # required for pyannote diarization models
+### Prerequisites
+
+- macOS or Linux
+- Python 3.11 (3.12 also works)
+- PostgreSQL 15+ with `pgvector` extension
+- Redis
+- FFmpeg
+- nginx (for multi-tenant subdomain routing)
+- Stripe CLI (optional, for testing payments locally)
+
+### One-time setup
+
+```bash
+# 1. Clone + virtualenv
+git clone <repo> && cd Freestream
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Copy .env.example → .env and edit
+#    Set MULTI_TENANT=true if you want subdomain routing
+#    Set STRIPE_SECRET_KEY for real test checkout (optional)
+cp .env.example .env
+
+# 3. Create the control DB and run migrations
+python manage.py setup_multitenancy
+
+# 4. Install pgvector extension (one-time)
+psql freestream -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+```
+
+### `/etc/hosts` for subdomain routing
+
+```bash
+sudo tee -a /etc/hosts <<EOF
+127.0.0.1  cliplens.local
+127.0.0.1  admin.cliplens.local
+127.0.0.1  testorg1.cliplens.local
+127.0.0.1  testorg2.cliplens.local
+EOF
+```
+
+### nginx config
+
+The wildcard server block lives in `/opt/homebrew/etc/nginx/servers/cliplens-local.conf` (macOS) or `/etc/nginx/sites-enabled/cliplens` (Linux). See [docs/multitenancy.md](docs/multitenancy.md) for the exact content.
+
+### Start everything
+
+```bash
+./start.sh
+```
+
+This boots Django on `:8000`, Celery workers (main / audio / translation / live), Flower on `:5556`, and the Stripe CLI webhook tunnel (if `STRIPE_SECRET_KEY` is set). Ctrl-C kills all of them cleanly.
+
+### First-run checklist
+
+1. Visit `http://cliplens.local` → marketing landing
+2. Visit `http://admin.cliplens.local` → log in as platform owner (Django superuser with `is_platform_owner=True`)
+3. **Create plans** at `/plans/` with prices
+4. **Create top-up products** at `/topups/` (storage addons + AI credit packs)
+5. **Provision a test org** at `/tenants/new/` → copy the invite link → claim it at `<slug>.cliplens.local/onboard/<token>/`
+6. **Upload a test video** in the new org's app
+
+---
+
+## Project structure
+
+```
+Freestream/
+├── cliplens/                  ← Django project config
+│   ├── settings.py            ← env-driven config, MULTI_TENANT switch
+│   ├── celery.py
+│   └── urls.py                ← root URL routing (landing, onboarding, webhooks, /platform/, app)
+│
+├── tenants/                   ← Multi-tenancy app (control plane)
+│   ├── models.py              ← Tenant, Plan, TopUpProduct, StorageAddon,
+│   │                            AICreditPack, OnboardingInvite, UsageEvent, LeadRequest
+│   ├── middleware.py          ← TenantMiddleware (subdomain → request.tenant)
+│   ├── db_router.py           ← Routes ORM queries to the right DB
+│   ├── storage.py             ← TenantFileSystemStorage (per-org media folders)
+│   ├── provisioning.py        ← Creates DBs, runs migrations, creates invites
+│   ├── metering.py            ← Quota helpers, credit pack draining
+│   ├── stripe_utils.py        ← Stripe Checkout, webhooks, Customer Portal
+│   ├── celery_utils.py        ← task_prerun signal → setup_tenant_context
+│   ├── media_serve.py         ← Tenant-aware /media/ serving with access checks
+│   ├── views.py               ← Control plane + landing + onboarding + leads
+│   ├── templates/tenants/
+│   │   ├── landing.html       ← Public marketing site
+│   │   ├── privacy.html       ← Privacy policy
+│   │   ├── terms.html         ← Terms of service
+│   │   ├── onboard.html       ← Org admin claims invite + picks plan
+│   │   ├── dashboard.html     ← Platform owner main dashboard
+│   │   ├── tenant_detail.html ← Per-tenant deep dive
+│   │   ├── manage_plans.html
+│   │   ├── manage_topups.html
+│   │   └── manage_leads.html
+│   └── management/commands/
+│       ├── setup_multitenancy.py
+│       └── cleanup_orphans.py
+│
+├── videos/                    ← Main app (per-tenant data)
+│   ├── models.py              ← Video, Photo, Channel, FaceIdentity, etc.
+│   ├── views.py               ← ~5000 lines: player, upload, search, billing, top-ups
+│   ├── tasks.py               ← Celery tasks for the AI pipeline
+│   ├── services.py            ← FFmpeg HLS encoding, thumbnail extraction
+│   ├── upscale.py             ← Lanczos upscale pipeline
+│   ├── middleware.py          ← LoginRequiredMiddleware, HLS CORS headers
+│   ├── context_processors.py  ← Injects usage warnings, user role
+│   └── templates/videos/
+│       ├── _sidebar.html      ← Left nav with Admin / Plan / Top Up / Billing
+│       ├── _admin_nav.html    ← Top tab strip for admin pages
+│       ├── org_usage.html     ← AI minutes + storage dashboard for org admin
+│       ├── org_topup.html     ← Buy storage addons / credit packs
+│       ├── org_billing.html   ← Plan + payment method + invoices + history
+│       └── org_plan_upgrade.html
+│
+├── docs/                      ← Detailed guides (see links above)
+├── start.sh                   ← Dev launcher (Django + Celery + Stripe CLI)
+├── manage.py
+├── requirements.txt
+└── .env                       ← Local config (gitignored)
 ```
 
 ---
 
-## 8. Future Work
+## Multi-tenancy: how a request flows
 
+```
+Browser → orgX.cliplens.com/upload/
+            ↓
+nginx  ── proxies to localhost:8000, preserves Host header
+            ↓
+TenantMiddleware ── parses subdomain "orgX"
+                 ── looks up Tenant in control DB
+                 ── set_db("freestream_orgX")  (thread-local)
+                 ── set_media_root("media/tenants/orgX/")
+                 ── attaches request.tenant
+            ↓
+LoginRequiredMiddleware ── ensures user is authenticated
+            ↓
+Django view ── any ORM query auto-routes to freestream_orgX via TenantDatabaseRouter
+            ── any file upload writes under media/tenants/orgX/ via TenantFileSystemStorage
+            ↓
+Celery dispatch ── task.apply_async(args=[id], kwargs={'tenant_slug': 'orgX'})
+            ↓
+Worker (separate process) ── task_prerun signal calls setup_tenant_context('orgX')
+                          ── sets the same thread-locals as the web request
+                          ── task body runs with correct DB + media context
+            ↓
+task_postrun signal ── records elapsed time as UsageEvent in control DB
+                    ── drains credit packs if over plan quota
+```
 
-| Feature                                     | Complexity | Notes                                                                              |
-| ------------------------------------------- | ---------- | ---------------------------------------------------------------------------------- |
-| API-based pagination for AI search results  | Medium     | Dedicated endpoints `/api/search/speech/`, `/api/search/scenes/` with offset/limit |
-| SearchRank relevance ordering               | Low        | Django `SearchRank` annotation once video count is in the hundreds                 |
-| Florence-2 upgrade as primary caption model | Low        | Swap `SCENE_CAPTION_MODEL='florence2'` after Python 3.10+ move                     |
-| Shot-boundary detection                     | Medium     | Replace fixed-interval sampling with scene-change detection                        |
-| Re-indexing management command              | Low        | `python manage.py reanalyse --model clip` to batch update embeddings               |
-| Multi-modal search (image query)            | High       | Upload an image as query, embed it with CLIP, run HNSW search                      |
-| Face re-identification across photos+videos | Medium     | Extend DetectedFace FK to accept Photo as source                                   |
+---
 
+## Billing: pricing model
 
+| Item | Model | Cancellation |
+|------|-------|--------------|
+| **Plan** (Starter / Pro / Enterprise) | Monthly recurring Stripe subscription. Free tier supported (`price_usd=0`). | Cancel anytime — access until period end |
+| **Storage addon** | Monthly recurring Stripe subscription, adds GB to plan limit | Cancel anytime — GB stays until period end |
+| **AI credit pack** | One-time Stripe payment, 12-month expiry on credits | Non-refundable; credits drain FIFO past plan limit |
+
+### Effective limits per tenant
+```
+ai_minutes_effective  = plan.ai_minutes_limit + Σ(unconsumed credit packs)
+storage_effective_gb  = plan.storage_limit_gb + Σ(active storage addons)
+```
+
+### Stripe events handled
+- `checkout.session.completed` → activates plan or creates addon/credit pack
+- `customer.subscription.updated` → syncs plan status, handles `cancel_at_period_end`
+- `customer.subscription.deleted` → marks addon/plan terminated
+- `invoice.payment_failed` → flips tenant to `past_due`
+
+See [docs/billing.md](docs/billing.md) for full payment lifecycle and webhook handling.
+
+---
+
+## Roles & access control
+
+### Platform-level
+- **Platform owner** (`is_platform_owner=True` on UserProfile) — full access to control plane at `admin.cliplens.com`. Sees all tenants, plans, leads. Cannot directly access a tenant's app data without logging in as a tenant user.
+
+### Org-level (inside each tenant)
+- **Superadmin** — full control of one organisation. Manages users, plans, billing, top-ups.
+- **Editor** — can upload, edit, delete media. Cannot manage users or billing.
+- **Viewer** — read-only across the entire library.
+
+Decorators: `@platform_owner_required`, `@superuser_required` (org admin), `@editor_required`, `@login_required`.
+
+---
+
+## AI minutes metering
+
+Every Celery task is timed by `task_prerun` / `task_postrun` signals. On success or failure, a `UsageEvent` row is written to the control DB with the task's wall-clock duration.
+
+Counted (drains plan minutes, then credit packs):
+- `process_video_task`, `generate_seek_thumbnails_task`, `extract_audio_tracks_task`
+- `generate_captions_task`, `translate_subtitles_task`
+- `analyze_video_frames_task`, `analyze_photo_task`
+- `run_diarization_task`, `detect_audio_events_task`
+- `upscale_video_task`, `upscale_photo_task`
+- `generate_video_summary_task`
+
+Not counted (no AI compute):
+- `reindex_segments_task` (just VTT parsing)
+- `run_live_ffmpeg` (live streaming, billed separately if at all)
+
+Storage is **always computed live by walking the tenant directory** — not from `storage_delta` events — so orphaned files still count toward the limit.
+
+---
+
+## Daily ops cheat sheet
+
+```bash
+# Provision a new org (control plane)
+# Easier: use the UI at admin.cliplens.local/tenants/new/
+# Programmatic:
+python manage.py shell -c "
+from tenants.provisioning import provision_tenant_with_invite
+r = provision_tenant_with_invite(slug='acme', name='Acme Corp',
+                                  admin_email='admin@acme.com',
+                                  admin_username='admin')
+print(r['token'])  # share the URL: <slug>.cliplens.com/onboard/<token>/
+"
+
+# Run migrations on every tenant DB (after a schema change)
+python manage.py migrate                          # default DB
+python manage.py migrate --database=control       # control DB
+# (per-tenant migrations are handled automatically inside provisioning;
+#  for an existing fleet, loop through Tenants and call migrate per alias)
+
+# Clean up orphaned media files
+python manage.py cleanup_orphans                  # dry run
+python manage.py cleanup_orphans --delete         # for real
+python manage.py cleanup_orphans --tenant acme --delete   # one tenant
+
+# Check Stripe webhook health (Stripe CLI must be running)
+tail -f /tmp/stripe-listen.log
+
+# Tail Django logs
+tail -f /var/log/cliplens/django.log
+
+# Restart a Celery worker (production)
+sudo systemctl restart cliplens-celery-main
+```
+
+---
+
+## Documentation index
+
+| File | What's inside |
+|------|---------------|
+| **[CLAUDE.md](CLAUDE.md)** | Guidance for AI assistants working on this repo |
+| **[docs/multitenancy.md](docs/multitenancy.md)** | Detailed multi-tenancy architecture, nginx config, DB router internals |
+| **[docs/billing.md](docs/billing.md)** | Stripe integration, webhook events, billing lifecycle |
+| **[docs/deployment.md](docs/deployment.md)** | Production deployment guide |
+| **[docs/operations.md](docs/operations.md)** | Day-to-day server operations |
+| **[docs/api.md](docs/api.md)** | REST API reference |
+| **[future_plans.md](future_plans.md)** | Planned features (coupons, white-label branding, etc.) |
+| **[deploy_linux.md](deploy_linux.md)** | Legacy single-tenant Linux deployment (kept for reference) |
+
+---
+
+## Contributing
+
+This is a private commercial project. See `CLAUDE.md` if you're using an AI assistant to make changes.
+
+## License
+
+Proprietary. © Soham Maskara. All rights reserved.
