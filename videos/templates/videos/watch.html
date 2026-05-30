@@ -558,6 +558,50 @@
   .modal-close:hover { background: var(--surface-3); color: var(--text); }
   .modal-close svg { width: 20px; height: 20px; }
   .modal-body { flex: 1; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+
+  /* ── Edit Video — tabbed body ─────────────────────────────────── */
+  .edit-tabs {
+    display: flex; gap: 4px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    overflow-x: auto;
+  }
+  .edit-tab {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--text-muted); font-weight: 600; font-size: 13px;
+    padding: 12px 14px; display: inline-flex; align-items: center; gap: 6px;
+    border-bottom: 2px solid transparent;
+    transition: color .15s, border-color .15s;
+    white-space: nowrap;
+    font-family: inherit;
+  }
+  .edit-tab:hover { color: var(--text); }
+  .edit-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .edit-tab svg { width: 14px; height: 14px; }
+
+  .edit-tabs-body { display: block !important; padding: 24px 28px !important; }
+  .edit-tab-pane { display: none; }
+  .edit-tab-pane.active { display: block; animation: editTabFade .15s ease; }
+  @keyframes editTabFade {
+    from { opacity: 0; transform: translateY(-3px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .edit-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px 32px;
+    align-items: start;
+  }
+  @media (max-width: 720px) {
+    .edit-grid-2 { grid-template-columns: 1fr; gap: 16px; }
+    .edit-tabs { padding: 0 8px; }
+    .edit-tab { padding: 10px 10px; font-size: 12px; }
+  }
   @media (max-width: 640px) {
     .modal-backdrop { padding: 0; align-items: flex-end; }
     .modal {
@@ -1699,7 +1743,7 @@
 <!-- ── Edit Video Modal ── -->
 {% if request.user.is_authenticated %}
 <div class="modal-backdrop" id="editModal" onclick="closeEditBackdrop(event)">
-  <div class="modal" style="max-width:740px;width:96vw;">
+  <div class="modal" style="max-width:960px;width:96vw;max-height:90vh;display:flex;flex-direction:column;">
     <div class="modal-header">
       <div class="modal-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1713,13 +1757,37 @@
       </button>
     </div>
 
-    <div class="modal-body" style="display:block;padding:20px 24px;">
-      <!-- Two-column grid: left = metadata, right = advanced sections.
-           auto-fit collapses to 1 column on narrow viewports automatically. -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:0 28px;align-items:start;">
+    <!-- ── Tab bar ──────────────────────────────────────────────────────── -->
+    <div class="edit-tabs">
+      <button type="button" class="edit-tab active" data-tab="details" onclick="switchEditTab('details')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Details
+      </button>
+      {% if is_owner %}
+      <button type="button" class="edit-tab" data-tab="streaming" onclick="switchEditTab('streaming')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        Streaming
+      </button>
+      <button type="button" class="edit-tab" data-tab="captions" onclick="switchEditTab('captions')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="10" x2="10" y2="10"/><line x1="12" y1="10" x2="18" y2="10"/><line x1="6" y1="14" x2="12" y2="14"/><line x1="14" y1="14" x2="18" y2="14"/></svg>
+        Captions &amp; Audio
+      </button>
+      <button type="button" class="edit-tab" data-tab="engagement" onclick="switchEditTab('engagement')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Engagement
+      </button>
+      {% endif %}
+    </div>
 
-      <!-- ── LEFT COLUMN ── -->
-      <div style="display:flex;flex-direction:column;gap:16px;border-right:1px solid var(--border);padding-right:24px;">
+    <div class="modal-body edit-tabs-body" style="display:block;padding:24px 28px;overflow-y:auto;flex:1;">
+
+      <!-- ╔══════════════════════════════════════════════════════════════╗ -->
+      <!-- ║  TAB: DETAILS                                                ║ -->
+      <!-- ╚══════════════════════════════════════════════════════════════╝ -->
+      <div class="edit-tab-pane active" data-tab-pane="details">
+        <div class="edit-grid-2">
+          <!-- left col of Details tab — primary metadata -->
+          <div style="display:flex;flex-direction:column;gap:16px;">
 
         <div>
           <label class="w-label">Title</label>
@@ -1728,7 +1796,7 @@
 
         <div>
           <label class="w-label">Description</label>
-          <textarea id="editDesc" class="w-input" rows="4" style="width:100%;margin-top:5px;resize:vertical;">{{ video.description }}</textarea>
+          <textarea id="editDesc" class="w-input" rows="5" style="width:100%;margin-top:5px;resize:vertical;">{{ video.description }}</textarea>
         </div>
 
         <div>
@@ -1749,6 +1817,11 @@
             <button class="btn btn-ghost btn-sm" onclick="createCategory()" type="button" style="white-space:nowrap;">+ Add</button>
           </div>
         </div>
+
+          </div><!-- /Details left col -->
+
+          <!-- right col of Details tab — toggles, thumb, location -->
+          <div style="display:flex;flex-direction:column;gap:14px;">
 
         <div class="wizard-toggle-row" style="margin-top:0;">
           <div class="wizard-toggle-info">
@@ -1797,36 +1870,52 @@
         </div>
         {% endif %}
 
-        {% if is_owner and video.original_file %}
-        <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
-          <label class="w-label">Upscale source file</label>
+          </div><!-- /Details right col -->
+        </div><!-- /edit-grid-2 -->
+      </div><!-- /Details tab pane -->
+
+      {% if is_owner %}
+      <!-- ╔══════════════════════════════════════════════════════════════╗ -->
+      <!-- ║  TAB: STREAMING                                              ║ -->
+      <!-- ╚══════════════════════════════════════════════════════════════╝ -->
+      <div class="edit-tab-pane" data-tab-pane="streaming">
+
+        {% if video.original_file %}
+        <div>
+          <label class="w-label">Quality renditions</label>
           <p style="font-size:11px;color:var(--text-muted);margin:6px 0 10px;line-height:1.5;">
-            Lanczos upscale using a standard preset (long edge), then full stream re-encode.
-            Replaces the uploaded original — existing captions and analysis are not re-run automatically.
+            Add or remove streaming resolutions for this specific video. "Encode now" produces
+            a missing rendition that falls within the source resolution. "Upscale" creates a
+            larger rendition than the source.
           </p>
-          {% if video.status == 'processing' %}
-          <p style="font-size:12px;color:var(--text-muted);margin:0;">Wait until processing finishes before upscaling.</p>
-          {% else %}
-          <select id="upscalePresetSelect" class="w-input" style="width:100%;margin-bottom:8px;">
-            <option value="">Open this dialog to load presets…</option>
-          </select>
-          <button type="button" class="btn btn-ghost btn-sm" id="upscaleVideoBtn" onclick="startVideoUpscale()" disabled>
-            Start upscale
-          </button>
-          <div id="upscaleVideoStatus" style="font-size:12px;color:var(--text-muted);margin-top:8px;min-height:18px;"></div>
-          {% endif %}
+          <div id="qualityList" style="display:flex;flex-direction:column;gap:6px;">
+            <div style="font-size:12px;color:var(--text-muted);">Loading…</div>
+          </div>
+          <div id="qualityStatus" style="font-size:12px;color:var(--text-muted);margin-top:8px;min-height:18px;"></div>
         </div>
         {% endif %}
 
-        <!-- Status message lives at the bottom of the left column -->
-        <div id="editStatus" style="font-size:12px;min-height:18px;margin-top:4px;"></div>
+        <!-- Hidden stubs kept so legacy JS (loadUpscalePresets / startVideoUpscale)
+             continues to find the DOM elements it references. They drive the per-rendition
+             Upscale buttons above. -->
+        <div style="display:none;">
+          <select id="upscalePresetSelect"></select>
+          <button type="button" id="upscaleVideoBtn" onclick="startVideoUpscale()"></button>
+          <div id="upscaleVideoStatus"></div>
+        </div>
 
-      </div><!-- /left column -->
+        <!-- Status message lives at the bottom of Streaming tab -->
+        <div id="editStatus" style="font-size:12px;min-height:18px;margin-top:14px;"></div>
 
-      <!-- ── RIGHT COLUMN ── -->
-      <div style="display:flex;flex-direction:column;gap:0;padding-left:4px;">
+      </div><!-- /Streaming tab pane -->
+      {% endif %}
 
-        {% if is_owner %}
+      {% if is_owner %}
+      <!-- ╔══════════════════════════════════════════════════════════════╗ -->
+      <!-- ║  TAB: ENGAGEMENT                                             ║ -->
+      <!-- ╚══════════════════════════════════════════════════════════════╝ -->
+      <div class="edit-tab-pane" data-tab-pane="engagement">
+
         <!-- ── End Screens section ── -->
         <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -1891,11 +1980,9 @@
             </div>
           </details>
         </div>
-        {% endif %}
 
-        {% if is_owner %}
         <!-- ── Chapters section ── -->
-        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px;">
           <label class="w-label" style="display:block;margin-bottom:10px;">Chapters</label>
 
           <div id="editChaptersList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
@@ -1928,11 +2015,9 @@
             <div id="echStatus" style="font-size:12px;min-height:16px;margin-top:4px;"></div>
           </details>
         </div>
-        {% endif %}
 
-        {% if is_owner %}
         <!-- ── Visual Analysis (object detection) section ── -->
-        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
             <label class="w-label" style="margin:0;">Visual Analysis</label>
             <button class="btn btn-ghost btn-sm" onclick="triggerVisualAnalysis()" id="reanalysisBtn" title="Re-run YOLOv8 object detection">
@@ -1945,10 +2030,19 @@
           </p>
         </div>
 
+      </div><!-- /Engagement tab pane -->
+      {% endif %}
+
+      {% if is_owner %}
+      <!-- ╔══════════════════════════════════════════════════════════════╗ -->
+      <!-- ║  TAB: CAPTIONS & AUDIO                                       ║ -->
+      <!-- ╚══════════════════════════════════════════════════════════════╝ -->
+      <div class="edit-tab-pane" data-tab-pane="captions">
+
         <!-- ── Subtitles / Captions section ── -->
-        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+        <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <label class="w-label" style="margin:0;">Subtitles & Captions</label>
+            <label class="w-label" style="margin:0;">Subtitles &amp; Captions</label>
             <button class="btn btn-ghost btn-sm" onclick="triggerCaptionRegen()" id="regenCcBtn" title="Re-run Whisper auto-transcription">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
               Auto-generate
@@ -2090,11 +2184,9 @@
             {% endif %}
           </div>
         </div>
-        {% endif %}
 
-        {% if is_owner %}
         <!-- ── Location section ── -->
-        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <label class="w-label" style="margin:0;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -2137,12 +2229,11 @@
             {% endif %}
           </div>
         </div>
-        {% endif %}
 
-      </div><!-- /right column -->
+      </div><!-- /Captions tab pane -->
+      {% endif %}
 
-      </div><!-- /two-column grid -->
-    </div>
+    </div><!-- /modal-body / tabs body -->
 
     <div class="modal-footer" style="justify-content:space-between;">
       <button class="btn btn-danger"
@@ -3336,8 +3427,24 @@
 
   function openEditModal() {
     document.getElementById('editModal').classList.add('open');
-    document.getElementById('editStatus').textContent = '';
-    if (typeof loadUpscalePresets === 'function') loadUpscalePresets();
+    const st = document.getElementById('editStatus');
+    if (st) st.textContent = '';
+    // Reset to Details tab on open
+    switchEditTab('details');
+  }
+
+  function switchEditTab(name) {
+    document.querySelectorAll('#editModal .edit-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.tab === name);
+    });
+    document.querySelectorAll('#editModal .edit-tab-pane').forEach(p => {
+      p.classList.toggle('active', p.dataset.tabPane === name);
+    });
+    // Lazy-load tab content on first show
+    if (name === 'streaming') {
+      if (typeof loadUpscalePresets === 'function') loadUpscalePresets();
+      if (typeof loadQualityList === 'function') loadQualityList();
+    }
   }
   function closeEditModal() {
     document.getElementById('editModal').classList.remove('open');
@@ -3422,6 +3529,101 @@
       }, 4000);
     } catch (e) {
       if (st) { st.style.color = '#ef4444'; st.textContent = e.message || String(e); }
+    }
+  }
+
+  /* ── Quality renditions list ─────────────────────────────────────────────── */
+  async function loadQualityList() {
+    const list = document.getElementById('qualityList');
+    if (!list) return;
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Loading…</div>';
+    try {
+      const r = await fetch('{{ SITE_URL }}/api/videos/{{ video.id }}/qualities/', { credentials: 'include' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      renderQualityList(data);
+    } catch (e) {
+      list.innerHTML = `<div style="font-size:12px;color:#ef4444;">Failed to load: ${e.message}</div>`;
+    }
+  }
+
+  function renderQualityList(data) {
+    const list = document.getElementById('qualityList');
+    if (!list) return;
+    const src = data.source_height || 0;
+    const rows = data.qualities || [];
+
+    list.innerHTML = rows.map(r => {
+      const isSrc = (r.height === src);
+      let badge, action;
+      if (r.state === 'available') {
+        badge = '<span style="background:rgba(74,222,128,.15);color:#4ade80;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ Encoded</span>';
+        action = '<span style="color:var(--text-subtle);font-size:11px;">—</span>';
+      } else if (r.state === 'missing') {
+        badge = '<span style="background:rgba(245,158,11,.15);color:#fbbf24;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">Missing</span>';
+        action = `<button class="btn btn-ghost btn-xs" onclick="encodeQuality(${r.height})" id="q-btn-${r.height}">Encode now</button>`;
+      } else {
+        // 'upscale' — above source
+        badge = '<span style="background:rgba(184,154,255,.15);color:#b89aff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">Above source</span>';
+        action = `<button class="btn btn-ghost btn-xs" onclick="upscaleToQuality(${r.height})" id="q-btn-${r.height}">Upscale</button>`;
+      }
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;font-size:12px;">
+          <span style="flex:1;font-weight:600;">${r.label}${isSrc ? ' <span style="color:var(--text-subtle);font-weight:400;">(source)</span>' : ''}</span>
+          ${badge}
+          <div>${action}</div>
+        </div>`;
+    }).join('');
+  }
+
+  async function encodeQuality(height) {
+    const btn = document.getElementById('q-btn-' + height);
+    const st = document.getElementById('qualityStatus');
+    if (btn) { btn.disabled = true; btn.textContent = 'Queuing…'; }
+    if (st) { st.style.color = 'var(--accent)'; st.textContent = `Queuing ${height}p encode…`; }
+    try {
+      const r = await fetch(`{{ SITE_URL }}/api/videos/{{ video.id }}/encode-quality/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ height }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      if (st) {
+        st.style.color = 'var(--accent)';
+        st.innerHTML = `✓ ${height}p queued. <a href="javascript:loadQualityList()" style="color:var(--accent);">Refresh</a> in a minute to see it.`;
+      }
+      if (btn) { btn.textContent = 'Queued'; }
+    } catch (e) {
+      if (st) { st.style.color = '#ef4444'; st.textContent = e.message; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Encode now'; }
+    }
+  }
+
+  async function upscaleToQuality(height) {
+    const btn = document.getElementById('q-btn-' + height);
+    const st = document.getElementById('qualityStatus');
+    if (!confirm(`Upscale this video to ${height}p?\n\nThis re-encodes the entire video at the new resolution using Lanczos scaling. Takes longer than a downscale.`)) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Queuing…'; }
+    if (st) { st.style.color = 'var(--accent)'; st.textContent = `Starting upscale to ${height}p…`; }
+    try {
+      const r = await fetch(`{{ SITE_URL }}/api/videos/{{ video.id }}/upscale/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ preset: height + 'p' }),  // upscale API takes preset id like '720p'
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      if (st) {
+        st.style.color = 'var(--accent)';
+        st.innerHTML = `✓ Upscale queued. Refresh the page in a few minutes.`;
+      }
+      if (btn) { btn.textContent = 'Queued'; }
+    } catch (e) {
+      if (st) { st.style.color = '#ef4444'; st.textContent = e.message; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Upscale'; }
     }
   }
   {% endif %}

@@ -128,16 +128,20 @@ def process_video_task(self, video_id: str, skip_ai: bool = False, **kwargs):
         process_video(video_id)
 
         if not skip_ai:
-            # Trigger caption generation if enabled
-            if getattr(settings, 'AUTO_CAPTION_ON_UPLOAD', True):
+            from tenants.feature_flags import is_feature_enabled
+            # Trigger caption generation if enabled (global + tenant)
+            if is_feature_enabled(tenant_slug, 'auto_captions') and is_feature_enabled(tenant_slug, 'speech_to_text'):
                 generate_captions_task.apply_async(
                     args=[video_id],
                     kwargs=chain_kwargs,
                     queue='captions',
                     countdown=5,
                 )
-            # Trigger frame analysis (object detection) if enabled
-            if getattr(settings, 'FRAME_ANALYSIS_ENABLED', True):
+            # Trigger frame analysis if at least one frame-stage feature is on
+            if (is_feature_enabled(tenant_slug, 'object_detection')
+                    or is_feature_enabled(tenant_slug, 'face_recognition')
+                    or is_feature_enabled(tenant_slug, 'scene_description')
+                    or is_feature_enabled(tenant_slug, 'clip_embeddings')):
                 analyze_video_frames_task.apply_async(
                     args=[video_id],
                     kwargs=chain_kwargs,
@@ -549,9 +553,10 @@ def generate_video_summary_task(self, video_id: str, **kwargs):
     import json as _json
     from django.conf import settings
     from .models import Video, VideoSegment, VideoFrame
+    from tenants.feature_flags import is_feature_enabled
 
-    if not getattr(settings, 'USE_OLLAMA', False):
-        logger.info(f'[summary] USE_OLLAMA=False — skipping summary for {video_id}')
+    if not is_feature_enabled(_tenant_slug, 'video_summary'):
+        logger.info(f'[summary] video_summary disabled (USE_OLLAMA or tenant flag) — skipping {video_id}')
         return
 
     try:
@@ -785,6 +790,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
     import numpy as np
     import cv2
     from .models import Video, VideoFrame, DetectedFace, FaceIdentity
+    from tenants.feature_flags import is_feature_enabled
 
     if not getattr(settings, 'FRAME_ANALYSIS_ENABLED', True):
         logger.info(f'analyze_video_frames_task: disabled, skipping {video_id}')
@@ -807,7 +813,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
 
     interval        = int(getattr(settings, 'FRAME_INTERVAL_SECONDS', 5))
     yolo_model_name = getattr(settings, 'YOLO_MODEL', 'yolov8n')
-    face_enabled    = getattr(settings, 'FACE_RECOGNITION_ENABLED', True)
+    face_enabled    = is_feature_enabled(_tenant_slug, 'face_recognition')
 
     scene_change_enabled   = getattr(settings, 'SCENE_CHANGE_ENABLED',   True)
     scene_change_threshold = getattr(settings, 'SCENE_CHANGE_THRESHOLD', 0.35)
@@ -914,7 +920,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
         yolo = YOLO(f'{yolo_model_name}.pt')
 
         # Scene captioning — model selected via SCENE_CAPTION_MODEL setting
-        scene_enabled  = getattr(settings, 'SCENE_DESCRIPTION_ENABLED', True)
+        scene_enabled  = is_feature_enabled(_tenant_slug, 'scene_description')
         caption_model  = getattr(settings, 'SCENE_CAPTION_MODEL', 'blip').lower()
         blip_model = blip_processor = None
         florence_model = florence_processor = None
@@ -977,7 +983,7 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
                 face_app = None
 
         # CLIP visual embedding
-        clip_enabled = getattr(settings, 'CLIP_ENABLED', True)
+        clip_enabled = is_feature_enabled(_tenant_slug, 'clip_embeddings')
         clip_model = clip_processor = None
         if clip_enabled:
             try:
@@ -1600,9 +1606,10 @@ def translate_subtitles_task(self, video_id: str, target_languages: list,
 
     from .models import Video, Subtitle
     from django.core.files.base import ContentFile
+    from tenants.feature_flags import is_feature_enabled
 
-    if not getattr(settings, 'TRANSLATION_ENABLED', True):
-        logger.info('[translation] disabled via settings, skipping')
+    if not is_feature_enabled(_tenant_slug, 'translation'):
+        logger.info('[translation] disabled via settings or tenant policy, skipping')
         return
 
     try:
@@ -1997,11 +2004,12 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
         logger.warning(f'analyze_photo_task: file missing for {photo_id}')
         return
 
+    from tenants.feature_flags import is_feature_enabled
     yolo_model_name = getattr(settings, 'YOLO_MODEL', 'yolov8n')
-    scene_enabled   = getattr(settings, 'SCENE_DESCRIPTION_ENABLED', True)
+    scene_enabled   = is_feature_enabled(_tenant_slug, 'scene_description')
     caption_model   = getattr(settings, 'SCENE_CAPTION_MODEL', 'blip').lower()
-    clip_enabled    = getattr(settings, 'CLIP_ENABLED', True)
-    face_enabled    = getattr(settings, 'FACE_RECOGNITION_ENABLED', True)
+    clip_enabled    = is_feature_enabled(_tenant_slug, 'clip_embeddings')
+    face_enabled    = is_feature_enabled(_tenant_slug, 'face_recognition')
 
     try:
         # ── Load models ───────────────────────────────────────────────────────
@@ -2580,6 +2588,11 @@ def run_diarization_task(self, video_id: str, **kwargs):
 
     from pathlib import Path
     from .models import Video, VideoSegment
+    from tenants.feature_flags import is_feature_enabled
+
+    if not is_feature_enabled(_tenant_slug, 'diarization'):
+        logger.info(f'run_diarization_task: disabled by tenant policy, skipping {video_id}')
+        return {'ok': False, 'skipped': 'feature_disabled'}
 
     hf_token = getattr(settings, 'HF_TOKEN', '')
     if not hf_token:
@@ -3176,10 +3189,11 @@ def detect_audio_events_task(self, video_id: str, **kwargs):
 
     import tempfile
     from .models import Video, AudioEvent
+    from tenants.feature_flags import is_feature_enabled
 
-    if not getattr(settings, 'AUDIO_EVENTS_ENABLED', True):
-        logger.info(f'detect_audio_events_task: AUDIO_EVENTS_ENABLED=False; skipping {video_id}')
-        return {'ok': False, 'skipped': 'disabled'}
+    if not is_feature_enabled(_tenant_slug, 'audio_events'):
+        logger.info(f'detect_audio_events_task: disabled by tenant or global flag; skipping {video_id}')
+        return {'ok': False, 'skipped': 'feature_disabled'}
 
     try:
         video = Video.objects.get(id=video_id)
@@ -3542,3 +3556,321 @@ def process_livestream_recording(self, live_stream_id, **kwargs):
         # AI (Whisper, YOLO, CLIP, faces, speakers) is skipped — editor triggers manually.
         logger.info(f'[livestream] Auto-processing OFF — queuing HLS+thumbnail only for Video id={video.id}')
         process_video_task.apply_async(args=[str(video.id)], kwargs={**_chain_kwargs, 'skip_ai': True}, queue='processing')
+
+
+# ── GDPR per-identity data export ─────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.build_face_identity_export_task',
+    queue='default',
+    max_retries=1,
+)
+def build_face_identity_export_task(self, identity_id: int, export_id: str, opts: dict, **kwargs):
+    """
+    Build a ZIP archive containing biometric and contextual data about a single
+    FaceIdentity, per the user's checkbox selections.
+
+    Layout inside the zip:
+        identity.json          — name, role, related videos/segments, etc.
+        embeddings.json        — face embeddings JSON (if include_embeddings)
+        crops/                 — cropped face JPEGs   (if include_crops)
+        videos/<uuid>/         — original media files (if include_videos)
+        activity_log.json      — biometric audit trail (if include_activity)
+        README.txt             — human explanation
+    """
+    import json
+    import shutil
+    import zipfile
+    from datetime import datetime
+    from pathlib import Path
+
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
+    from .models import FaceIdentity, DetectedFace, Video, ActivityLog
+
+    media_root = Path(settings.MEDIA_ROOT)
+    if _tenant_slug:
+        export_dir = media_root / f'tenants/{_tenant_slug}/exports'
+    else:
+        export_dir = media_root / 'exports'
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path    = export_dir / f'{export_id}.zip'
+    status_path = export_dir / f'{export_id}.status'
+
+    def _set_status(s):
+        status_path.write_text(s)
+
+    _set_status('running')
+
+    try:
+        try:
+            identity = FaceIdentity.objects.get(id=identity_id)
+        except FaceIdentity.DoesNotExist:
+            _set_status('error:identity-not-found')
+            return {'ok': False, 'error': 'identity not found'}
+
+        faces = DetectedFace.objects.filter(identity=identity).select_related('video', 'photo')
+
+        # ── Build identity.json (always included) ─────────────────────────────
+        videos_seen = {}
+        photos_seen = {}
+        timestamps = []
+        for f in faces:
+            if f.video_id:
+                vinfo = videos_seen.setdefault(str(f.video_id), {
+                    'id':       str(f.video_id),
+                    'title':    f.video.title if f.video else '',
+                    'duration': getattr(f.video, 'duration', None),
+                    'face_appearances': [],
+                })
+                vinfo['face_appearances'].append({
+                    'timestamp_sec': f.timestamp,
+                    'confidence':    f.confidence,
+                    'status':        f.status,
+                })
+                timestamps.append(f.timestamp)
+            elif f.photo_id:
+                photos_seen.setdefault(str(f.photo_id), {
+                    'id':         str(f.photo_id),
+                    'title':      f.photo.title if f.photo else '',
+                    'confidence': f.confidence,
+                    'status':     f.status,
+                })
+
+        identity_data = {
+            'export_id':      export_id,
+            'export_time':    datetime.utcnow().isoformat() + 'Z',
+            'identity_id':    identity.id,
+            'name':           identity.name,
+            'is_auto_named':  identity.is_auto_named,
+            'thumbnail_path': identity.thumbnail or '',
+            'face_appearances_count': len(faces),
+            'unique_videos':  len(videos_seen),
+            'unique_photos':  len(photos_seen),
+            'videos':         list(videos_seen.values()),
+            'photos':         list(photos_seen.values()),
+            'nicknames':      list(identity.nicknames.values_list('nickname', flat=True)) if hasattr(identity, 'nicknames') else [],
+        }
+
+        # ── Build the ZIP ─────────────────────────────────────────────────────
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # identity.json
+            zf.writestr('identity.json', json.dumps(identity_data, indent=2, default=str))
+
+            # README
+            zf.writestr('README.txt', (
+                f"ClipLens — Biometric Data Export\n"
+                f"=================================\n\n"
+                f"Subject: {identity.name}\n"
+                f"Export ID: {export_id}\n"
+                f"Generated: {datetime.utcnow().isoformat()}Z\n\n"
+                f"Contents:\n"
+                f"  identity.json     — metadata (always included)\n"
+                f"  embeddings.json   — face embeddings (if requested)\n"
+                f"  crops/            — face crop images (if requested)\n"
+                f"  videos/           — original media files where this person appears (if requested)\n"
+                f"  activity_log.json — biometric access audit trail (if requested)\n\n"
+                f"Generated in response to a GDPR data subject access request or\n"
+                f"voluntary tenant export. Embedding vectors are 512-dimensional\n"
+                f"InsightFace ArcFace representations of the subject's face.\n"
+            ))
+
+            # Embeddings JSON
+            if opts.get('include_embeddings'):
+                emb_data = []
+                for f in faces:
+                    try:
+                        emb = json.loads(f.embedding) if f.embedding else None
+                    except Exception:
+                        emb = None
+                    emb_data.append({
+                        'detected_face_id': f.id,
+                        'video_id':         str(f.video_id) if f.video_id else None,
+                        'photo_id':         str(f.photo_id) if f.photo_id else None,
+                        'timestamp_sec':    f.timestamp,
+                        'embedding':        emb,
+                    })
+                zf.writestr('embeddings.json', json.dumps(emb_data, indent=2, default=str))
+
+            # Crop files
+            if opts.get('include_crops'):
+                crops_added = 0
+                for f in faces:
+                    if not f.crop_path:
+                        continue
+                    src = media_root / f.crop_path
+                    if src.exists():
+                        zf.write(src, f'crops/{Path(f.crop_path).name}')
+                        crops_added += 1
+                # Identity thumbnail too
+                if identity.thumbnail:
+                    thumb_src = media_root / identity.thumbnail
+                    if thumb_src.exists():
+                        zf.write(thumb_src, f'crops/_identity_thumbnail{Path(identity.thumbnail).suffix}')
+
+            # Original videos
+            if opts.get('include_videos'):
+                for vid_data in videos_seen.values():
+                    try:
+                        v = Video.objects.get(id=vid_data['id'])
+                        if v.original_file and Path(v.original_file.path).exists():
+                            src = Path(v.original_file.path)
+                            zf.write(src, f'videos/{v.id}/{src.name}')
+                    except Exception as exc:
+                        logger.warning(f'export: skipping video {vid_data["id"]}: {exc}')
+
+            # Activity log
+            if opts.get('include_activity'):
+                logs = ActivityLog.objects.filter(
+                    target_type='face_identity', target_id=str(identity_id)
+                ).order_by('-timestamp')[:500]
+                log_data = [
+                    {
+                        'timestamp':  l.timestamp.isoformat(),
+                        'actor':      l.actor_username,
+                        'action':     l.action,
+                        'verb':       l.verb,
+                        'metadata':   l.metadata or {},
+                        'ip_address': l.ip_address or '',
+                    }
+                    for l in logs
+                ]
+                zf.writestr('activity_log.json', json.dumps(log_data, indent=2, default=str))
+
+        _set_status('done')
+        logger.info(f'face export {export_id} complete — {zip_path.stat().st_size} bytes')
+
+        # ── Email link if SMTP configured ─────────────────────────────────────
+        requester_email = kwargs.get('requester_email', '')
+        if requester_email and os.getenv('EMAIL_HOST', ''):
+            try:
+                from django.core.mail import send_mail
+                from django.conf import settings as dj_settings
+                rel = zip_path.relative_to(media_root)
+                base_url = getattr(dj_settings, 'SITE_URL', 'http://localhost:8000').rstrip('/')
+                send_mail(
+                    subject=f'[ClipLens] Your biometric data export for "{identity.name}" is ready',
+                    message=(
+                        f'Hi,\n\nYour data export for "{identity.name}" has finished.\n\n'
+                        f'Download: {base_url}/media/{rel}\n\n'
+                        f'This link expires in 7 days. After that the file is automatically deleted.\n\n'
+                        f'— ClipLens'
+                    ),
+                    from_email=getattr(dj_settings, 'DEFAULT_FROM_EMAIL', 'noreply@cliplens.com'),
+                    recipient_list=[requester_email],
+                    fail_silently=True,
+                )
+            except Exception as exc:
+                logger.warning(f'export email failed: {exc}')
+
+        return {'ok': True, 'size': zip_path.stat().st_size}
+    except Exception as exc:
+        logger.exception('export task crashed')
+        _set_status(f'error:{exc}')
+        return {'ok': False, 'error': str(exc)}
+
+
+# ── On-demand single-quality HLS encoding ─────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.encode_single_quality_task',
+    queue='processing',
+    max_retries=1,
+    default_retry_delay=60,
+)
+def encode_single_quality_task(self, video_id: str, target_height: int, **kwargs):
+    """
+    Encode ONE additional HLS rendition for an existing video.
+    Used when an org admin wants a resolution that wasn't included at upload
+    time (because the tenant had it disabled in HLS settings).
+
+    Reuses the same _encode_rendition + _append_quality_to_master helpers that
+    the upscale path uses, so master.m3u8 stays consistent.
+    """
+    _tenant_slug = kwargs.get('tenant_slug', '')
+    if _tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(_tenant_slug)
+        except Exception:
+            pass
+
+    from .models import Video
+    from .services import _FULL_LADDER, _encode_rendition, get_video_metadata
+    from .upscale import _append_quality_to_master
+    from pathlib import Path
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        return {'ok': False, 'error': 'video not found'}
+
+    if not video.original_file or not video.original_file.name:
+        return {'ok': False, 'error': 'no source file'}
+
+    source_path = Path(video.original_file.path)
+    if not source_path.exists():
+        return {'ok': False, 'error': f'source missing: {source_path}'}
+
+    meta = get_video_metadata(source_path)
+    src_h = int(meta.get('height') or 0)
+    fps   = float(meta.get('fps') or 25.0)
+    duration = float(meta.get('duration') or 0.0)
+
+    # Find the ladder row for the requested height
+    row = next((r for r in _FULL_LADDER if r[1] == int(target_height)), None)
+    if not row:
+        return {'ok': False, 'error': f'unknown target height: {target_height}'}
+
+    label, height, v_kbps, a_kbps = row
+
+    # Don't try to "downscale" to a height above source — use the upscale flow instead
+    if height > src_h:
+        return {'ok': False, 'error': f'{label} > source ({src_h}p); use upscale_video_task'}
+
+    # Skip if this quality already exists in available_qualities
+    existing = [q.strip() for q in (video.available_qualities or '').split(',') if q.strip()]
+    if label in existing:
+        return {'ok': True, 'skipped': 'already_encoded', 'quality': label}
+
+    logger.info(f'[encode_single] Encoding {label} for video {video_id} (source {src_h}p)')
+    ok = _encode_rendition(
+        str(video_id), str(source_path),
+        label, height, v_kbps, a_kbps,
+        fps=fps, source_duration=duration,
+    )
+    if not ok:
+        return {'ok': False, 'error': f'_encode_rendition returned False for {label}'}
+
+    # Append to the master playlist
+    master_path = _media_root() / 'hls' / str(video_id) / 'master.m3u8'
+    if not master_path.exists():
+        return {'ok': False, 'error': 'master.m3u8 not found — was this video encoded multi-quality?'}
+
+    # Compute width from ladder for STREAM-INF
+    aspect = 16/9 if src_h else 1.0
+    width = int(round(height * aspect / 2)) * 2  # even number
+    try:
+        _append_quality_to_master(master_path, label, width, height)
+    except Exception as exc:
+        logger.warning(f'[encode_single] could not append to master.m3u8: {exc}')
+
+    # Update Video.available_qualities
+    if label not in existing:
+        existing.append(label)
+        # Sort by height descending so list looks tidy
+        height_lookup = {r[0]: r[1] for r in _FULL_LADDER}
+        existing.sort(key=lambda l: -height_lookup.get(l, 0))
+        Video.objects.filter(id=video_id).update(available_qualities=','.join(existing))
+
+    logger.info(f'[encode_single] {label} added to {video_id}; qualities now: {existing}')
+    return {'ok': True, 'quality': label, 'all_qualities': existing}

@@ -423,16 +423,29 @@ def landing_page(request):
     """
     Public marketing site shown at the BARE root domain (cliplens.local / cliplens.com).
     Shows product overview, plans, and a contact form.
-    Logged-in users get redirected to their app, tenant subdomains get the app directly.
+
+    Special-case routing per host:
+      • <slug>.cliplens.*    (tenant set by middleware) → go to the app
+      • admin.cliplens.*     → go straight to the control plane (or its login)
+      • bare cliplens.*      → marketing landing
     """
-    # If a tenant subdomain set this request, just send them to the app
+    # 1. Tenant subdomain → send them to the app
     if getattr(request, 'tenant', None) is not None:
         return redirect('/player/')
 
-    # Logged in to the bare domain (rare — e.g. platform owner) → control plane
+    # 2. admin subdomain → control plane (don't show marketing here)
+    host = request.get_host().lower().split(':')[0]
+    is_admin_subdomain = host.startswith('admin.')
+    if is_admin_subdomain:
+        if request.user.is_authenticated:
+            return redirect('/platform/')
+        return redirect('/login/?next=/platform/')
+
+    # 3. Logged in to the bare root → bump them to the control plane too
     if request.user.is_authenticated:
         return redirect('/platform/')
 
+    # 4. Unauthenticated visitor on bare root → marketing landing
     plans = list(Plan.objects.using('control').all().order_by('price_usd'))
     return render(request, 'tenants/landing.html', {
         'plans': plans,
@@ -579,6 +592,120 @@ def system_health(request):
         'check_groups': groups,
         'total_checks': len(manifest),
     })
+
+
+@platform_owner_required
+def system_databases(request):
+    """
+    Platform owner view of every database the system uses:
+      - default (legacy / Django bootstrap)
+      - control (platform metadata)
+      - freestream_<slug> per tenant
+
+    Shows host / port / name / user with size + reachability.
+    Passwords are masked by default; revealing them is done via the
+    POST endpoint below and is logged.
+    """
+    from django.conf import settings as dj_settings
+    from django.db import connections
+    from .models import Tenant
+
+    tenants_by_dbname = {
+        t.db_name: t
+        for t in Tenant.objects.using('control').all()
+    }
+
+    rows = []
+    for alias, cfg in dj_settings.DATABASES.items():
+        # Classify the DB for the UI
+        if alias == 'default':
+            kind, label = 'legacy', 'Default (legacy)'
+        elif alias == 'control':
+            kind, label = 'control', 'Control plane'
+        elif alias.startswith('freestream_'):
+            t = tenants_by_dbname.get(cfg.get('NAME', ''))
+            kind = 'tenant'
+            label = f'Tenant: {t.name}' if t else f'Tenant DB (orphaned)'
+        else:
+            kind, label = 'other', alias
+
+        # Probe size + reachability — bounded by Postgres query timeout
+        size_bytes, reachable, version, err = None, False, '', ''
+        try:
+            with connections[alias].cursor() as cur:
+                cur.execute("SELECT pg_database_size(current_database()), version()")
+                size_bytes, version = cur.fetchone()
+                reachable = True
+        except Exception as exc:
+            err = str(exc)[:120]
+
+        rows.append({
+            'alias':       alias,
+            'kind':        kind,
+            'label':       label,
+            'tenant':      tenants_by_dbname.get(cfg.get('NAME', '')),
+            'engine':      cfg.get('ENGINE', '').split('.')[-1],
+            'name':        cfg.get('NAME', ''),
+            'host':        cfg.get('HOST', '') or 'localhost',
+            'port':        cfg.get('PORT', '') or '5432',
+            'user':        cfg.get('USER', ''),
+            'has_password': bool(cfg.get('PASSWORD', '')),
+            'reachable':   reachable,
+            'size_bytes':  size_bytes,
+            'size_display': _fmt_db_size(size_bytes),
+            'version':     ' '.join((version or '').split()[:2]) if version else '',
+            'error':       err,
+        })
+
+    # Sort: control, default, then tenant DBs alphabetically
+    sort_order = {'control': 0, 'legacy': 1, 'tenant': 2, 'other': 3}
+    rows.sort(key=lambda r: (sort_order.get(r['kind'], 9), r['alias']))
+
+    total_size = sum(r['size_bytes'] or 0 for r in rows)
+
+    return render(request, 'tenants/system_databases.html', {
+        'rows':       rows,
+        'total_size': _fmt_db_size(total_size),
+        'count':      len(rows),
+    })
+
+
+@platform_owner_required
+@require_POST
+def system_database_reveal(request, alias: str):
+    """
+    POST-only endpoint that returns the password for a single database alias.
+    Logs every successful reveal so there's an audit trail of who looked at what.
+    """
+    from django.conf import settings as dj_settings
+    cfg = dj_settings.DATABASES.get(alias)
+    if not cfg:
+        return JsonResponse({'error': f'Unknown alias: {alias}'}, status=404)
+
+    password = cfg.get('PASSWORD', '') or ''
+    logger.warning(
+        "DB CREDENTIAL REVEALED: alias=%s user=%s by=%s (%s)",
+        alias, cfg.get('USER', '?'), request.user.username,
+        request.META.get('REMOTE_ADDR', '?'),
+    )
+    return JsonResponse({
+        'alias':    alias,
+        'password': password,
+        'user':     cfg.get('USER', ''),
+        'host':     cfg.get('HOST', '') or 'localhost',
+        'port':     cfg.get('PORT', '') or '5432',
+        'name':     cfg.get('NAME', ''),
+    })
+
+
+def _fmt_db_size(n):
+    if n is None:
+        return '—'
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if n < 1024:
+            return f'{n:.1f} {unit}' if unit != 'B' else f'{int(n)} B'
+        n /= 1024
+    return f'{n:.1f} PB'
 
 
 @platform_owner_required

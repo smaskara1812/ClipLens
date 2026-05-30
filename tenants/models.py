@@ -77,8 +77,59 @@ class Tenant(models.Model):
     plan_status = models.CharField(max_length=20, choices=PLAN_STATUS_CHOICES,
                                    default=PLAN_STATUS_NONE)
 
+    # ── AI feature flags (per-tenant override of global env defaults) ────────
+    # All default ON — existing tenants get full features. Admin can disable
+    # any individual feature; disabled features skip processing on new uploads
+    # but leave existing data intact (can be re-enabled later to resume).
+    feature_face_recognition  = models.BooleanField(default=True,
+        help_text="Run InsightFace on uploaded media. Biometric — GDPR-sensitive.")
+    feature_speech_to_text    = models.BooleanField(default=True,
+        help_text="Whisper transcription for video audio tracks.")
+    feature_translation       = models.BooleanField(default=True,
+        help_text="NLLB-200 translation of subtitles into other languages.")
+    feature_diarization       = models.BooleanField(default=True,
+        help_text="pyannote speaker diarization. Biometric — GDPR-sensitive.")
+    feature_audio_events      = models.BooleanField(default=True,
+        help_text="PANNs audio event detection (applause, music, silence).")
+    feature_scene_description = models.BooleanField(default=True,
+        help_text="BLIP/Florence-2 natural language frame descriptions.")
+    feature_object_detection  = models.BooleanField(default=True,
+        help_text="YOLO object labels on frames.")
+    feature_clip_embeddings   = models.BooleanField(default=True,
+        help_text="CLIP semantic search embeddings on frames + photos.")
+    feature_video_summary     = models.BooleanField(default=True,
+        help_text="Ollama-based AI video summary (no-op if USE_OLLAMA=false).")
+    feature_auto_captions     = models.BooleanField(default=True,
+        help_text="Auto-trigger caption generation after upload.")
+
+    # ── HLS encoding policy (per-tenant override of global HLS_QUALITIES) ────
+    # Stored as comma-separated heights ("1080,720,480"). Empty = inherit global.
+    # Renditions ABOVE the source video height are always skipped at encode time
+    # — only resolutions <= source actually get produced. Admin can later
+    # manually upscale to a larger resolution via the upscale workflow.
+    hls_enabled_qualities = models.CharField(
+        max_length=120, blank=True, default='',
+        help_text="Comma-separated list of HLS heights to encode for new uploads, "
+                  "e.g. '1080,720,480'. Empty = use global HLS_QUALITIES setting.")
+    hls_multi_quality = models.BooleanField(
+        default=True,
+        help_text="If False, encode only a single rendition (no adaptive streaming). "
+                  "Saves AI minutes and disk space.")
+
     class Meta:
         app_label = 'tenants'
+
+    def get_enabled_hls_heights(self) -> set:
+        """Parse hls_enabled_qualities → set of int heights. Empty → None (inherit)."""
+        s = (self.hls_enabled_qualities or '').strip()
+        if not s:
+            return set()
+        out = set()
+        for part in s.split(','):
+            part = part.strip()
+            if part.isdigit():
+                out.add(int(part))
+        return out
 
     def __str__(self):
         return f"{self.name} ({self.slug})"

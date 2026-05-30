@@ -45,13 +45,38 @@
            id="invite-link" onclick="this.select()"
            style="flex:1; background:#0d1117; border:1px solid #30363d; color:#58a6ff;
                   padding:8px 10px; border-radius:4px; font-family:monospace; font-size:12px;">
-    <button type="button" class="btn btn-secondary btn-sm" onclick="
-      navigator.clipboard.writeText(document.getElementById('invite-link').value);
-      this.textContent='✓ Copied';
-      setTimeout(()=>this.textContent='Copy link', 2000);
-    ">Copy link</button>
+    <button type="button" class="btn btn-secondary btn-sm" id="copy-invite-btn"
+            onclick="copyInviteLink(this)">Copy link</button>
   </div>
 </div>
+
+<script>
+// Clipboard helper that works in both HTTPS and HTTP contexts
+function copyInviteLink(btn) {
+  const text = document.getElementById('invite-link').value;
+  const doFallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    return ok;
+  };
+
+  const show = (ok) => {
+    btn.textContent = ok ? '✓ Copied' : '✗ Copy failed';
+    setTimeout(() => { btn.textContent = 'Copy link'; }, 2000);
+  };
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => show(true)).catch(() => show(doFallback()));
+  } else {
+    show(doFallback());
+  }
+}
+</script>
 {% endif %}
 
 <!-- Summary stat cards -->

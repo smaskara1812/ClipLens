@@ -2163,6 +2163,237 @@ def org_usage_page(request):
 # ── Top-up purchase (Stripe later — mock checkout for now) ───────────────────
 
 @superuser_required
+def org_ai_features(request):
+    """
+    Org admin page to enable/disable each AI feature in the pipeline.
+    Disabling only affects FUTURE uploads — existing data stays intact.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_ai_features.html', {'no_tenant': True})
+
+    from tenants.feature_flags import FEATURES
+
+    # Map field name → human description for the form
+    FEATURE_INFO = [
+        # (field_name, ui_label, description, biometric_warning)
+        ('feature_face_recognition',  'Face recognition',
+         'Detect faces in uploaded media, generate biometric embeddings, cluster recurring people.', True),
+        ('feature_diarization',       'Speaker diarization',
+         'Identify who is speaking when. Creates voice biometric embeddings.', True),
+        ('feature_speech_to_text',    'Speech transcription',
+         'Whisper transcribes audio to text. Required for translation and speech search.', False),
+        ('feature_auto_captions',     'Auto-caption on upload',
+         'Trigger transcription automatically after every upload (vs. on-demand only).', False),
+        ('feature_translation',       'Subtitle translation',
+         'NLLB-200 translates captions into other languages on request.', False),
+        ('feature_audio_events',      'Audio event detection',
+         'PANNs detects applause, music, silence, speech, crowd sounds.', False),
+        ('feature_object_detection',  'Object detection',
+         'YOLO labels objects in frames (person, car, dog, etc.).', False),
+        ('feature_scene_description', 'Scene description',
+         'BLIP/Florence-2 generates natural-language descriptions of each frame.', False),
+        ('feature_clip_embeddings',   'Semantic search',
+         'CLIP embeddings power "find frames matching this prompt" search.', False),
+        ('feature_video_summary',     'AI video summary',
+         'Ollama summarises long videos from transcript + scenes. No-op if Ollama is offline.', False),
+    ]
+
+    if request.method == 'POST':
+        # Each checkbox sends 'on' when ticked, missing when unticked
+        for field, _label, _desc, _bio in FEATURE_INFO:
+            setattr(tenant, field, bool(request.POST.get(field)))
+        tenant.save(using='control', update_fields=[f for f, *_ in FEATURE_INFO])
+
+        # Audit log entry — feature flag changes are platform-significant
+        try:
+            from .views import log_activity
+            log_activity(
+                request,
+                'config_change',
+                verb='updated AI feature toggles',
+                metadata={f: getattr(tenant, f) for f, *_ in FEATURE_INFO},
+            )
+        except Exception:
+            pass
+
+        messages.success(request, 'AI feature settings saved. Changes apply to new uploads going forward.')
+        return redirect('org_ai_features')
+
+    features = [
+        {
+            'field':      field,
+            'label':      label,
+            'description': desc,
+            'biometric':  bio,
+            'enabled':    getattr(tenant, field),
+        }
+        for field, label, desc, bio in FEATURE_INFO
+    ]
+    return render(request, 'videos/org_ai_features.html', {
+        'tenant':   tenant,
+        'features': features,
+    })
+
+
+@superuser_required
+def org_encoding_settings(request):
+    """
+    Org admin page to restrict which HLS resolutions get encoded on new uploads.
+    Existing renditions on already-uploaded videos are preserved.
+    Admin can manually trigger missing resolutions per-video from the video edit modal.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_encoding.html', {'no_tenant': True})
+
+    # The canonical ladder — same as services._FULL_LADDER but exposed here for the UI
+    LADDER = [
+        ('2160p (4K)',         2160),
+        ('1440p (2K)',         1440),
+        ('1080p (Full HD)',    1080),
+        ('720p (HD)',          720),
+        ('480p (SD)',          480),
+        ('360p (low SD)',      360),
+        ('240p (very low)',    240),
+        ('144p (lowest)',      144),
+    ]
+
+    global_default = set(int(h) for h in getattr(settings, 'HLS_QUALITIES', [1080, 720, 480, 360]))
+    current = tenant.get_enabled_hls_heights()
+    using_global = (len(current) == 0)
+    effective = current if current else global_default
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'save')
+
+        if action == 'reset_to_global':
+            tenant.hls_enabled_qualities = ''
+            tenant.hls_multi_quality = True
+            tenant.save(using='control', update_fields=['hls_enabled_qualities', 'hls_multi_quality'])
+            messages.success(request, 'Reverted to global default qualities.')
+            return redirect('org_encoding_settings')
+
+        selected = []
+        for _label, h in LADDER:
+            if request.POST.get(f'q_{h}'):
+                selected.append(str(h))
+        if not selected:
+            messages.error(request, 'You must select at least one resolution.')
+            return redirect('org_encoding_settings')
+
+        tenant.hls_enabled_qualities = ','.join(selected)
+        tenant.hls_multi_quality = bool(request.POST.get('multi_quality'))
+        tenant.save(using='control', update_fields=['hls_enabled_qualities', 'hls_multi_quality'])
+
+        try:
+            log_activity(
+                request, 'config_change',
+                verb='updated HLS encoding settings',
+                metadata={
+                    'enabled_qualities': sorted([int(s) for s in selected], reverse=True),
+                    'multi_quality':     tenant.hls_multi_quality,
+                },
+            )
+        except Exception:
+            pass
+
+        messages.success(request, 'HLS encoding settings saved. Applies to new uploads.')
+        return redirect('org_encoding_settings')
+
+    rows = [
+        {'height': h, 'label': label, 'checked': (h in effective)}
+        for label, h in LADDER
+    ]
+    return render(request, 'videos/org_encoding.html', {
+        'tenant':           tenant,
+        'rows':             rows,
+        'multi_quality':    tenant.hls_multi_quality,
+        'using_global':     using_global,
+        'global_defaults':  sorted(global_default, reverse=True),
+    })
+
+
+@api_view(['POST'])
+@api_login_required
+def video_encode_quality(request, video_id):
+    """
+    POST /api/videos/<id>/encode-quality/
+    Body: {"height": 720}
+
+    Queues encode_single_quality_task to add a missing rendition to an existing
+    video. Used from the video edit modal to fill in resolutions that were
+    skipped at upload time (because the tenant had them disabled).
+    """
+    video = get_object_or_404(Video, id=video_id)
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=403)
+
+    try:
+        height = int(request.data.get('height', 0))
+    except (TypeError, ValueError):
+        return Response({'error': 'Invalid height'}, status=400)
+    if height <= 0:
+        return Response({'error': 'Invalid height'}, status=400)
+
+    tenant_slug = _tenant_slug(request)
+    _tasks.encode_single_quality_task.apply_async(
+        args=[str(video_id), height],
+        kwargs={'tenant_slug': tenant_slug} if tenant_slug else {},
+        queue='processing',
+    )
+    log_activity(
+        request, 'encode_quality',
+        target=video,
+        verb=f'queued encoding for {height}p',
+        metadata={'height': height},
+    )
+    return Response({'ok': True, 'queued_height': height})
+
+
+@api_view(['GET'])
+@api_login_required
+def video_qualities_status(request, video_id):
+    """
+    GET /api/videos/<id>/qualities/
+    Returns the list of all possible resolutions, which ones are encoded,
+    which are missing (below source), and which would need upscaling.
+    Powers the resolution-management UI in the video edit modal.
+    """
+    video = get_object_or_404(Video, id=video_id)
+    from .services import _FULL_LADDER, get_video_metadata
+    from pathlib import Path
+
+    src_h = 0
+    if video.original_file and video.original_file.name:
+        try:
+            src_path = Path(video.original_file.path)
+            if src_path.exists():
+                src_h = int(get_video_metadata(src_path).get('height') or 0)
+        except Exception:
+            pass
+
+    existing = set(q.strip() for q in (video.available_qualities or '').split(',') if q.strip())
+    rows = []
+    for label, height, _v, _a in _FULL_LADDER:
+        if height in existing or label in existing:
+            state = 'available'
+        elif src_h and height <= src_h:
+            state = 'missing'      # can be added by encode_single_quality
+        else:
+            state = 'upscale'      # above source — needs upscale_video_task
+        rows.append({
+            'label':  label,
+            'height': height,
+            'state':  state,
+        })
+    return Response({
+        'source_height': src_h,
+        'qualities':     rows,
+    })
+
+
+@superuser_required
 def org_topup_page(request):
     """Browse + purchase top-ups (storage addons, AI credit packs)."""
     tenant = getattr(request, 'tenant', None)
@@ -5928,10 +6159,23 @@ def face_identity_page(request, identity_id):
     """
     GET /faces/<id>/?page=N
     Shows face crops for this identity grouped by video, paginated (5 videos/page).
+    Logs a biometric-view audit entry on each page load.
     """
     from django.core.paginator import Paginator
 
     identity = get_object_or_404(FaceIdentity, id=identity_id)
+
+    # Audit log — viewing a face identity is biometric access.
+    # Only one entry per page load (paginated views all count separately).
+    try:
+        log_activity(
+            request, 'biometric_view',
+            target_type='face_identity', target_id=str(identity_id),
+            target_label=identity.name,
+            verb=f'viewed biometric data for "{identity.name}"',
+        )
+    except Exception:
+        pass
 
     # Editors/admins can see all face identities globally — identities are shared across channels.
     # Viewers are restricted to identities that appear in content they can access.
@@ -6366,8 +6610,222 @@ def face_identity_list(request):
     ])
 
 
-@api_view(['DELETE'])
+@api_view(['POST'])
 @api_login_required
+def face_identity_forget(request, identity_id):
+    """
+    POST /api/faces/<id>/forget/
+    GDPR "right to be forgotten" — irreversibly wipes ALL biometric data
+    for this person across the tenant:
+      • DetectedFace rows (embeddings)
+      • Crop image files on disk
+      • Identity thumbnail file
+      • SpeakerIdentity.face_identity FK references
+      • SpeakerFaceSuggestion rows
+      • The FaceIdentity itself
+
+    Requires the caller to type the identity name in the `confirm_name` POST
+    field — defence against accidental deletions.
+    """
+    from .models import DetectedFace, FaceIdentity, FaceIdentityNickname, SpeakerIdentity, SpeakerFaceSuggestion
+    import os
+    from pathlib import Path
+    from django.conf import settings as dj_settings
+
+    if request.method != 'POST':
+        return Response({'error': 'POST required'}, status=405)
+
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
+
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=403)
+
+    # Typed-name confirmation guard
+    typed = (request.data.get('confirm_name') or '').strip()
+    if typed != (identity.name or '').strip():
+        return Response({
+            'error': 'Confirmation name does not match.',
+            'expected': identity.name,
+        }, status=400)
+
+    name_snapshot = identity.name
+    nicknames = list(identity.nicknames.values_list('nickname', flat=True)) if hasattr(identity, 'nicknames') else []
+
+    # ── 1. Collect crop file paths BEFORE deleting the rows ──────────────────
+    crops_to_delete = list(
+        DetectedFace.objects.filter(identity=identity)
+        .exclude(crop_path='').values_list('crop_path', flat=True)
+    )
+    thumb_path = identity.thumbnail or ''
+
+    detected_count = DetectedFace.objects.filter(identity=identity).count()
+
+    # ── 2. Hard-delete DB rows (embeddings, bboxes, crops metadata) ──────────
+    DetectedFace.objects.filter(identity=identity).delete()
+    SpeakerFaceSuggestion.objects.filter(face_identity=identity).delete()
+    speaker_unlinked = SpeakerIdentity.objects.filter(face_identity=identity).update(face_identity=None)
+    if hasattr(identity, 'nicknames'):
+        identity.nicknames.all().delete()
+    identity.delete()
+
+    # ── 3. Delete crop files from disk ───────────────────────────────────────
+    files_removed = 0
+    media_root = Path(dj_settings.MEDIA_ROOT)
+    for rel_path in crops_to_delete + ([thumb_path] if thumb_path else []):
+        if not rel_path:
+            continue
+        try:
+            full = media_root / rel_path
+            if full.exists() and full.is_file():
+                os.unlink(full)
+                files_removed += 1
+        except Exception as exc:
+            _task_logger.warning(f'forget: could not delete {rel_path}: {exc}')
+
+    # ── 4. Write GDPR audit log entry ────────────────────────────────────────
+    log_activity(
+        request,
+        'forget_person',
+        target_type='face_identity',
+        target_id=str(identity_id),
+        target_label=name_snapshot,
+        verb=f'permanently deleted face identity "{name_snapshot}" (GDPR right to be forgotten)',
+        metadata={
+            'detected_faces_deleted': detected_count,
+            'crop_files_deleted':     files_removed,
+            'nicknames':              nicknames,
+            'speaker_records_unlinked': speaker_unlinked,
+        },
+    )
+    _task_logger.warning(
+        "GDPR FORGET: %s deleted identity '%s' (%d faces, %d crops) — actor=%s",
+        request.user.username, name_snapshot, detected_count, files_removed, request.user.username,
+    )
+
+    return Response({
+        'ok': True,
+        'name': name_snapshot,
+        'detected_faces_deleted': detected_count,
+        'crop_files_deleted':     files_removed,
+        'speaker_records_unlinked': speaker_unlinked,
+    })
+
+
+@api_view(['POST'])
+@api_login_required
+def face_identity_export(request, identity_id):
+    """
+    POST /api/faces/<id>/export/
+    Body: {"include_crops": bool, "include_embeddings": bool,
+           "include_videos": bool, "include_activity": bool}
+
+    Queues a Celery task that builds a ZIP and returns an export id the
+    front-end can poll. Logs the action as a biometric-access event.
+    """
+    from .models import FaceIdentity
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden'}, status=403)
+
+    opts = {
+        'include_crops':      bool(request.data.get('include_crops', True)),
+        'include_embeddings': bool(request.data.get('include_embeddings', False)),
+        'include_videos':     bool(request.data.get('include_videos', False)),
+        'include_activity':   bool(request.data.get('include_activity', True)),
+    }
+
+    import uuid as _uuid
+    export_id = str(_uuid.uuid4())
+    tenant_slug = _tenant_slug(request)
+
+    # Audit log entry — exporting biometric data is significant
+    log_activity(
+        request,
+        'biometric_export',
+        target_type='face_identity',
+        target_id=str(identity_id),
+        target_label=identity.name,
+        verb=f'exported biometric data for "{identity.name}"',
+        metadata={**opts, 'export_id': export_id, 'requester_email': getattr(request.user, 'email', '')},
+    )
+
+    # Dispatch the build task
+    _tasks.build_face_identity_export_task.apply_async(
+        args=[str(identity_id), export_id, opts],
+        kwargs={'tenant_slug': tenant_slug, 'requester_user_id': request.user.id,
+                'requester_email': getattr(request.user, 'email', '')},
+        queue='default',
+    )
+
+    return Response({'export_id': export_id, 'status': 'queued'})
+
+
+@api_view(['GET'])
+@api_login_required
+def face_identity_export_status(request, identity_id, export_id):
+    """
+    GET /api/faces/<id>/export/<export_id>/status/
+    Returns { state: queued|running|done|failed, download_url, size_bytes, error }
+    """
+    from pathlib import Path
+    media_root = Path(settings.MEDIA_ROOT)
+    tenant_slug = _tenant_slug(request)
+
+    if tenant_slug:
+        export_dir = media_root / f'tenants/{tenant_slug}/exports'
+    else:
+        export_dir = media_root / 'exports'
+
+    zip_path   = export_dir / f'{export_id}.zip'
+    status_path = export_dir / f'{export_id}.status'
+
+    if not status_path.exists():
+        return Response({'state': 'queued'})
+
+    state = status_path.read_text().strip()
+    if state == 'done' and zip_path.exists():
+        size = zip_path.stat().st_size
+        rel = str(zip_path.relative_to(media_root))
+        return Response({
+            'state':        'done',
+            'download_url': f'/media/{rel}',
+            'size_bytes':   size,
+        })
+    if state.startswith('error:'):
+        return Response({'state': 'failed', 'error': state[6:]})
+    return Response({'state': state})
+
+
+@superuser_required
+def org_audit_log(request):
+    """
+    Page that shows recent biometric-access and biometric-mutation entries
+    from this tenant's ActivityLog. Lets the admin demonstrate to regulators
+    or customers exactly who accessed biometric data and when.
+    """
+    from .models import ActivityLog
+    BIOMETRIC_ACTIONS = (
+        'forget_person', 'biometric_export', 'biometric_view',
+        'face_identity_tag', 'face_identity_rename', 'face_identity_merge',
+        'speaker_view', 'config_change',
+    )
+    qs = ActivityLog.objects.all().order_by('-timestamp')
+    action_filter = request.GET.get('action', '').strip()
+    if action_filter == 'biometric':
+        qs = qs.filter(action__in=BIOMETRIC_ACTIONS)
+    elif action_filter:
+        qs = qs.filter(action=action_filter)
+
+    entries = list(qs[:200])
+    distinct_actions = list(ActivityLog.objects.values_list('action', flat=True).distinct().order_by('action'))
+    return render(request, 'videos/org_audit_log.html', {
+        'entries':          entries,
+        'action_filter':    action_filter,
+        'distinct_actions': distinct_actions,
+        'biometric_actions': BIOMETRIC_ACTIONS,
+    })
+
+
 def face_identity_delete(request, identity_id):
     """
     DELETE /api/faces/<id>/delete/

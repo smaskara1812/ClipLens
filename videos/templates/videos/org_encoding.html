@@ -1,0 +1,140 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Encoding — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .row-list { display: flex; flex-direction: column; gap: 8px; }
+  .res-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: border-color .15s;
+    cursor: pointer;
+  }
+  .res-row:hover { border-color: var(--accent); }
+  .res-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
+  .res-label { flex: 1; font-weight: 600; font-size: 14px; }
+  .res-meta  { color: var(--text-muted); font-size: 12px; }
+
+  .notice {
+    background: rgba(88,166,255,.05); border: 1px solid rgba(88,166,255,.2);
+    padding: 14px 18px; border-radius: 8px; margin-bottom: 20px;
+    font-size: 13px; color: var(--text-muted); line-height: 1.6;
+  }
+  .notice strong { color: var(--text); }
+
+  .multi-toggle {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 18px;
+    margin-bottom: 18px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .multi-toggle input { width: 18px; height: 18px; }
+  .multi-toggle .text { flex: 1; }
+  .multi-toggle .text-title { font-weight: 600; font-size: 14px; }
+  .multi-toggle .text-desc  { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .save-bar {
+    position: sticky; bottom: 0;
+    background: var(--bg-2, #0d1117);
+    border-top: 1px solid var(--border);
+    padding: 14px 0; margin-top: 20px;
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+  .btn-primary { background: var(--accent); color:#fff; border:none; padding:10px 22px; border-radius:6px; font-weight:600; cursor:pointer; }
+  .btn-secondary { background: transparent; color: var(--text-muted); border:1px solid var(--border); padding:10px 18px; border-radius:6px; cursor:pointer; }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-secondary:hover { color: var(--text); border-color: var(--text); }
+
+  .messages-list { list-style: none; padding: 0; margin: 0 0 16px; }
+  .message { padding: 10px 14px; border-radius: 5px; margin-bottom: 8px; font-size: 13px; }
+  .message-success { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #4ade80; }
+  .message-error   { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_encoding_settings' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Encoding &amp; Quality</h1>
+    <p class="admin-hero-sub">
+      Control which HLS resolutions get generated when new videos are uploaded.
+      Fewer resolutions = faster processing and less disk space.
+    </p>
+  </div>
+
+  {% if messages %}
+  <ul class="messages-list">
+    {% for m in messages %}<li class="message message-{{ m.tags }}">{{ m }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Encoding settings are only available in multi-tenant mode.</p>
+  {% else %}
+
+  <div class="notice">
+    <strong>How this works:</strong> Each ✓ resolution will be encoded when a video is uploaded —
+    <em>but only if</em> the source video is at that resolution or higher. A 480p upload, for example,
+    will only produce 480p / 360p / 240p / 144p renditions regardless of what you check here.
+    <br><br>
+    <strong>Existing videos are not affected.</strong> Disabling 1440p here doesn't delete 1440p
+    renditions you've already produced. To fill in a missing resolution for one specific video later,
+    open that video's edit modal and use the per-resolution "Encode now" button.
+    {% if using_global %}
+    <br><br>
+    <strong>Currently using the global default</strong>
+    ({% for h in global_defaults %}{{ h }}p{% if not forloop.last %}, {% endif %}{% endfor %}).
+    Check resolutions below to override per-tenant.
+    {% endif %}
+  </div>
+
+  <form method="post" action="{% url 'org_encoding_settings' %}" id="encodingForm">
+    {% csrf_token %}
+
+    <div class="multi-toggle">
+      <input type="checkbox" id="multi_quality" name="multi_quality" {% if multi_quality %}checked{% endif %}>
+      <div class="text">
+        <div class="text-title">Adaptive bitrate streaming (multi-quality)</div>
+        <div class="text-desc">
+          Off → encode only one rendition (much faster, no adaptive switching).
+          On → produce all selected qualities + master.m3u8 for adaptive streaming.
+        </div>
+      </div>
+    </div>
+
+    <div class="row-list">
+      {% for r in rows %}
+      <label class="res-row">
+        <input type="checkbox" name="q_{{ r.height }}" {% if r.checked %}checked{% endif %}>
+        <span class="res-label">{{ r.label }}</span>
+        <span class="res-meta">{{ r.height }} pixels tall</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="save-bar">
+      <!-- Two submit buttons inside ONE form. The 'action' input's value is set
+           by JS just before submit, depending on which button was clicked. -->
+      <input type="hidden" name="action" id="formAction" value="save">
+      <button type="submit" class="btn-secondary"
+              onclick="if (!confirm('Revert to the global default qualities?')) return false;
+                       document.getElementById('formAction').value='reset_to_global';">
+        Reset to global defaults
+      </button>
+      <button type="submit" class="btn-primary"
+              onclick="document.getElementById('formAction').value='save';">
+        Save changes
+      </button>
+    </div>
+  </form>
+
+  {% endif %}
+</div>
+{% endblock %}

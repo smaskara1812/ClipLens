@@ -1,0 +1,133 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}AI Features — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .feat-list { display: flex; flex-direction: column; gap: 12px; }
+  .feat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 22px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px; align-items: center;
+    transition: border-color .15s;
+  }
+  .feat-card.biometric { border-color: rgba(245,158,11,.3); }
+  .feat-card h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .feat-card p  { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+
+  .bio-pill {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em;
+    padding: 2px 8px; border-radius: 10px;
+    background: rgba(245,158,11,.15); color: #fbbf24;
+    border: 1px solid rgba(245,158,11,.3);
+  }
+
+  /* iOS-style toggle */
+  .toggle { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #3a4350; transition: .2s; border-radius: 26px;
+  }
+  .toggle-slider:before {
+    content: ""; position: absolute; height: 20px; width: 20px;
+    left: 3px; top: 3px; background: white; transition: .2s;
+    border-radius: 50%;
+  }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+
+  .notice {
+    background: rgba(88,166,255,.05); border: 1px solid rgba(88,166,255,.2);
+    padding: 14px 18px; border-radius: 8px; margin-bottom: 20px;
+    font-size: 13px; color: var(--text-muted); line-height: 1.7;
+  }
+  .notice strong { color: var(--text); }
+
+  .save-bar {
+    position: sticky; bottom: 0;
+    background: var(--bg-2, #0d1117);
+    border-top: 1px solid var(--border);
+    padding: 14px 0; margin-top: 20px; text-align: right;
+  }
+  .save-btn {
+    background: var(--accent); color: #fff; border: none;
+    padding: 10px 22px; border-radius: 6px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .save-btn:hover { filter: brightness(1.1); }
+
+  .messages-list { list-style: none; padding: 0; margin: 0 0 16px; }
+  .message { padding: 10px 14px; border-radius: 5px; margin-bottom: 8px; font-size: 13px; }
+  .message-success { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #4ade80; }
+  .message-error { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_ai_features' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">AI Features</h1>
+    <p class="admin-hero-sub">
+      Choose which AI processing steps run on uploaded media in this organisation.
+      Disabling a feature skips it for new uploads — existing data is unaffected.
+    </p>
+  </div>
+
+  {% if messages %}
+  <ul class="messages-list">
+    {% for m in messages %}<li class="message message-{{ m.tags }}">{{ m }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px;">AI features are only configurable in multi-tenant mode.</p>
+  {% else %}
+
+  <div class="notice">
+    <strong>How this works:</strong> a feature runs only when it's enabled here.
+    Either side off → feature off. <strong>Existing data (transcripts, faces, embeddings) is preserved</strong> when
+    you disable a feature — only new uploads skip the disabled step.
+    <br><br>
+    <strong>Biometric features</strong> (highlighted) generate face or voice embeddings, which are
+    <a href="/terms/" style="color:var(--accent);">considered sensitive personal data</a> under GDPR / BIPA.
+    Disable them if your jurisdiction or use case requires explicit consent you haven't obtained.
+  </div>
+
+  <form method="post" action="{% url 'org_ai_features' %}">
+    {% csrf_token %}
+
+    <div class="feat-list">
+      {% for f in features %}
+      <div class="feat-card {% if f.biometric %}biometric{% endif %}">
+        <div>
+          <h3>
+            {{ f.label }}
+            {% if f.biometric %}<span class="bio-pill">Biometric</span>{% endif %}
+          </h3>
+          <p>{{ f.description }}</p>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" name="{{ f.field }}" {% if f.enabled %}checked{% endif %}>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="save-bar">
+      <button type="submit" class="save-btn">Save changes</button>
+    </div>
+  </form>
+
+  {% endif %}
+</div>
+{% endblock %}

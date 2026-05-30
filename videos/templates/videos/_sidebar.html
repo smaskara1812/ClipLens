@@ -194,6 +194,24 @@
     </svg>
     Billing
   </a>
+  <a href="{% url 'org_ai_features' %}" class="sidebar-item {% if url_name == 'org_ai_features' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6"/><path d="m20.49 9-5.66 5.66M9.17 9.17 3.51 14.83"/>
+    </svg>
+    AI Features
+  </a>
+  <a href="{% url 'org_encoding_settings' %}" class="sidebar-item {% if url_name == 'org_encoding_settings' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="2" y="7" width="20" height="14" rx="2"/><polyline points="17 2 12 7 7 2"/>
+    </svg>
+    Encoding
+  </a>
+  <a href="{% url 'org_audit_log' %}" class="sidebar-item {% if url_name == 'org_audit_log' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+    </svg>
+    Audit Log
+  </a>
   <a href="{% url 'admin_trash' %}" class="sidebar-item {% if url_name == 'admin_trash' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <polyline points="3 6 5 6 21 6"/>

@@ -1,0 +1,144 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Audit Log — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .filter-pills { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+  .filter-pill {
+    padding: 6px 14px; border-radius: 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-muted); font-size: 12px; font-weight: 600;
+    text-decoration: none;
+  }
+  .filter-pill:hover { color: var(--text); }
+  .filter-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .filter-pill.biometric { border-color: rgba(245,158,11,.4); color: #fbbf24; }
+  .filter-pill.biometric.active { background: #f59e0b; color: #1f1300; }
+
+  .log-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    font-size: 13px;
+  }
+  .log-table th {
+    background: var(--bg, #0d1117);
+    text-align: left; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .08em;
+    color: var(--text-muted); padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-table td {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .log-table tr:last-child td { border-bottom: none; }
+  .log-table tr:hover td { background: rgba(88,166,255,.04); }
+
+  .action-pill {
+    display: inline-block; padding: 2px 9px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; background: var(--bg, #0d1117);
+    border: 1px solid var(--border); color: var(--text-muted);
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+  .action-pill.bio { background: rgba(245,158,11,.15); color: #fbbf24; border-color: rgba(245,158,11,.3); }
+  .action-pill.forget { background: rgba(239,68,68,.15); color: #fca5a5; border-color: rgba(239,68,68,.3); }
+
+  .timestamp { color: var(--text-muted); font-family: 'SF Mono', Menlo, monospace; font-size: 12px; white-space: nowrap; }
+  .actor { font-weight: 600; color: var(--text); }
+  .verb  { color: var(--text-muted); }
+  .meta  {
+    font-family: 'SF Mono', Menlo, monospace; font-size: 11px;
+    color: var(--text-muted); margin-top: 4px;
+    background: var(--bg, #0d1117); padding: 4px 8px; border-radius: 4px;
+    max-width: 600px; word-break: break-word;
+  }
+
+  .empty {
+    text-align: center; padding: 48px;
+    color: var(--text-muted); font-size: 14px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_audit_log' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Audit Log</h1>
+    <p class="admin-hero-sub">
+      Record of significant actions in this organisation. Use the biometric filter for
+      GDPR / BIPA evidence of who accessed sensitive data and when.
+    </p>
+  </div>
+
+  <div class="filter-pills">
+    <a href="?" class="filter-pill {% if not action_filter %}active{% endif %}">All</a>
+    <a href="?action=biometric" class="filter-pill biometric {% if action_filter == 'biometric' %}active{% endif %}">
+      Biometric events only
+    </a>
+    {% for a in distinct_actions %}
+      <a href="?action={{ a }}" class="filter-pill {% if action_filter == a %}active{% endif %}">{{ a }}</a>
+    {% endfor %}
+  </div>
+
+  {% if entries %}
+  <table class="log-table">
+    <thead>
+      <tr>
+        <th style="width:140px;">Time</th>
+        <th style="width:120px;">Actor</th>
+        <th style="width:160px;">Action</th>
+        <th>What happened</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="timestamp">{{ e.timestamp|date:"M d, Y H:i:s" }}</td>
+        <td class="actor">
+          {{ e.actor_username|default:"(system)" }}
+          {% if e.ip_address %}<div style="color:var(--text-muted);font-size:11px;font-weight:400;">{{ e.ip_address }}</div>{% endif %}
+        </td>
+        <td>
+          {% if e.action in biometric_actions %}
+            {% if e.action == 'forget_person' %}
+              <span class="action-pill forget">{{ e.action }}</span>
+            {% else %}
+              <span class="action-pill bio">{{ e.action }}</span>
+            {% endif %}
+          {% else %}
+            <span class="action-pill">{{ e.action }}</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="verb">{{ e.verb|default:e.action }}</div>
+          {% if e.target_label %}
+          <div style="font-size:12px; color:var(--text); margin-top:2px;">
+            <strong>{{ e.target_type }}:</strong> {{ e.target_label }}
+            {% if e.target_id %}<span style="color:var(--text-muted);">(id={{ e.target_id }})</span>{% endif %}
+          </div>
+          {% endif %}
+          {% if e.metadata %}
+            <div class="meta">{{ e.metadata }}</div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p style="color:var(--text-muted); font-size:12px; margin-top:14px;">
+    Showing latest {{ entries|length }} entries{% if entries|length == 200 %} (capped at 200){% endif %}.
+  </p>
+  {% else %}
+  <div class="empty">
+    No audit log entries{% if action_filter %} for filter "{{ action_filter }}"{% endif %}.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -96,10 +96,41 @@
   Meta, or any other external AI provider</strong>. The model weights themselves are downloaded once
   to our servers; your data does not leave the boundary of your tenant.
 </p>
+
+<h3>Biometric processing (face and voice)</h3>
 <p>
-  Face recognition deserves special mention: ClipLens computes mathematical embeddings of faces
-  found in your media so it can group recurring people. These embeddings are stored only inside
-  your tenant database and are never used outside your organisation's library.
+  Face recognition (InsightFace) and speaker diarization (pyannote) generate
+  <strong>biometric embeddings</strong> — high-dimensional mathematical fingerprints of a person's
+  face or voice. Under the GDPR, the UK GDPR, and the Illinois Biometric Information Privacy Act
+  (BIPA), these embeddings are considered <strong>special-category personal data</strong> and
+  require an explicit legal basis (typically explicit consent) to process.
+</p>
+<p>
+  Your organisation (acting as data controller) is responsible for obtaining the consent or
+  establishing another lawful basis before uploading media containing identifiable people.
+  ClipLens (as data processor) provides the following controls to help you comply:
+</p>
+<ul>
+  <li><strong>Per-tenant feature toggles</strong> — your organisation administrator can disable
+      face recognition, speaker diarization, or any other AI feature at
+      <code>/admin-panel/ai-features/</code>. Disabling a feature stops new processing without
+      destroying existing data.</li>
+  <li><strong>Right to be forgotten</strong> — administrators can permanently erase a specific
+      person's biometric data via the "Forget person" workflow on each identity's detail page.
+      This deletes all face embeddings, cropped images on disk, the identity record itself, and
+      any speaker-link references in a single irreversible action.</li>
+  <li><strong>Data export (portability)</strong> — administrators can download a ZIP of all
+      biometric data we hold about a specific person, including embeddings, crops, audit history,
+      and source videos if requested.</li>
+  <li><strong>Biometric access audit log</strong> — every view of a face identity detail page,
+      every export, every deletion, and every change to AI feature settings is recorded in an
+      append-only audit log at <code>/admin-panel/audit-log/</code>, queryable for any
+      regulator or internal investigation.</li>
+</ul>
+<p>
+  Biometric embeddings are stored only inside your tenant database and are never used outside
+  your organisation's library. We do not train models on your embeddings, do not aggregate them
+  across tenants, and do not share them with any third party.
 </p>
 
 <h2 id="sharing">5. When we share information</h2>
@@ -134,24 +165,41 @@
   <li><strong>Active account data</strong> — kept for as long as your subscription is active.</li>
   <li><strong>Media files</strong> — kept until you delete them or your account is closed. Soft-deleted
       items are recoverable for 30 days, then permanently removed.</li>
+  <li><strong>Biometric data (face / voice embeddings, face crops)</strong> — deleted within
+      <strong>24 hours</strong> of: (a) an administrator triggering "Forget person", (b) the
+      tenant disabling the corresponding AI feature followed by an explicit purge request, or
+      (c) account closure. The "Forget person" action is irreversible and bypasses the 30-day
+      soft-delete window — it's intended for compliance with GDPR Article 17 / BIPA / similar.</li>
+  <li><strong>Audit log entries</strong> — retained for the lifetime of your account so that
+      regulators or your own auditors can verify who accessed biometric data and when.</li>
   <li><strong>Billing records</strong> — retained for 7 years for tax and accounting compliance.</li>
   <li><strong>Server access logs</strong> — retained for 30 days, then automatically purged.</li>
-  <li><strong>Closed accounts</strong> — all tenant data (DB + media) is deleted within 30 days of
-      account closure, except billing records as noted above.</li>
+  <li><strong>Closed accounts</strong> — all tenant data (DB + media + biometric embeddings) is
+      deleted within 30 days of account closure, except billing records as noted above.</li>
 </ul>
 
 <h2 id="your-rights">8. Your rights</h2>
 <p>Depending on your jurisdiction (GDPR, CCPA, UK DPA, etc.), you may have the right to:</p>
 <ul>
-  <li><strong>Access</strong> — request a copy of personal data we hold about you</li>
-  <li><strong>Correction</strong> — ask us to fix inaccurate data</li>
-  <li><strong>Deletion</strong> — request erasure of your account and data</li>
-  <li><strong>Portability</strong> — export your data in a machine-readable format</li>
-  <li><strong>Object</strong> — to certain types of processing</li>
+  <li><strong>Access</strong> — request a copy of personal data we hold about you. For people
+      identified in your media, your organisation administrator can use the "Export data" button
+      on each identity's detail page to produce a complete portable archive.</li>
+  <li><strong>Correction</strong> — ask us to fix inaccurate data. Identity names, tags, and
+      nicknames are editable directly in the app.</li>
+  <li><strong>Deletion</strong> — request erasure of your account and data. For specific
+      individuals identified in media, the "Forget person" button performs an irreversible,
+      audited deletion of all biometric data within 24 hours.</li>
+  <li><strong>Portability</strong> — export your data in a machine-readable format (ZIP with
+      structured JSON for metadata, JPEG for crops, source files for media).</li>
+  <li><strong>Object</strong> — to certain types of processing. Administrators can disable any
+      individual AI feature at <code>/admin-panel/ai-features/</code> without removing access
+      to existing data.</li>
 </ul>
 <p>
-  Email us at <a href="mailto:privacy@cliplens.com">privacy@cliplens.com</a> to exercise any of
-  these rights. We respond within 30 days.
+  Your organisation's administrator is empowered to handle most of these requests directly via
+  the controls above — no support ticket required. For platform-level requests (account closure,
+  billing data export, complaints about our processing), email us at
+  <a href="mailto:privacy@cliplens.com">privacy@cliplens.com</a>. We respond within 30 days.
 </p>
 
 <h2 id="cookies">9. Cookies &amp; analytics</h2>

@@ -577,6 +577,8 @@
       {% if all_identities %}
       <button class="btn btn-ghost" onclick="openMerge()">Merge into…</button>
       {% endif %}
+      <button class="btn btn-ghost" onclick="openExport()" title="Download all biometric data about this person">↓ Export data</button>
+      <button class="btn btn-ghost" style="border-color:#ef4444;color:#fca5a5;" onclick="openForget()" title="Permanently delete all biometric data (GDPR right to be forgotten)">🗑 Forget person</button>
       {% if can_delete %}
       <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
       {% else %}
@@ -816,6 +818,112 @@
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+
+<!-- ── Forget Person Modal ────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="forgetModal">
+  <div class="modal" style="width:540px; max-width:90vw;">
+    <h3 style="color:#fca5a5;">🗑 Forget this person</h3>
+    <p style="color:var(--text-muted); font-size:13px; line-height:1.6; margin-bottom:10px;">
+      This <strong style="color:#fca5a5;">permanently deletes ALL biometric data</strong> for
+      <strong style="color:var(--text);">{{ identity.name }}</strong>:
+    </p>
+    <ul style="color:var(--text-muted); font-size:13px; line-height:1.7; margin:0 0 14px 18px; padding:0;">
+      <li>All face embeddings (the math vectors used to recognise the person)</li>
+      <li>All cropped face images on disk</li>
+      <li>This identity record itself</li>
+      <li>Any speaker rows linked to this identity (link cleared)</li>
+    </ul>
+    <p style="background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.25); padding:10px 14px; border-radius:6px; color:#fca5a5; font-size:12px; margin-bottom:14px;">
+      <strong>Cannot be undone.</strong> Logged in the audit trail. Use this for GDPR / Right-to-be-Forgotten requests.
+    </p>
+    <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
+      Type <strong style="color:var(--text);">{{ identity.name }}</strong> to confirm:
+    </label>
+    <input type="text" id="forgetConfirm" placeholder="{{ identity.name }}" autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeForget()">Cancel</button>
+      <button class="btn btn-danger" id="forgetBtn" onclick="submitForget()" disabled>Permanently delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Export Data Modal ──────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="exportModal">
+  <div class="modal" style="width:560px; max-width:90vw;">
+    <h3>↓ Export data for {{ identity.name }}</h3>
+    <p style="color:var(--text-muted); font-size:13px; line-height:1.6; margin-bottom:14px;">
+      Choose what to include in the ZIP archive.
+      Useful for GDPR data subject access requests or your own records.
+    </p>
+
+    <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;">
+      <label class="exp-row">
+        <input type="checkbox" id="exp_crops" checked>
+        <div class="exp-text">
+          <div class="exp-title">Face crop images</div>
+          <div class="exp-desc">All cropped face JPEGs we have on file.</div>
+        </div>
+      </label>
+      <label class="exp-row">
+        <input type="checkbox" id="exp_embeddings">
+        <div class="exp-text">
+          <div class="exp-title">Face embeddings <span style="color:var(--text-muted);font-weight:400;font-size:11px;">(JSON)</span></div>
+          <div class="exp-desc">512-dimensional InsightFace vectors — the actual biometric math.</div>
+        </div>
+      </label>
+      <label class="exp-row">
+        <input type="checkbox" id="exp_videos">
+        <div class="exp-text">
+          <div class="exp-title">Original videos where this person appears</div>
+          <div class="exp-desc"><span style="color:#fbbf24;">⚠ Can be large</span> — potentially gigabytes.</div>
+        </div>
+      </label>
+      <label class="exp-row">
+        <input type="checkbox" id="exp_activity" checked>
+        <div class="exp-text">
+          <div class="exp-title">Audit log for this person</div>
+          <div class="exp-desc">Who accessed or modified this identity, and when.</div>
+        </div>
+      </label>
+    </div>
+
+    <p style="color:var(--text-muted); font-size:11px; margin-bottom:14px;">
+      Identity metadata (name, appearances list) is always included.
+    </p>
+
+    <div class="modal-actions" id="exportActions">
+      <button class="btn btn-ghost" onclick="closeExport()">Cancel</button>
+      <button class="btn btn-primary" id="exportBtn" onclick="submitExport()">Generate export</button>
+    </div>
+
+    <!-- Status area, shown once generation starts -->
+    <div id="exportStatus" style="display:none;">
+      <div id="exportProgress" style="color:var(--text-muted); font-size:13px; padding:10px 0;">⏳ Building archive…</div>
+      <div id="exportDownload" style="display:none;">
+        <a id="exportDownloadLink" href="#" class="btn btn-primary" download style="display:inline-block;">↓ Download ZIP</a>
+        <p style="color:var(--text-muted); font-size:11px; margin-top:8px;">Link expires in 7 days.</p>
+      </div>
+      <div class="modal-actions" style="margin-top:10px;">
+        <button class="btn btn-ghost" onclick="closeExport()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .exp-row {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 10px 12px; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm);
+    transition: border-color .15s;
+  }
+  .exp-row:hover { border-color: var(--accent); }
+  .exp-row input[type="checkbox"] { flex: 0 0 auto; margin: 3px 0 0 0; width: 16px; height: 16px; cursor: pointer; }
+  .exp-text { flex: 1 1 auto; min-width: 0; }
+  .exp-title { font-weight: 600; font-size: 13px; color: var(--text); line-height: 1.3; }
+  .exp-desc  { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+</style>
 
 {% endblock %}
 
@@ -1305,6 +1413,122 @@ async function removeNickname(nickId, btn) {
 function getCookie(name) {
   const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
   return v ? v.pop() : '';
+}
+
+/* ── Forget Person (GDPR) ────────────────────────────────────────────────── */
+const EXPECTED_NAME = '{{ identity.name|escapejs }}';
+
+function openForget() {
+  document.getElementById('forgetModal').classList.add('open');
+  document.getElementById('forgetConfirm').value = '';
+  document.getElementById('forgetBtn').disabled = true;
+  setTimeout(() => document.getElementById('forgetConfirm').focus(), 50);
+}
+function closeForget() {
+  document.getElementById('forgetModal').classList.remove('open');
+}
+document.getElementById('forgetConfirm')?.addEventListener('input', function() {
+  document.getElementById('forgetBtn').disabled = this.value.trim() !== EXPECTED_NAME.trim();
+});
+
+async function submitForget() {
+  const name = document.getElementById('forgetConfirm').value.trim();
+  if (name !== EXPECTED_NAME.trim()) { showToast('Name does not match.', true); return; }
+  const btn = document.getElementById('forgetBtn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/forget/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ confirm_name: name }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      showToast(err.error || 'Delete failed', true);
+      btn.disabled = false; btn.textContent = 'Permanently delete';
+      return;
+    }
+    const data = await res.json();
+    showToast(`Forgotten — ${data.detected_faces_deleted} faces, ${data.crop_files_deleted} files removed.`);
+    setTimeout(() => { window.location.href = '/faces/'; }, 1500);
+  } catch (e) {
+    showToast('Network error: ' + e.message, true);
+    btn.disabled = false; btn.textContent = 'Permanently delete';
+  }
+}
+
+/* ── Export Data ─────────────────────────────────────────────────────────── */
+function openExport() {
+  document.getElementById('exportModal').classList.add('open');
+  document.getElementById('exportStatus').style.display = 'none';
+  document.getElementById('exportActions').style.display = 'flex';
+  document.getElementById('exportDownload').style.display = 'none';
+  document.getElementById('exportBtn').disabled = false;
+  document.getElementById('exportBtn').textContent = 'Generate export';
+}
+function closeExport() {
+  document.getElementById('exportModal').classList.remove('open');
+}
+async function submitExport() {
+  const opts = {
+    include_crops:      document.getElementById('exp_crops').checked,
+    include_embeddings: document.getElementById('exp_embeddings').checked,
+    include_videos:     document.getElementById('exp_videos').checked,
+    include_activity:   document.getElementById('exp_activity').checked,
+  };
+  const btn = document.getElementById('exportBtn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  try {
+    const res = await fetch(`/api/faces/${IDENTITY_ID}/export/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify(opts),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || 'Export request failed', true);
+      btn.disabled = false; btn.textContent = 'Generate export';
+      return;
+    }
+    const { export_id } = await res.json();
+    document.getElementById('exportActions').style.display = 'none';
+    document.getElementById('exportStatus').style.display = 'block';
+    pollExportStatus(export_id);
+  } catch (e) {
+    showToast('Network error: ' + e.message, true);
+    btn.disabled = false; btn.textContent = 'Generate export';
+  }
+}
+
+function pollExportStatus(exportId) {
+  const progress = document.getElementById('exportProgress');
+  const downloadDiv = document.getElementById('exportDownload');
+  const downloadLink = document.getElementById('exportDownloadLink');
+
+  async function tick() {
+    try {
+      const res = await fetch(`/api/faces/${IDENTITY_ID}/export/${exportId}/status/`, { credentials: 'include' });
+      if (!res.ok) { progress.textContent = '✗ Status check failed'; return; }
+      const data = await res.json();
+      if (data.state === 'done') {
+        progress.innerHTML = `✓ Ready · ${(data.size_bytes / 1024 / 1024).toFixed(1)} MB`;
+        downloadLink.href = data.download_url;
+        downloadDiv.style.display = 'block';
+        return;
+      }
+      if (data.state === 'failed') {
+        progress.innerHTML = `✗ Failed: ${data.error || 'unknown'}`;
+        return;
+      }
+      progress.textContent = data.state === 'queued' ? '⏳ Queued…' : '⏳ Building archive…';
+      setTimeout(tick, 2000);
+    } catch (e) {
+      progress.textContent = '✗ ' + e.message;
+    }
+  }
+  tick();
 }
 </script>
 {% endblock %}

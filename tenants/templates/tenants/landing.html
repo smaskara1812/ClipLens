@@ -1296,6 +1296,29 @@
         </details>
 
         <details class="faq-item">
+          <summary>I'm worried about GDPR / BIPA — can we disable biometric processing?</summary>
+          <div class="faq-body">
+            Yes. Each organisation administrator has a control panel at <code>/admin-panel/ai-features/</code>
+            where they can disable face recognition, speaker diarization, or any individual AI feature with a
+            single toggle. Disabling stops new processing immediately — existing data is preserved unless you
+            explicitly erase it. You can also disable features that aren't biometric (translation, scene
+            description, audio events, etc.) the same way, if you want to limit your AI minute consumption.
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary>What if someone asks us to delete their biometric data?</summary>
+          <div class="faq-body">
+            Every person identified in your library has their own detail page with a <strong>Forget person</strong>
+            button. Clicking it performs an irreversible, audited deletion within 24 hours of: the face embeddings,
+            cropped face images, the identity record, and any linked speaker references. The action is recorded in
+            an audit log with the operator's username and timestamp, so you can prove compliance to a regulator if
+            asked. There's also an <strong>Export data</strong> button on the same page that produces a ZIP
+            containing everything we hold about that person — useful for GDPR Article 20 (data portability) requests.
+          </div>
+        </details>
+
+        <details class="faq-item">
           <summary>What exactly is an "AI minute" — how is it measured?</summary>
           <div class="faq-body">
             One AI minute = one minute of wall-clock time that a background worker spends running an AI task on your

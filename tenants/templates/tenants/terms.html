@@ -76,17 +76,54 @@
 </p>
 <ul>
   <li>You own Your Content or have the legal right to upload and process it</li>
-  <li>You have consent from any identifiable people in the media (especially for face recognition)</li>
+  <li>You have consent from any identifiable people in the media (especially for face recognition
+      and speaker diarization, which generate biometric data)</li>
   <li>Your Content does not infringe any third-party rights</li>
   <li>You comply with all applicable laws when uploading and using Your Content</li>
 </ul>
+
+<h3>Controller / processor responsibilities for biometric data</h3>
+<p>
+  For the purposes of GDPR, UK GDPR, CCPA/CPRA, BIPA, and similar laws, you act as the
+  <strong>data controller</strong> for any personal data (including biometric data) in Your Content,
+  and ClipLens acts as the <strong>data processor</strong>. This means:
+</p>
+<ul>
+  <li><strong>You</strong> are responsible for establishing the lawful basis for collecting and
+      processing biometric data — typically explicit consent under GDPR Article 9 or BIPA's
+      written-consent requirement.</li>
+  <li><strong>You</strong> handle data subject requests (access, rectification, erasure,
+      portability, objection). ClipLens provides self-service tools to fulfil these:
+    <ul>
+      <li><a href="/privacy/#ai-processing">Per-feature toggles</a> to opt out of biometric processing</li>
+      <li><strong>Forget person</strong> button for Article 17 erasure (irreversible, audited)</li>
+      <li><strong>Export data</strong> button for Article 20 portability</li>
+      <li><strong>Audit log</strong> for accountability and investigation</li>
+    </ul>
+  </li>
+  <li><strong>We</strong> process biometric data only as necessary to provide the service,
+      do not train AI models on it, and isolate it per-tenant so no other customer can ever
+      access it.</li>
+  <li><strong>We</strong> log every biometric access event and provide that log to you on
+      request — useful for demonstrating compliance to regulators or affected individuals.</li>
+</ul>
+<p>
+  For enterprise customers, a Data Processing Agreement (DPA) is available on request that
+  formalises the above and includes our subprocessor list. Email
+  <a href="mailto:legal@cliplens.com">legal@cliplens.com</a>.
+</p>
 
 <h2 id="acceptable-use">4. Acceptable use</h2>
 <p>You agree <strong>not</strong> to use ClipLens to:</p>
 <ul>
   <li>Process media you do not have rights to (pirated content, etc.)</li>
-  <li>Perform face recognition on people without their consent where the law requires it
-      (e.g. biometric data laws in Illinois, Texas, EU under GDPR Article 9)</li>
+  <li>Perform face recognition or speaker diarization on people without obtaining the consent
+      required by your jurisdiction (e.g. Illinois BIPA, Texas CUBI, Washington MHMDA, EU/UK
+      GDPR Article 9). ClipLens provides per-tenant AI feature toggles at
+      <code>/admin-panel/ai-features/</code> so you can disable biometric processing globally if
+      you cannot meet consent requirements, and a "Forget person" workflow plus per-identity
+      data export so you can fulfil GDPR Article 17 (erasure) and Article 20 (portability)
+      requests yourself. Using these controls is your responsibility as data controller.</li>
   <li>Upload CSAM, terrorist content, or content that violates applicable criminal law</li>
   <li>Reverse-engineer, decompile, or attempt to extract source code from the service</li>
   <li>Probe, scan, or test the vulnerability of our infrastructure without prior written permission</li>

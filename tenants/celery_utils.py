@@ -49,6 +49,7 @@ _TASK_EVENT_TYPES = {
     'videos.tasks.generate_seek_thumbnails_task': 'video_processing',   # FFmpeg sprite sheet
     'videos.tasks.extract_audio_tracks_task':     'video_processing',   # FFmpeg audio tracks
     'videos.tasks.upscale_video_task':            'video_processing',   # Lanczos upscale
+    'videos.tasks.encode_single_quality_task':    'video_processing',   # On-demand rendition encode
     'videos.tasks.generate_video_summary_task':   'video_processing',   # Ollama LLM summary
     # ── AI analysis ───────────────────────────────────────────────────────────
     'videos.tasks.analyze_video_frames_task':     'frame_analysis',     # YOLO + InsightFace + BLIP + CLIP

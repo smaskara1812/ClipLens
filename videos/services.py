@@ -71,10 +71,69 @@ _FULL_LADDER = [
 ]
 
 
-def _active_ladder():
-    """Return ladder rows whose heights are enabled in settings."""
-    enabled = set(getattr(settings, 'HLS_QUALITIES', [1080, 720, 480, 360]))
+def _active_ladder(tenant_heights: set = None):
+    """
+    Return ladder rows whose heights are enabled.
+    Precedence:
+      1. tenant_heights (per-tenant override, when caller passes it)
+      2. global settings.HLS_QUALITIES (env)
+      3. fallback [1080, 720, 480, 360]
+    """
+    if tenant_heights:
+        enabled = set(int(h) for h in tenant_heights)
+    else:
+        enabled = set(getattr(settings, 'HLS_QUALITIES', [1080, 720, 480, 360]))
     return [r for r in _FULL_LADDER if r[1] in enabled]
+
+
+def _tenant_hls_heights() -> set:
+    """
+    Resolve current tenant's enabled HLS heights from the thread-local context.
+    Returns empty set when no tenant or no override → caller falls back to global.
+    """
+    try:
+        from tenants.storage import get_media_root
+        from tenants.models import Tenant
+        # MEDIA_ROOT thread-local points at the tenant dir; derive slug from path
+        from django.conf import settings as _s
+        from pathlib import Path
+        root = Path(get_media_root())
+        media_root = Path(str(_s.MEDIA_ROOT))
+        try:
+            suffix = root.relative_to(media_root)
+            slug = suffix.parts[1] if suffix.parts and suffix.parts[0] == 'tenants' else None
+        except ValueError:
+            slug = None
+        if not slug:
+            return set()
+        t = Tenant.objects.using('control').only('hls_enabled_qualities').get(slug=slug)
+        return t.get_enabled_hls_heights()
+    except Exception:
+        return set()
+
+
+def _tenant_hls_multi_enabled() -> bool:
+    """
+    Per-tenant override of HLS_MULTI_QUALITY. True if tenant says multi or no tenant context.
+    """
+    try:
+        from tenants.storage import get_media_root
+        from tenants.models import Tenant
+        from django.conf import settings as _s
+        from pathlib import Path
+        root = Path(get_media_root())
+        media_root = Path(str(_s.MEDIA_ROOT))
+        try:
+            suffix = root.relative_to(media_root)
+            slug = suffix.parts[1] if suffix.parts and suffix.parts[0] == 'tenants' else None
+        except ValueError:
+            slug = None
+        if not slug:
+            return bool(getattr(settings, 'HLS_MULTI_QUALITY', True))
+        t = Tenant.objects.using('control').only('hls_multi_quality').get(slug=slug)
+        return t.hls_multi_quality and bool(getattr(settings, 'HLS_MULTI_QUALITY', True))
+    except Exception:
+        return bool(getattr(settings, 'HLS_MULTI_QUALITY', True))
 
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
@@ -345,9 +404,15 @@ def _convert_multi(video_id: str, source_path: str,
     """
     Encode multiple renditions and produce a master.m3u8.
     Skips any rendition whose target height > source height.
+    Honours per-tenant HLS quality restrictions (set via the admin UI).
     Returns (master_hls_relative_path, [list of quality labels]).
     """
-    ladder = _active_ladder()
+    tenant_heights = _tenant_hls_heights()
+    ladder = _active_ladder(tenant_heights=tenant_heights)
+    if tenant_heights:
+        logger.info(
+            f'[{video_id}] Using tenant-restricted HLS ladder: {sorted(tenant_heights, reverse=True)}'
+        )
 
     # Filter to renditions ≤ source height
     applicable = [row for row in ladder if row[1] <= source_height]
@@ -394,7 +459,7 @@ def convert_to_hls(video_id: str, source_path: str,
         Single-quality encode.
         Returns (playlist_m3u8_relative_path, [])
     """
-    multi = getattr(settings, 'HLS_MULTI_QUALITY', True)
+    multi = _tenant_hls_multi_enabled()
 
     if multi and source_height > 0:
         return _convert_multi(
