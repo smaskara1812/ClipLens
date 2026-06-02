@@ -1,0 +1,45 @@
+{% comment %}
+  Billing left-rail navigation.
+
+  Valid `billing_current` values:
+      org_plan_upgrade | org_topup | org_billing | org_usage
+{% endcomment %}
+<nav class="admin-nav" aria-label="Billing sections">
+
+  <div class="nav-section">Billing</div>
+
+  <a href="{% url 'org_plan_upgrade' %}"
+     class="{% if billing_current == 'org_plan_upgrade' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    Plan
+  </a>
+
+  <a href="{% url 'org_topup' %}"
+     class="{% if billing_current == 'org_topup' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+    </svg>
+    Top Up
+  </a>
+
+  <a href="{% url 'org_billing' %}"
+     class="{% if billing_current == 'org_billing' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="2" y="6" width="20" height="13" rx="2"/><line x1="2" y1="11" x2="22" y2="11"/>
+    </svg>
+    Invoices &amp; Payment
+  </a>
+
+  <div class="nav-section">Insights</div>
+
+  <a href="{% url 'org_usage' %}"
+     class="{% if billing_current == 'org_usage' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6" y1="20" x2="6" y2="14"/>
+    </svg>
+    Usage
+  </a>
+</nav>

@@ -1,0 +1,113 @@
+{% extends "tenants/base.html" %}
+{% block title %}Support Inbox — ClipLens Control Plane{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Support Inbox</h1>
+  <p>All tickets raised by tenant admins.</p>
+</div>
+
+<style>
+  .stat-row { display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap; }
+  .stat-card { flex:1 1 140px; padding:12px 16px; border-radius:8px; background:#161b22; border:1px solid #30363d; }
+  .stat-card .num { font-size:22px; font-weight:700; }
+  .stat-card .lbl { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em; }
+  .stat-card.open .num { color:#58a6ff; }
+  .stat-card.in_progress .num { color:#c084fc; }
+  .stat-card.waiting .num { color:#fbbf24; }
+  .stat-card.resolved .num { color:#4ade80; }
+
+  .filter-bar { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap:8px 10px; padding:12px; background:#161b22; border:1px solid #30363d;
+                border-radius:8px; margin-bottom:18px; align-items:end; }
+  .filter-bar label { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em; display:block; margin-bottom:3px; }
+  .filter-bar select, .filter-bar input { width:100%; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:6px 8px; border-radius:4px; font-size:12px; }
+
+  .ticket-list { background:#0d1117; border:1px solid #30363d; border-radius:8px; overflow:hidden; }
+  .ticket-row { display:grid; grid-template-columns: 60px 90px 1fr 110px 100px 140px; gap:10px; padding:12px 16px; align-items:center; border-bottom:1px solid #1f2937; text-decoration:none; color:#c9d1d9; }
+  .ticket-row:hover { background:#161b22; }
+  .ticket-row:last-child { border-bottom:0; }
+  .t-num { color:#5b6678; font-family:'SF Mono', Menlo, monospace; font-size:12px; }
+  .t-tenant { color:#8b949e; font-size:12px; }
+  .t-subject { font-weight:600; font-size:14px; }
+  .t-sub-meta { color:#8b949e; font-size:11px; margin-top:2px; }
+
+  .pill { padding:2px 8px; border-radius:8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; display:inline-block; }
+  .pill-open { background:rgba(88,166,255,.15); color:#58a6ff; }
+  .pill-in_progress { background:rgba(168,85,247,.15); color:#c084fc; }
+  .pill-waiting_on_user { background:rgba(245,158,11,.15); color:#fbbf24; }
+  .pill-resolved { background:rgba(74,222,128,.15); color:#4ade80; }
+  .pill-closed { background:#1f2937; color:#8b949e; }
+  .pill-low{background:#1f2937;color:#8b949e;} .pill-normal{background:rgba(88,166,255,.12);color:#58a6ff;}
+  .pill-high{background:rgba(245,158,11,.15);color:#fbbf24;} .pill-urgent{background:rgba(239,68,68,.15);color:#fca5a5;}
+
+  .pager { margin-top:14px; display:flex; gap:6px; justify-content:center; }
+  .pager a, .pager span { padding:5px 10px; border-radius:4px; font-size:12px; background:#161b22; border:1px solid #30363d; color:#c9d1d9; text-decoration:none; }
+  .pager .current { background:#1f6feb; border-color:#1f6feb; }
+</style>
+
+<div class="stat-row">
+  <div class="stat-card open">        <div class="num">{{ counts.open }}</div>        <div class="lbl">Open</div></div>
+  <div class="stat-card in_progress"> <div class="num">{{ counts.in_progress }}</div> <div class="lbl">In Progress</div></div>
+  <div class="stat-card waiting">     <div class="num">{{ counts.waiting }}</div>     <div class="lbl">Waiting on User</div></div>
+  <div class="stat-card resolved">    <div class="num">{{ counts.resolved }}</div>    <div class="lbl">Resolved</div></div>
+</div>
+
+<form method="get" class="filter-bar">
+  <div>
+    <label>Status</label>
+    <select name="status">
+      <option value="">All</option>
+      {% for k,v in status_choices %}<option value="{{ k }}" {% if f_status == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Priority</label>
+    <select name="priority">
+      <option value="">All</option>
+      {% for k,v in priority_choices %}<option value="{{ k }}" {% if f_priority == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Tenant</label>
+    <select name="tenant">
+      <option value="">All</option>
+      {% for t in tenants_list %}<option value="{{ t.id }}" {% if f_tenant == t.id|stringformat:'s' %}selected{% endif %}>{{ t.slug }}</option>{% endfor %}
+    </select>
+  </div>
+  <div style="grid-column: span 2;">
+    <label>Search (subject / body / submitter)</label>
+    <input type="text" name="q" value="{{ f_search }}" placeholder="text contains…">
+  </div>
+  <div style="display:flex; gap:6px;">
+    <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    <a class="btn btn-ghost btn-sm" href="{% url 'tenants:platform_support_list' %}">Reset</a>
+  </div>
+</form>
+
+{% if page_obj.object_list %}
+<div class="ticket-list">
+  {% for t in page_obj %}
+  <a href="{% url 'tenants:platform_support_detail' t.pk %}" class="ticket-row">
+    <span class="t-num">#{{ t.pk }}</span>
+    <span class="t-tenant">{{ t.tenant.slug }}</span>
+    <div>
+      <div class="t-subject">{{ t.subject }}</div>
+      <div class="t-sub-meta">{{ t.get_category_display }} · by {{ t.created_by_username }} · updated {{ t.updated_at|timesince }} ago</div>
+    </div>
+    <span class="pill pill-{{ t.priority }}">{{ t.get_priority_display }}</span>
+    <span class="pill pill-{{ t.status }}">{{ t.get_status_display }}</span>
+    <span style="color:#8b949e; font-size:11px; text-align:right;">{{ t.created_at|date:'M d, Y' }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="pager">
+  {% if page_obj.has_previous %}<a href="?{% for k,v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}page={{ page_obj.previous_page_number }}">‹ Prev</a>{% endif %}
+  <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a href="?{% for k,v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}page={{ page_obj.next_page_number }}">Next ›</a>{% endif %}
+</div>
+{% else %}
+<p style="color:#8b949e; text-align:center; padding:40px; background:#0d1117; border:1px solid #30363d; border-radius:8px;">No tickets match these filters.</p>
+{% endif %}
+{% endblock %}

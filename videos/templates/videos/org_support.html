@@ -1,0 +1,116 @@
+{% extends 'videos/base.html' %}
+{% block title %}Support — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .ticket-list { background: var(--surface); border:1px solid var(--border); border-radius: var(--radius); overflow:hidden; }
+  .ticket-row { display:grid; grid-template-columns: 60px 1fr 110px 100px 130px; gap:10px; padding:12px 16px; align-items:center; border-bottom:1px solid var(--border); text-decoration:none; color:var(--text); }
+  .ticket-row:hover { background: var(--bg); }
+  .ticket-row:last-child { border-bottom:0; }
+  .t-num { color: var(--text-subtle); font-family:'SF Mono', Menlo, monospace; font-size:12px; }
+  .t-subject { font-weight:600; font-size:14px; }
+  .t-sub-meta { color: var(--text-muted); font-size:11px; margin-top:2px; }
+  .pill { padding:2px 8px; border-radius:8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; display:inline-block; }
+  .pill-open         { background:rgba(88,166,255,.15);  color:#58a6ff; }
+  .pill-in_progress  { background:rgba(168,85,247,.15);  color:#c084fc; }
+  .pill-waiting_on_user { background:rgba(245,158,11,.15); color:#fbbf24; }
+  .pill-resolved     { background:rgba(74,222,128,.15);  color:#4ade80; }
+  .pill-closed       { background: var(--bg);            color: var(--text-muted); }
+  .pill-low    { background: var(--bg); color:var(--text-muted); }
+  .pill-normal { background:rgba(88,166,255,.12); color:#58a6ff; }
+  .pill-high   { background:rgba(245,158,11,.15); color:#fbbf24; }
+  .pill-urgent { background:rgba(239,68,68,.15);  color:#fca5a5; }
+  .new-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+  .new-card h3 { margin:0 0 12px; font-size:15px; }
+  .form-grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px; }
+  .form-grid .full { grid-column: 1 / -1; }
+  .form-grid label { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; display:block; margin-bottom:4px; }
+  .form-grid input, .form-grid select, .form-grid textarea {
+    width:100%; background: var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:8px 10px; border-radius:4px; font-size:13px; font-family:inherit;
+  }
+  .form-grid textarea { min-height:120px; resize:vertical; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_support_list' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Support</h1>
+    <p class="admin-hero-sub">Raise a ticket and the ClipLens team will get back to you. Track replies and history below.</p>
+  </div>
+
+  {% if messages %}
+  <ul style="list-style:none; padding:0;">
+    {% for m in messages %}
+    <li style="padding:10px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+               background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+               border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+               color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Support is only available in multi-tenant mode.</p>
+  {% else %}
+
+  <details class="new-card">
+    <summary style="cursor:pointer; font-weight:600; color:var(--accent); list-style:none;">+ Raise a new ticket</summary>
+    <form method="post" class="form-grid" style="margin-top:14px;">
+      {% csrf_token %}
+      <div class="full">
+        <label>Subject</label>
+        <input type="text" name="subject" placeholder="Brief summary of the issue" maxlength="200" required>
+      </div>
+      <div>
+        <label>Category</label>
+        <select name="category">
+          {% for k,v in category_choices %}<option value="{{ k }}" {% if k == 'question' %}selected{% endif %}>{{ v }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Priority</label>
+        <select name="priority">
+          {% for k,v in priority_choices %}<option value="{{ k }}" {% if k == 'normal' %}selected{% endif %}>{{ v }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="full">
+        <label>Description</label>
+        <textarea name="body" placeholder="What's happening? Steps to reproduce, what you expected, screenshots described, etc." required></textarea>
+      </div>
+      <div class="full">
+        <button class="btn btn-primary" type="submit">Submit ticket</button>
+      </div>
+    </form>
+  </details>
+
+  <h3 style="font-size:14px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; margin:18px 0 10px;">Your tickets</h3>
+
+  {% if tickets %}
+  <div class="ticket-list">
+    {% for t in tickets %}
+    <a href="{% url 'org_support_detail' t.pk %}" class="ticket-row">
+      <span class="t-num">#{{ t.pk }}</span>
+      <div>
+        <div class="t-subject">{{ t.subject }}</div>
+        <div class="t-sub-meta">
+          {{ t.get_category_display }} · raised by {{ t.created_by_username }} ·
+          updated {{ t.updated_at|timesince }} ago
+        </div>
+      </div>
+      <span class="pill pill-{{ t.priority }}">{{ t.get_priority_display }}</span>
+      <span class="pill pill-{{ t.status }}">{{ t.get_status_display }}</span>
+      <span style="color:var(--text-muted); font-size:11px; text-align:right;">{{ t.created_at|date:'M d, Y' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted); padding:30px; text-align:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);">No tickets yet. Use the form above to raise one.</p>
+  {% endif %}
+
+  {% endif %}
+</div>
+{% endblock %}

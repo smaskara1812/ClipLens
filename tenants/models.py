@@ -27,6 +27,12 @@ class Plan(models.Model):
     stripe_product_id = models.CharField(max_length=120, blank=True, default='')
     stripe_price_id   = models.CharField(max_length=120, blank=True, default='')
 
+    # Controls whether the plan appears on public-facing surfaces
+    # (onboarding plan picker, org upgrade page, landing page).
+    # Existing tenants on a disabled plan keep working — disabling only stops
+    # new signups from selecting it.
+    is_active = models.BooleanField(default=True, db_index=True)
+
     class Meta:
         app_label = 'tenants'
         ordering = ['price_usd', 'name']
@@ -333,6 +339,102 @@ class LeadRequest(models.Model):
         return f"{self.name} <{self.email}> — {self.get_status_display()}"
 
 
+class EmailConnection(models.Model):
+    """
+    A saved SMTP configuration used to send outbound email.
+
+    Scope:
+      • scope='platform' → for platform-wide emails (onboarding invites, lead
+        notifications, payment receipts). Managed by the platform owner only.
+        `tenant` is NULL for these rows.
+      • scope='tenant'   → for org-internal emails (quota warnings, internal
+        notifications). Managed by the org's superadmin. `tenant` FK is set.
+
+    Multiple connections can be saved per scope, but only ONE can be active
+    at a time. The active connection is what the email system picks up.
+    """
+    SCOPE_PLATFORM = 'platform'
+    SCOPE_TENANT   = 'tenant'
+    SCOPE_CHOICES = [
+        (SCOPE_PLATFORM, 'Platform'),
+        (SCOPE_TENANT,   'Tenant'),
+    ]
+
+    scope         = models.CharField(max_length=10, choices=SCOPE_CHOICES, db_index=True)
+    tenant        = models.ForeignKey(Tenant, on_delete=models.CASCADE,
+                                      null=True, blank=True,
+                                      related_name='email_connections',
+                                      help_text="Required when scope='tenant'.")
+    name          = models.CharField(max_length=80,
+                                     help_text="Friendly label, e.g. 'SendGrid prod'.")
+
+    host          = models.CharField(max_length=200)
+    port          = models.PositiveIntegerField(default=587)
+    use_tls       = models.BooleanField(default=True)
+    use_ssl       = models.BooleanField(default=False,
+                                        help_text="Mutually exclusive with TLS. SMTPS on port 465.")
+    username      = models.CharField(max_length=200, blank=True, default='')
+    password_enc  = models.BinaryField(blank=True, default=b'',
+                                       help_text="Fernet-encrypted SMTP password.")
+
+    from_email    = models.EmailField(help_text="The 'From:' address used for sent emails.")
+    from_name     = models.CharField(max_length=120, blank=True, default='',
+                                     help_text="Optional display name, e.g. 'ClipLens'.")
+
+    is_active     = models.BooleanField(default=False, db_index=True,
+                                        help_text="Only one connection per scope is active at a time.")
+
+    last_tested_at    = models.DateTimeField(null=True, blank=True)
+    last_test_result  = models.CharField(max_length=400, blank=True, default='',
+                                         help_text="'OK' on success, otherwise the error message.")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by_username = models.CharField(max_length=150, blank=True, default='')
+
+    class Meta:
+        app_label = 'tenants'
+        ordering  = ['scope', '-is_active', 'name']
+        indexes   = [
+            models.Index(fields=['scope', 'is_active']),
+            models.Index(fields=['tenant', 'is_active']),
+        ]
+
+    def __str__(self):
+        target = self.tenant.slug if self.tenant else 'platform'
+        return f"{target} · {self.name} ({self.host}:{self.port})"
+
+    # ── Password encryption ────────────────────────────────────────────────
+    @staticmethod
+    def _fernet():
+        """Return a Fernet instance using EMAIL_SECRET_KEY or a SECRET_KEY-derived fallback."""
+        from cryptography.fernet import Fernet
+        from django.conf import settings as _s
+        key = (getattr(_s, 'EMAIL_SECRET_KEY', '') or '').encode() if getattr(_s, 'EMAIL_SECRET_KEY', '') else None
+        if not key:
+            # Dev fallback — deterministic from SECRET_KEY so saved data still decrypts on restart
+            import hashlib, base64
+            digest = hashlib.sha256(_s.SECRET_KEY.encode()).digest()
+            key = base64.urlsafe_b64encode(digest)
+        return Fernet(key)
+
+    def set_password(self, raw_password: str) -> None:
+        """Encrypt and store a plain-text SMTP password."""
+        if not raw_password:
+            self.password_enc = b''
+            return
+        self.password_enc = self._fernet().encrypt(raw_password.encode('utf-8'))
+
+    def get_password(self) -> str:
+        """Decrypt and return the SMTP password, or '' if none stored."""
+        if not self.password_enc:
+            return ''
+        try:
+            return self._fernet().decrypt(bytes(self.password_enc)).decode('utf-8')
+        except Exception:
+            return ''
+
+
 class UsageEvent(models.Model):
     """
     Append-only ledger of AI/storage usage per tenant.
@@ -366,3 +468,253 @@ class UsageEvent(models.Model):
 
     def __str__(self):
         return f"{self.tenant.slug} | {self.event_type} | {self.value}"
+
+class EmailLog(models.Model):
+    """
+    Detailed log of every email send attempt — successes, failures, and drops.
+    Lives in the control DB so platform owners can see all activity across
+    tenants. Tenant admins see only their own tenant's rows via a filtered view.
+    """
+    STATUS_QUEUED  = 'queued'
+    STATUS_SENT    = 'sent'
+    STATUS_FAILED  = 'failed'
+    STATUS_DROPPED = 'dropped'       # EMAIL_ENABLED=false or no valid recipients
+    STATUS_CHOICES = [
+        (STATUS_QUEUED,  'Queued'),
+        (STATUS_SENT,    'Sent'),
+        (STATUS_FAILED,  'Failed'),
+        (STATUS_DROPPED, 'Dropped'),
+    ]
+
+    SCOPE_PLATFORM = 'platform'
+    SCOPE_TENANT   = 'tenant'
+    SCOPE_CHOICES  = [
+        (SCOPE_PLATFORM, 'Platform'),
+        (SCOPE_TENANT,   'Tenant'),
+    ]
+
+    BACKEND_SMTP     = 'smtp'
+    BACKEND_CONSOLE  = 'console'
+    BACKEND_DEFAULT  = 'default'      # Django settings fallback (no managed conn)
+    BACKEND_DISABLED = 'disabled'     # EMAIL_ENABLED=false
+    BACKEND_CHOICES  = [
+        (BACKEND_SMTP,     'SMTP (managed)'),
+        (BACKEND_CONSOLE,  'Console (dev mode)'),
+        (BACKEND_DEFAULT,  'Django default'),
+        (BACKEND_DISABLED, 'Disabled (dropped)'),
+    ]
+
+    # Scope + tenancy
+    scope          = models.CharField(max_length=10, choices=SCOPE_CHOICES)
+    tenant         = models.ForeignKey(
+        Tenant, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='email_logs',
+    )
+
+    # Connection used (nullable so deleting a connection doesn't lose history)
+    connection     = models.ForeignKey(
+        EmailConnection, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='logs',
+    )
+    connection_name_snapshot = models.CharField(
+        max_length=120, blank=True,
+        help_text="Name of the connection at send time (preserved if connection deleted)",
+    )
+    backend_type   = models.CharField(max_length=12, choices=BACKEND_CHOICES, default=BACKEND_SMTP)
+
+    # Message
+    subject        = models.CharField(max_length=300)
+    from_email     = models.CharField(max_length=320, blank=True)
+    to_emails      = models.JSONField(default=list, help_text='List of recipient addresses')
+    cc_emails      = models.JSONField(default=list, blank=True)
+    bcc_emails     = models.JSONField(default=list, blank=True)
+    reply_to       = models.CharField(max_length=320, blank=True)
+    body_preview   = models.CharField(max_length=500, blank=True, help_text='First 500 chars of plain body')
+    has_html       = models.BooleanField(default=False)
+    template_key   = models.CharField(max_length=64, blank=True, help_text='Future: template system key')
+
+    # Trigger / actor
+    trigger_source = models.CharField(
+        max_length=64, blank=True,
+        help_text='What code path queued this — e.g. submit_lead, create_tenant, quota_warning, manual_test',
+    )
+    triggered_by_username = models.CharField(
+        max_length=150, blank=True,
+        help_text='Username of the human who initiated (blank = system / webhook)',
+    )
+
+    # Status + lifecycle
+    status         = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_QUEUED, db_index=True)
+    error_class    = models.CharField(max_length=120, blank=True)
+    error_message  = models.TextField(blank=True)
+    retry_count    = models.PositiveSmallIntegerField(default=0)
+    duration_ms    = models.PositiveIntegerField(null=True, blank=True,
+                       help_text='Time spent in the send call (ms)')
+    celery_task_id = models.CharField(max_length=64, blank=True)
+
+    # Timestamps
+    queued_at      = models.DateTimeField(auto_now_add=True, db_index=True)
+    sent_at        = models.DateTimeField(null=True, blank=True)
+    failed_at      = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = 'tenants'
+        ordering = ['-queued_at']
+        indexes = [
+            models.Index(fields=['scope', 'queued_at']),
+            models.Index(fields=['tenant', 'queued_at']),
+            models.Index(fields=['status', 'queued_at']),
+            models.Index(fields=['trigger_source']),
+        ]
+
+    def __str__(self):
+        return f'[{self.status}] {self.scope}: {self.subject[:60]}'
+
+    @property
+    def recipients_display(self):
+        return ', '.join(self.to_emails or [])
+
+
+
+class SupportTicket(models.Model):
+    """
+    Support request raised by a tenant org admin. Visible to the platform owner
+    who can reply, change status/priority, and resolve.
+    """
+    CATEGORY_BUG     = 'bug'
+    CATEGORY_BILLING = 'billing'
+    CATEGORY_FEATURE = 'feature_request'
+    CATEGORY_QUESTION = 'question'
+    CATEGORY_OTHER   = 'other'
+    CATEGORY_CHOICES = [
+        (CATEGORY_BUG,      'Bug / something broken'),
+        (CATEGORY_BILLING,  'Billing / subscription'),
+        (CATEGORY_FEATURE,  'Feature request'),
+        (CATEGORY_QUESTION, 'How-to / question'),
+        (CATEGORY_OTHER,    'Other'),
+    ]
+
+    PRIORITY_LOW    = 'low'
+    PRIORITY_NORMAL = 'normal'
+    PRIORITY_HIGH   = 'high'
+    PRIORITY_URGENT = 'urgent'
+    PRIORITY_CHOICES = [
+        (PRIORITY_LOW,    'Low'),
+        (PRIORITY_NORMAL, 'Normal'),
+        (PRIORITY_HIGH,   'High'),
+        (PRIORITY_URGENT, 'Urgent'),
+    ]
+
+    STATUS_OPEN          = 'open'
+    STATUS_IN_PROGRESS   = 'in_progress'
+    STATUS_WAITING_USER  = 'waiting_on_user'
+    STATUS_RESOLVED      = 'resolved'
+    STATUS_CLOSED        = 'closed'
+    STATUS_CHOICES = [
+        (STATUS_OPEN,         'Open'),
+        (STATUS_IN_PROGRESS,  'In Progress'),
+        (STATUS_WAITING_USER, 'Waiting on User'),
+        (STATUS_RESOLVED,     'Resolved'),
+        (STATUS_CLOSED,       'Closed'),
+    ]
+
+    tenant       = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='support_tickets')
+    subject      = models.CharField(max_length=200)
+    body         = models.TextField(help_text='Initial description of the issue')
+    category     = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default=CATEGORY_QUESTION)
+    priority     = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default=PRIORITY_NORMAL)
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN, db_index=True)
+
+    created_by_username = models.CharField(max_length=150, blank=True)
+    created_by_email    = models.CharField(max_length=320, blank=True)
+
+    created_at  = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = 'tenants'
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status', '-updated_at']),
+            models.Index(fields=['status', 'priority', '-updated_at']),
+        ]
+
+    def __str__(self):
+        return f'#{self.pk} [{self.status}] {self.subject[:50]}'
+
+    @property
+    def is_open(self):
+        return self.status not in (self.STATUS_RESOLVED, self.STATUS_CLOSED)
+
+
+class SupportMessage(models.Model):
+    """One reply on a SupportTicket thread (from tenant or platform)."""
+    AUTHOR_TENANT   = 'tenant'
+    AUTHOR_PLATFORM = 'platform'
+    AUTHOR_CHOICES  = [
+        (AUTHOR_TENANT,   'Tenant'),
+        (AUTHOR_PLATFORM, 'Platform'),
+    ]
+
+    ticket          = models.ForeignKey(SupportTicket, on_delete=models.CASCADE, related_name='messages')
+    body            = models.TextField()
+    author_username = models.CharField(max_length=150, blank=True)
+    author_role     = models.CharField(max_length=10, choices=AUTHOR_CHOICES)
+    is_internal     = models.BooleanField(default=False,
+                       help_text='Internal note — only visible to platform staff')
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = 'tenants'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'msg {self.pk} on ticket {self.ticket_id} by {self.author_role}'
+
+
+class TeamMemberInvite(models.Model):
+    """
+    Invite for a non-admin team member (editor / viewer) to join an existing
+    tenant. Created during onboarding ("Invite your team" step) or later from
+    the user management page. Consumed when the invitee clicks the link and
+    sets their password — at that point the User + UserProfile rows are
+    created inside the tenant DB.
+    """
+    ROLE_SUPERADMIN = 'superadmin'
+    ROLE_EDITOR     = 'editor'
+    ROLE_VIEWER     = 'viewer'
+    ROLE_CHOICES = [
+        (ROLE_SUPERADMIN, 'Superadmin'),
+        (ROLE_EDITOR,     'Editor'),
+        (ROLE_VIEWER,     'Viewer'),
+    ]
+
+    tenant     = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='team_invites')
+    token      = models.CharField(max_length=64, unique=True)
+    username   = models.CharField(max_length=150)
+    email      = models.CharField(max_length=320, blank=True)
+    role       = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_EDITOR)
+    invited_by_username = models.CharField(max_length=150, blank=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    expires_at  = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = 'tenants'
+        indexes = [
+            models.Index(fields=['tenant', 'consumed_at']),
+            models.Index(fields=['token']),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'username'],
+                                    condition=models.Q(consumed_at__isnull=True),
+                                    name='unique_pending_invite_per_tenant_username'),
+        ]
+
+    def __str__(self):
+        return f'invite {self.username}@{self.tenant.slug} [{self.role}]'
+
+    def is_valid(self) -> bool:
+        from django.utils import timezone
+        return (self.consumed_at is None) and (self.expires_at > timezone.now())

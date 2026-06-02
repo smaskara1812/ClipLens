@@ -2,7 +2,55 @@ from django.contrib import admin
 from .models import (
     Plan, Tenant, UsageEvent, OnboardingInvite,
     StorageAddon, AICreditPack, TopUpProduct, LeadRequest,
+    EmailConnection, EmailLog,
+    SupportTicket, SupportMessage,
+    TeamMemberInvite,
 )
+
+
+@admin.register(TeamMemberInvite)
+class TeamMemberInviteAdmin(admin.ModelAdmin):
+    list_display  = ['username', 'tenant', 'email', 'role', 'invited_by_username',
+                     'created_at', 'expires_at', 'consumed_at']
+    list_filter   = ['role', 'consumed_at']
+    search_fields = ['username', 'email', 'tenant__slug']
+    readonly_fields = ['token', 'created_at']
+
+
+class SupportMessageInline(admin.TabularInline):
+    model = SupportMessage
+    extra = 0
+    readonly_fields = ['created_at', 'author_role']
+
+
+@admin.register(SupportTicket)
+class SupportTicketAdmin(admin.ModelAdmin):
+    list_display  = ['id', 'tenant', 'subject', 'status', 'priority', 'category',
+                     'created_by_username', 'created_at', 'updated_at']
+    list_filter   = ['status', 'priority', 'category']
+    search_fields = ['subject', 'body', 'tenant__slug', 'created_by_username', 'created_by_email']
+    readonly_fields = ['created_at', 'updated_at']
+    inlines = [SupportMessageInline]
+
+
+@admin.register(EmailLog)
+class EmailLogAdmin(admin.ModelAdmin):
+    list_display  = ['queued_at', 'status', 'scope', 'tenant', 'subject',
+                     'trigger_source', 'triggered_by_username']
+    list_filter   = ['status', 'scope', 'backend_type', 'trigger_source']
+    search_fields = ['subject', 'from_email', 'error_message', 'triggered_by_username']
+    readonly_fields = [f.name for f in EmailLog._meta.fields]
+    date_hierarchy = 'queued_at'
+
+
+@admin.register(EmailConnection)
+class EmailConnectionAdmin(admin.ModelAdmin):
+    list_display  = ['name', 'scope', 'tenant', 'host', 'port',
+                     'from_email', 'is_active', 'last_tested_at']
+    list_filter   = ['scope', 'is_active', 'use_tls']
+    search_fields = ['name', 'host', 'from_email', 'tenant__slug']
+    readonly_fields = ['password_enc', 'last_tested_at', 'last_test_result',
+                       'created_at', 'updated_at']
 
 
 @admin.register(LeadRequest)

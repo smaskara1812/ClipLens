@@ -1,0 +1,219 @@
+{% extends "tenants/base.html" %}
+{% block title %}Email Log — ClipLens Control Plane{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Email Log</h1>
+  <p>Every email send attempt across the platform — successes, failures, drops, and tests.</p>
+</div>
+
+<style>
+  .stat-row { display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap; }
+  .stat-card {
+    flex: 1 1 140px; padding: 12px 16px; border-radius: 8px;
+    background:#161b22; border:1px solid #30363d;
+  }
+  .stat-card .num { font-size: 22px; font-weight: 700; }
+  .stat-card .lbl { font-size: 11px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em; }
+  .stat-card.sent    .num { color: #4ade80; }
+  .stat-card.failed  .num { color: #fca5a5; }
+  .stat-card.dropped .num { color: #fbbf24; }
+  .stat-card.queued  .num { color: #58a6ff; }
+
+  .filter-bar {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px 10px; padding: 12px; background:#161b22; border:1px solid #30363d;
+    border-radius: 8px; margin-bottom: 18px; align-items: end;
+  }
+  .filter-bar label { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em; display:block; margin-bottom:3px; }
+  .filter-bar select, .filter-bar input {
+    width: 100%; background:#0d1117; border:1px solid #30363d; color:#c9d1d9;
+    padding:6px 8px; border-radius:4px; font-size:12px;
+  }
+  .filter-bar .actions { display:flex; gap:6px; }
+
+  table.log-table {
+    width: 100%; border-collapse: collapse; background:#0d1117;
+    border:1px solid #30363d; border-radius:8px; overflow:hidden; font-size:12px;
+  }
+  .log-table th {
+    background:#161b22; padding:8px 10px; text-align:left; color:#8b949e;
+    font-weight:700; font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+    border-bottom:1px solid #30363d;
+  }
+  .log-table td { padding:8px 10px; border-bottom:1px solid #1f2937; vertical-align:top; color:#c9d1d9; }
+  .log-table tbody tr:hover { background:#161b22; }
+
+  .pill {
+    padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.04em; display:inline-block;
+  }
+  .pill-sent    { background:rgba(74,222,128,.15); color:#4ade80; }
+  .pill-failed  { background:rgba(239,68,68,.15);  color:#fca5a5; }
+  .pill-dropped { background:rgba(245,158,11,.15); color:#fbbf24; }
+  .pill-queued  { background:rgba(88,166,255,.15); color:#58a6ff; }
+
+  .scope-pill {
+    padding:1px 6px; border-radius:6px; font-size:10px; color:#8b949e;
+    background:#1f2937; text-transform:uppercase; letter-spacing:.04em;
+  }
+
+  .err-text { color:#fca5a5; font-family:'SF Mono', Menlo, monospace; font-size:11px; }
+  .muted { color:#5b6678; }
+  .recipients { font-family:'SF Mono', Menlo, monospace; font-size:11px; }
+
+  .row-expand { background:#161b22 !important; }
+  .row-expand td { border-bottom:1px solid #30363d; padding:12px 14px; font-size:12px; }
+  .detail-grid { display:grid; grid-template-columns: 130px 1fr; gap:6px 14px; max-width:100%; }
+  .detail-grid dt { color:#8b949e; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .detail-grid dd { margin:0; color:#c9d1d9; word-break:break-all; }
+  .detail-grid dd pre { margin:0; white-space:pre-wrap; background:#0d1117; border:1px solid #30363d;
+                       padding:8px 10px; border-radius:4px; font-size:11px; max-height:180px; overflow:auto; }
+
+  details.row-toggle > summary { list-style:none; cursor:pointer; }
+  details.row-toggle > summary::-webkit-details-marker { display:none; }
+
+  .pager { margin-top:14px; display:flex; gap:6px; justify-content:center; }
+  .pager a, .pager span {
+    padding:5px 10px; border-radius:4px; font-size:12px;
+    background:#161b22; border:1px solid #30363d; color:#c9d1d9; text-decoration:none;
+  }
+  .pager .current { background:#1f6feb; border-color:#1f6feb; }
+</style>
+
+<div class="stat-row">
+  <div class="stat-card sent">    <div class="num">{{ counts.sent }}</div>    <div class="lbl">Sent (24h)</div></div>
+  <div class="stat-card failed">  <div class="num">{{ counts.failed }}</div>  <div class="lbl">Failed (24h)</div></div>
+  <div class="stat-card dropped"> <div class="num">{{ counts.dropped }}</div> <div class="lbl">Dropped (24h)</div></div>
+  <div class="stat-card queued">  <div class="num">{{ counts.queued }}</div>  <div class="lbl">Queued (24h)</div></div>
+</div>
+
+<form method="get" class="filter-bar">
+  <div>
+    <label>Status</label>
+    <select name="status">
+      <option value="">All</option>
+      <option value="sent"    {% if f_status == 'sent' %}selected{% endif %}>Sent</option>
+      <option value="failed"  {% if f_status == 'failed' %}selected{% endif %}>Failed</option>
+      <option value="dropped" {% if f_status == 'dropped' %}selected{% endif %}>Dropped</option>
+      <option value="queued"  {% if f_status == 'queued' %}selected{% endif %}>Queued</option>
+    </select>
+  </div>
+  <div>
+    <label>Scope</label>
+    <select name="scope">
+      <option value="">All</option>
+      <option value="platform" {% if f_scope == 'platform' %}selected{% endif %}>Platform</option>
+      <option value="tenant"   {% if f_scope == 'tenant' %}selected{% endif %}>Tenant</option>
+    </select>
+  </div>
+  <div>
+    <label>Tenant</label>
+    <select name="tenant">
+      <option value="">All</option>
+      {% for t in tenants_list %}
+      <option value="{{ t.id }}" {% if f_tenant == t.id|stringformat:'s' %}selected{% endif %}>{{ t.slug }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Trigger</label>
+    <select name="trigger">
+      <option value="">All</option>
+      {% for s in trigger_sources %}
+      <option value="{{ s }}" {% if f_trigger == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div style="grid-column: span 2;">
+    <label>Search (subject / from / error / triggered_by)</label>
+    <input type="text" name="q" value="{{ f_search }}" placeholder="text contains…">
+  </div>
+  <div class="actions">
+    <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    <a class="btn btn-ghost btn-sm" href="{% url 'tenants:platform_email_log' %}">Reset</a>
+  </div>
+</form>
+
+<table class="log-table">
+  <thead>
+    <tr>
+      <th style="width:130px;">When</th>
+      <th style="width:60px;">Status</th>
+      <th style="width:60px;">Scope</th>
+      <th style="width:90px;">Tenant</th>
+      <th>Subject / Recipients</th>
+      <th style="width:120px;">Trigger</th>
+      <th style="width:110px;">By</th>
+      <th style="width:60px;">Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for log in page_obj %}
+    <tr>
+      <td>
+        <details class="row-toggle">
+          <summary>
+            <span>{{ log.queued_at|date:'M d H:i:s' }}</span>
+          </summary>
+        </details>
+      </td>
+      <td><span class="pill pill-{{ log.status }}">{{ log.status }}</span></td>
+      <td><span class="scope-pill">{{ log.scope }}</span></td>
+      <td>{% if log.tenant %}<a href="{% url 'tenants:tenant_detail' log.tenant.id %}">{{ log.tenant.slug }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>
+        <div style="font-weight:600;">{{ log.subject|default:'(no subject)' }}</div>
+        <div class="recipients muted">→ {{ log.recipients_display|default:'(no recipients)' }}</div>
+        {% if log.error_message %}<div class="err-text" style="margin-top:4px;">⚠ {{ log.error_class }}: {{ log.error_message|truncatechars:120 }}</div>{% endif %}
+      </td>
+      <td><span class="muted">{{ log.trigger_source|default:'—' }}</span></td>
+      <td><span class="muted">{{ log.triggered_by_username|default:'system' }}</span></td>
+      <td><span class="muted">{% if log.duration_ms %}{{ log.duration_ms }}ms{% else %}—{% endif %}</span></td>
+    </tr>
+    {# Expanded row (toggled via the details element above) — full detail #}
+    <tr class="row-expand" style="display:none;" id="expand-{{ log.pk }}">
+      <td colspan="8">
+        <dl class="detail-grid">
+          <dt>From</dt><dd>{{ log.from_email|default:'—' }}</dd>
+          <dt>To</dt><dd>{{ log.recipients_display|default:'—' }}</dd>
+          {% if log.reply_to %}<dt>Reply-To</dt><dd>{{ log.reply_to }}</dd>{% endif %}
+          <dt>Backend</dt><dd>{{ log.get_backend_type_display }}{% if log.connection_name_snapshot %} · {{ log.connection_name_snapshot }}{% endif %}</dd>
+          <dt>Template</dt><dd>{{ log.template_key|default:'(none)' }}</dd>
+          <dt>Celery ID</dt><dd>{{ log.celery_task_id|default:'—' }}</dd>
+          <dt>Queued</dt><dd>{{ log.queued_at|date:'Y-m-d H:i:s' }}</dd>
+          {% if log.sent_at %}<dt>Sent</dt><dd>{{ log.sent_at|date:'Y-m-d H:i:s' }}</dd>{% endif %}
+          {% if log.failed_at %}<dt>Failed</dt><dd>{{ log.failed_at|date:'Y-m-d H:i:s' }}</dd>{% endif %}
+          {% if log.error_message %}<dt>Error</dt><dd class="err-text">{{ log.error_class }}: {{ log.error_message }}</dd>{% endif %}
+          {% if log.body_preview %}<dt>Body</dt><dd><pre>{{ log.body_preview }}</pre></dd>{% endif %}
+        </dl>
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="8" style="text-align:center; padding:30px; color:#5b6678;">No email log entries match these filters.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="pager">
+  {% if page_obj.has_previous %}
+  <a href="?{% for k,v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}page={{ page_obj.previous_page_number }}">‹ Prev</a>
+  {% endif %}
+  <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+  <a href="?{% for k,v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}page={{ page_obj.next_page_number }}">Next ›</a>
+  {% endif %}
+</div>
+
+<script>
+// Click a row's timestamp to toggle its detail row
+document.querySelectorAll('details.row-toggle').forEach(d => {
+  d.addEventListener('toggle', e => {
+    const row = d.closest('tr');
+    const expandRow = row.nextElementSibling;
+    if (expandRow && expandRow.classList.contains('row-expand')) {
+      expandRow.style.display = d.open ? 'table-row' : 'none';
+    }
+  });
+});
+</script>
+{% endblock %}

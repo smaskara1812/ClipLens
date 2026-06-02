@@ -1,0 +1,103 @@
+{% extends 'videos/base.html' %}
+{% block title %}Ticket #{{ ticket.pk }} — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .ticket-head { background: var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding:16px 20px; margin-bottom:16px; }
+  .ticket-head h2 { margin:0 0 6px; font-size:18px; }
+  .ticket-meta { color:var(--text-muted); font-size:12px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .pill { padding:2px 8px; border-radius:8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .pill-open { background:rgba(88,166,255,.15); color:#58a6ff; }
+  .pill-in_progress { background:rgba(168,85,247,.15); color:#c084fc; }
+  .pill-waiting_on_user { background:rgba(245,158,11,.15); color:#fbbf24; }
+  .pill-resolved { background:rgba(74,222,128,.15); color:#4ade80; }
+  .pill-closed { background: var(--bg); color: var(--text-muted); }
+  .pill-low{background:var(--bg);color:var(--text-muted);} .pill-normal{background:rgba(88,166,255,.12);color:#58a6ff;}
+  .pill-high{background:rgba(245,158,11,.15);color:#fbbf24;} .pill-urgent{background:rgba(239,68,68,.15);color:#fca5a5;}
+
+  .msg { padding:14px 18px; border-radius:8px; margin-bottom:10px; border:1px solid var(--border); }
+  .msg.tenant   { background:var(--surface); border-left:3px solid #58a6ff; }
+  .msg.platform { background:var(--bg);      border-left:3px solid #4ade80; }
+  .msg-head { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--text-muted); margin-bottom:6px; }
+  .msg-author { font-weight:700; color:var(--text); }
+  .msg-body { white-space:pre-wrap; font-size:13px; line-height:1.6; color:var(--text); }
+
+  .reply-card { background:var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding:16px 20px; }
+  .reply-card textarea { width:100%; min-height:120px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:4px; font-family:inherit; font-size:13px; resize:vertical; }
+  .reply-actions { display:flex; gap:10px; margin-top:10px; align-items:center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_support_detail' %}
+
+  <div style="margin-bottom:14px;">
+    <a href="{% url 'org_support_list' %}" style="color:var(--text-muted); font-size:13px; text-decoration:none;">← All tickets</a>
+  </div>
+
+  {% if messages %}
+  <ul style="list-style:none; padding:0;">
+    {% for m in messages %}
+    <li style="padding:10px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+               background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+               border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+               color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="ticket-head">
+    <h2>#{{ ticket.pk }} · {{ ticket.subject }}</h2>
+    <div class="ticket-meta">
+      <span class="pill pill-{{ ticket.status }}">{{ ticket.get_status_display }}</span>
+      <span class="pill pill-{{ ticket.priority }}">{{ ticket.get_priority_display }}</span>
+      <span>{{ ticket.get_category_display }}</span>
+      <span>raised by {{ ticket.created_by_username }} · {{ ticket.created_at|date:'M d, Y H:i' }}</span>
+    </div>
+  </div>
+
+  <div class="msg tenant">
+    <div class="msg-head">
+      <span class="msg-author">{{ ticket.created_by_username }}</span>
+      <span>{{ ticket.created_at|date:'M d, Y H:i' }}</span>
+      <span class="pill" style="background:rgba(88,166,255,.15); color:#58a6ff;">Tenant · original</span>
+    </div>
+    <div class="msg-body">{{ ticket.body }}</div>
+  </div>
+
+  {% for m in thread %}
+  <div class="msg {{ m.author_role }}">
+    <div class="msg-head">
+      <span class="msg-author">{{ m.author_username }}</span>
+      <span>{{ m.created_at|date:'M d, Y H:i' }}</span>
+      <span class="pill" style="background:rgba({% if m.author_role == 'platform' %}74,222,128{% else %}88,166,255{% endif %},.15); color:{% if m.author_role == 'platform' %}#4ade80{% else %}#58a6ff{% endif %};">
+        {% if m.author_role == 'platform' %}ClipLens Team{% else %}Tenant{% endif %}
+      </span>
+    </div>
+    <div class="msg-body">{{ m.body }}</div>
+  </div>
+  {% endfor %}
+
+  {% if ticket.is_open %}
+  <div class="reply-card" style="margin-top:18px;">
+    <h3 style="margin:0 0 10px; font-size:14px;">Add a reply</h3>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reply">
+      <textarea name="body" placeholder="Type your reply…" required></textarea>
+      <div class="reply-actions">
+        <button class="btn btn-primary" type="submit">Send reply</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost" type="submit" name="action" value="close"
+                onclick="return confirm('Close this ticket? You can always raise a new one.')">Close ticket</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted); padding:18px; text-align:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin-top:18px;">
+    This ticket is <strong>{{ ticket.get_status_display }}</strong>. Raise a new ticket if you have a follow-up.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -2163,6 +2163,566 @@ def org_usage_page(request):
 # ── Top-up purchase (Stripe later — mock checkout for now) ───────────────────
 
 @superuser_required
+def org_email_settings(request):
+    """Tenant-scope email connections (used for quota warnings, internal notifications)."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_email_settings.html', {'no_tenant': True})
+
+    from tenants.models import EmailConnection
+    from tenants.views import _email_form_save, _activate_only
+
+    if request.method == 'POST':
+        action = request.POST.get('action', '')
+        conn_id = request.POST.get('connection_id', '')
+        conn = None
+        if conn_id:
+            try:
+                conn = EmailConnection.objects.using('control').get(
+                    pk=int(conn_id), scope=EmailConnection.SCOPE_TENANT, tenant=tenant
+                )
+            except EmailConnection.DoesNotExist:
+                messages.error(request, 'Connection not found.')
+                return redirect('org_email_settings')
+
+        if action == 'create':
+            conn = EmailConnection()
+            _email_form_save(request, conn, EmailConnection.SCOPE_TENANT, tenant=tenant)
+            messages.success(request, f"Created '{conn.name}'.")
+        elif action == 'update' and conn:
+            _email_form_save(request, conn, EmailConnection.SCOPE_TENANT, tenant=tenant)
+            messages.success(request, f"Updated '{conn.name}'.")
+        elif action == 'delete' and conn:
+            name = conn.name
+            conn.delete(using='control')
+            messages.success(request, f"Deleted '{name}'.")
+        elif action == 'activate' and conn:
+            _activate_only(conn)
+            messages.success(request, f"Activated '{conn.name}'.")
+        elif action == 'test' and conn:
+            recipient = (request.POST.get('test_recipient', '') or request.user.email or '').strip()
+            is_ajax = request.POST.get('ajax') == '1' or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            if not recipient:
+                if is_ajax:
+                    from django.http import JsonResponse
+                    return JsonResponse({'ok': False, 'error': 'Provide a test recipient email.'}, status=400)
+                messages.error(request, 'Provide a test recipient email.')
+            else:
+                from tenants.email_utils import test_connection
+                ok, msg_text = test_connection(conn, recipient,
+                                               triggered_by_username=getattr(request.user, 'username', '') or '')
+                if is_ajax:
+                    from django.http import JsonResponse
+                    return JsonResponse({'ok': ok, 'error': '' if ok else msg_text, 'recipient': recipient})
+                if ok:
+                    messages.success(request, f"Test email sent to {recipient}.")
+                else:
+                    messages.error(request, f"Test failed: {msg_text}")
+        return redirect('org_email_settings')
+
+    connections = list(
+        EmailConnection.objects.using('control')
+        .filter(scope=EmailConnection.SCOPE_TENANT, tenant=tenant)
+    )
+    return render(request, 'videos/org_email_settings.html', {
+        'tenant':        tenant,
+        'connections':   connections,
+        'email_enabled': getattr(settings, 'EMAIL_ENABLED', True),
+        'use_console':   getattr(settings, 'EMAIL_USE_CONSOLE', False),
+    })
+
+
+@superuser_required
+def org_email_log(request):
+    """Tenant-scoped email log — shows only this tenant's email activity."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_email_log.html', {'no_tenant': True})
+
+    from tenants.models import EmailLog
+    from django.core.paginator import Paginator
+    from django.utils import timezone
+    from datetime import timedelta
+
+    qs = EmailLog.objects.using('control').filter(tenant=tenant).select_related('connection')
+
+    f_status  = request.GET.get('status', '')
+    f_trigger = request.GET.get('trigger', '')
+    f_search  = request.GET.get('q', '').strip()
+    if f_status:  qs = qs.filter(status=f_status)
+    if f_trigger: qs = qs.filter(trigger_source=f_trigger)
+    if f_search:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(subject__icontains=f_search) |
+            Q(from_email__icontains=f_search) |
+            Q(error_message__icontains=f_search) |
+            Q(triggered_by_username__icontains=f_search)
+        )
+
+    paginator = Paginator(qs, 50)
+    page = paginator.get_page(request.GET.get('page'))
+
+    since = timezone.now() - timedelta(hours=24)
+    counts = {
+        'sent':    EmailLog.objects.using('control').filter(tenant=tenant, status='sent',    queued_at__gte=since).count(),
+        'failed':  EmailLog.objects.using('control').filter(tenant=tenant, status='failed',  queued_at__gte=since).count(),
+        'dropped': EmailLog.objects.using('control').filter(tenant=tenant, status='dropped', queued_at__gte=since).count(),
+        'queued':  EmailLog.objects.using('control').filter(tenant=tenant, status='queued',  queued_at__gte=since).count(),
+    }
+    trigger_sources = list(
+        EmailLog.objects.using('control')
+        .filter(tenant=tenant).exclude(trigger_source='')
+        .values_list('trigger_source', flat=True).distinct().order_by('trigger_source')
+    )
+
+    return render(request, 'videos/org_email_log.html', {
+        'tenant': tenant, 'page_obj': page, 'counts': counts,
+        'trigger_sources': trigger_sources,
+        'f_status': f_status, 'f_trigger': f_trigger, 'f_search': f_search,
+    })
+
+
+# ── Team invites (tenant side) ────────────────────────────────────────────────
+
+@superuser_required
+def org_team_invites(request):
+    """
+    Admin panel page to invite team members and manage pending invites.
+    Bounded by tenant.plan.max_users (total cap including current users + pending).
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_team_invites.html', {'no_tenant': True})
+
+    from tenants.models import TeamMemberInvite
+    from tenants.views import _create_team_invites_from_post
+
+    plan          = tenant.plan
+    max_total     = int(plan.max_users or 0) if plan else 0  # 0 = unlimited
+    current_users = User.objects.count()
+    pending_count = TeamMemberInvite.objects.using('control').filter(
+                        tenant=tenant, consumed_at__isnull=True).count()
+    used_slots    = current_users + pending_count
+    invites_left  = max(0, max_total - used_slots) if max_total else 999
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'invite')
+
+        if action == 'revoke':
+            invite_id = request.POST.get('invite_id', '')
+            try:
+                inv = TeamMemberInvite.objects.using('control').get(
+                    pk=int(invite_id), tenant=tenant, consumed_at__isnull=True)
+                username = inv.username
+                inv.delete(using='control')
+                messages.success(request, f"Revoked invite for '{username}'.")
+            except (TeamMemberInvite.DoesNotExist, ValueError):
+                messages.error(request, 'Invite not found or already used.')
+            return redirect('org_team_invites')
+
+        if action == 'resend':
+            invite_id = request.POST.get('invite_id', '')
+            try:
+                inv = TeamMemberInvite.objects.using('control').get(
+                    pk=int(invite_id), tenant=tenant, consumed_at__isnull=True)
+                # Push a fresh email through the queue
+                from tenants.tasks import queue_email
+                from datetime import timedelta as _td
+                from django.utils import timezone as _tz
+                # Extend the expiry so the link stays valid
+                inv.expires_at = _tz.now() + _td(days=7)
+                inv.save(using='control', update_fields=['expires_at'])
+
+                scheme = 'https' if request.is_secure() else 'http'
+                accept_url = f'{scheme}://{request.get_host()}/team-invite/{inv.token}/'
+                queue_email(
+                    scope='platform',
+                    trigger_source='team_member_invite_resend',
+                    triggered_by_username=request.user.username,
+                    tenant=tenant,
+                    subject=f'Reminder: join {tenant.name} on ClipLens',
+                    body=(
+                        f'Hi {inv.username},\n\n'
+                        f'This is a reminder that {request.user.username} invited you to join '
+                        f'"{tenant.name}" on ClipLens as a {inv.get_role_display()}.\n\n'
+                        f'Click this link within 7 days to set your password and log in:\n'
+                        f'{accept_url}\n'
+                    ),
+                    recipients=[inv.email],
+                )
+                messages.success(request, f"Invite re-sent to {inv.email}.")
+            except (TeamMemberInvite.DoesNotExist, ValueError):
+                messages.error(request, 'Invite not found or already used.')
+            return redirect('org_team_invites')
+
+        if action == 'invite':
+            usernames = request.POST.getlist('invite_username[]') or request.POST.getlist('invite_username')
+            emails    = request.POST.getlist('invite_email[]')    or request.POST.getlist('invite_email')
+            non_empty = sum(1 for i, u in enumerate(usernames)
+                            if u.strip() and (i < len(emails) and emails[i].strip()))
+            if max_total and non_empty > invites_left:
+                messages.error(request,
+                    f"Your plan allows {max_total} users total. You have {used_slots} used "
+                    f"(current users + pending invites) — you can invite at most {invites_left} more.")
+                return redirect('org_team_invites')
+
+            n = _create_team_invites_from_post(
+                request, tenant,
+                inviter_username=request.user.username,
+                max_create=invites_left if max_total else 999,
+            )
+            if not n:
+                messages.error(request, 'No valid invite rows (need username + email).')
+            return redirect('org_team_invites')
+
+    # ── GET ── list current users + pending invites
+    current_user_rows = list(
+        User.objects.select_related('profile')
+        .order_by('-is_active', 'username')
+        .values('id', 'username', 'email', 'is_active', 'date_joined', 'profile__role')
+    )
+    pending_invites = list(
+        TeamMemberInvite.objects.using('control')
+        .filter(tenant=tenant, consumed_at__isnull=True)
+        .order_by('-created_at')
+    )
+    consumed_invites = list(
+        TeamMemberInvite.objects.using('control')
+        .filter(tenant=tenant, consumed_at__isnull=False)
+        .order_by('-consumed_at')[:20]
+    )
+
+    return render(request, 'videos/org_team_invites.html', {
+        'tenant':           tenant,
+        'plan':             plan,
+        'max_total':        max_total,
+        'current_users':    current_users,
+        'pending_count':    pending_count,
+        'used_slots':       used_slots,
+        'invites_left':     invites_left,
+        'current_user_rows': current_user_rows,
+        'pending_invites':  pending_invites,
+        'consumed_invites': consumed_invites,
+    })
+
+
+# ── User lifecycle: suspend → reassign → delete ──────────────────────────────
+
+def _user_dependencies(user):
+    """
+    Count everything that would be affected by deleting `user`. Used to
+    decide whether the admin must reassign first.
+
+    Returns a dict like:
+      {
+        'videos': 4, 'photos': 12, 'channels_owned': 1, 'channels_editor_of': 3,
+        'albums': 0, 'playlists': 2, 'api_keys': 1,
+        'blocking': True/False,
+      }
+    'blocking' = True when there's content/configuration that would either
+    cascade-delete (Album / Playlist / APIKey) or orphan (Video / Photo /
+    Channel) on deletion. The admin must reassign before delete.
+    """
+    from .models import Video, Photo, Channel, Album, Playlist, APIKey
+    videos        = Video.objects.filter(uploaded_by=user.username).count()
+    photos        = Photo.objects.filter(uploaded_by=user.username).count()
+    channels_own  = Channel.objects.filter(owner=user).count()
+    channels_ed   = user.editable_channels.count() if hasattr(user, 'editable_channels') else 0
+    albums        = Album.objects.filter(owner=user).count()
+    playlists     = Playlist.objects.filter(owner=user).count()
+    api_keys      = APIKey.objects.filter(owner=user).count()
+
+    blocking = bool(videos or photos or channels_own or albums or playlists or api_keys)
+    return {
+        'videos':              videos,
+        'photos':              photos,
+        'channels_owned':      channels_own,
+        'channels_editor_of':  channels_ed,
+        'albums':              albums,
+        'playlists':           playlists,
+        'api_keys':            api_keys,
+        'blocking':            blocking,
+    }
+
+
+def _reassign_user_content(from_user, to_user):
+    """Move all content / ownership from from_user → to_user. Returns counts."""
+    from .models import Video, Photo, Channel, Album, Playlist
+    v = Video.objects.filter(uploaded_by=from_user.username).update(uploaded_by=to_user.username)
+    p = Photo.objects.filter(uploaded_by=from_user.username).update(uploaded_by=to_user.username)
+    c = Channel.objects.filter(owner=from_user).update(owner=to_user)
+    a = Album.objects.filter(owner=from_user).update(owner=to_user)
+    pl = Playlist.objects.filter(owner=from_user).update(owner=to_user)
+
+    # Migrate channel-editor M2M memberships (move from_user's grants onto to_user
+    # without duplicates).
+    for ch in from_user.editable_channels.all():
+        ch.editors.remove(from_user)
+        ch.editors.add(to_user)
+    return {'videos': v, 'photos': p, 'channels': c, 'albums': a, 'playlists': pl}
+
+
+@superuser_required
+def user_lifecycle(request, user_id):
+    """
+    Detail page for a single user: shows status, role, dependency counts,
+    and provides Suspend / Reactivate / Reassign / Delete actions.
+    """
+    try:
+        target = User.objects.select_related('profile').get(pk=user_id)
+    except User.DoesNotExist:
+        messages.error(request, 'User not found.')
+        return redirect('user_management')
+
+    if target.pk == request.user.pk:
+        messages.error(request, "You can't manage your own account from here.")
+        return redirect('user_management')
+
+    # Don't allow lifecycle ops on platform owners (defensive)
+    try:
+        if getattr(target.profile, 'is_platform_owner', False):
+            messages.error(request, 'Platform owners are managed from the control plane.')
+            return redirect('user_management')
+    except Exception:
+        pass
+
+    if request.method == 'POST':
+        action = request.POST.get('action', '')
+
+        if action == 'suspend':
+            if not target.is_active:
+                messages.info(request, f"'{target.username}' is already suspended.")
+            else:
+                target.is_active = False
+                target.save(update_fields=['is_active'])
+                log_activity(
+                    request, 'role_change', target=target,
+                    target_type='User', target_label=target.username,
+                    verb=f'suspended user {target.username}',
+                    changes={'is_active': {'before': True, 'after': False}},
+                )
+                messages.success(request, f"'{target.username}' has been suspended. They can no longer log in and will not receive any emails.")
+            return redirect('user_lifecycle', user_id=target.pk)
+
+        if action == 'reactivate':
+            target.is_active = True
+            target.save(update_fields=['is_active'])
+            log_activity(
+                request, 'role_change', target=target,
+                target_type='User', target_label=target.username,
+                verb=f'reactivated user {target.username}',
+                changes={'is_active': {'before': False, 'after': True}},
+            )
+            messages.success(request, f"'{target.username}' has been reactivated.")
+            return redirect('user_lifecycle', user_id=target.pk)
+
+        if action == 'reassign':
+            to_id = request.POST.get('to_user_id', '')
+            try:
+                to_user = User.objects.get(pk=int(to_id))
+            except (User.DoesNotExist, ValueError):
+                messages.error(request, 'Pick a valid target user.')
+                return redirect('user_lifecycle', user_id=target.pk)
+            if to_user.pk == target.pk:
+                messages.error(request, "Can't reassign to the same user.")
+                return redirect('user_lifecycle', user_id=target.pk)
+            if not to_user.is_active:
+                messages.error(request, f"Can't reassign to suspended user '{to_user.username}'.")
+                return redirect('user_lifecycle', user_id=target.pk)
+
+            counts = _reassign_user_content(target, to_user)
+            summary = ', '.join(f'{v} {k}' for k, v in counts.items() if v)
+            log_activity(
+                request, 'role_change', target=target,
+                target_type='User', target_label=target.username,
+                verb=f'reassigned content from {target.username} to {to_user.username}',
+                changes={'reassign': {'from': target.username, 'to': to_user.username, 'counts': counts}},
+            )
+            messages.success(request, f"Reassigned to '{to_user.username}': {summary or 'nothing to move'}.")
+            return redirect('user_lifecycle', user_id=target.pk)
+
+        if action == 'revoke_api_keys':
+            from .models import APIKey
+            n = APIKey.objects.filter(owner=target).delete()[0]
+            messages.success(request, f"Revoked {n} API key(s) for '{target.username}'.")
+            return redirect('user_lifecycle', user_id=target.pk)
+
+        if action == 'delete':
+            deps = _user_dependencies(target)
+            if deps['blocking']:
+                messages.error(request, 'Cannot delete — reassign their content / channels / albums first.')
+                return redirect('user_lifecycle', user_id=target.pk)
+            if target.is_active:
+                messages.error(request, 'Suspend the user before deleting.')
+                return redirect('user_lifecycle', user_id=target.pk)
+            username = target.username
+            log_activity(
+                request, 'role_change', target=target,
+                target_type='User', target_label=username,
+                verb=f'deleted user {username}',
+                changes={'deleted': True},
+            )
+            target.delete()
+            messages.success(request, f"User '{username}' has been deleted.")
+            return redirect('user_management')
+
+        messages.error(request, 'Unknown action.')
+        return redirect('user_lifecycle', user_id=target.pk)
+
+    # ── GET ──
+    deps = _user_dependencies(target)
+    # Eligible reassign targets: other active users (excluding viewers? include all — admin picks)
+    candidates = list(
+        User.objects.exclude(pk=target.pk).filter(is_active=True)
+        .select_related('profile').order_by('username')
+        .values('id', 'username', 'email', 'profile__role')
+    )
+    try:
+        role = target.profile.role
+    except Exception:
+        role = 'viewer'
+
+    return render(request, 'videos/user_lifecycle.html', {
+        'target':     target,
+        'target_role': role,
+        'deps':       deps,
+        'candidates': candidates,
+    })
+
+
+# ── Support tickets (tenant side) ────────────────────────────────────────────
+
+@superuser_required
+def org_support_list(request):
+    """List of support tickets raised by this org + form to raise a new one."""
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return render(request, 'videos/org_support.html', {'no_tenant': True})
+
+    from tenants.models import SupportTicket
+
+    if request.method == 'POST':
+        subject  = request.POST.get('subject', '').strip()[:200]
+        body     = request.POST.get('body', '').strip()
+        category = request.POST.get('category', SupportTicket.CATEGORY_QUESTION)
+        priority = request.POST.get('priority', SupportTicket.PRIORITY_NORMAL)
+        if not subject or not body:
+            messages.error(request, 'Subject and description are required.')
+        else:
+            ticket = SupportTicket.objects.using('control').create(
+                tenant=tenant, subject=subject, body=body,
+                category=category, priority=priority,
+                created_by_username=request.user.username,
+                created_by_email=request.user.email or '',
+            )
+            # Notify platform owners
+            try:
+                from tenants.tasks import queue_email
+                from django.contrib.auth.models import User
+                owner_emails = list(
+                    User.objects.filter(profile__is_platform_owner=True, email__isnull=False)
+                    .exclude(email='').values_list('email', flat=True)
+                )
+                if owner_emails:
+                    queue_email(
+                        scope='platform',
+                        trigger_source='support_ticket_created',
+                        triggered_by_username=request.user.username,
+                        tenant=tenant,
+                        subject=f'[Support #{ticket.pk}] {tenant.slug}: {subject}',
+                        body=(
+                            f'New support ticket from tenant "{tenant.slug}" ({tenant.name}).\n\n'
+                            f'Subject:   {subject}\n'
+                            f'Category:  {ticket.get_category_display()}\n'
+                            f'Priority:  {ticket.get_priority_display()}\n'
+                            f'From:      {request.user.username} <{request.user.email or "—"}>\n\n'
+                            f'Description:\n{body}\n'
+                        ),
+                        recipients=owner_emails,
+                        reply_to=request.user.email or None,
+                    )
+            except Exception:
+                logger.exception('support_ticket: failed to notify platform owners')
+
+            messages.success(request, f'Ticket #{ticket.pk} raised. We will get back to you soon.')
+            return redirect('org_support_detail', ticket_id=ticket.pk)
+
+    tickets = list(
+        SupportTicket.objects.using('control')
+        .filter(tenant=tenant).order_by('-updated_at')
+    )
+    return render(request, 'videos/org_support.html', {
+        'tenant': tenant,
+        'tickets': tickets,
+        'category_choices': SupportTicket.CATEGORY_CHOICES,
+        'priority_choices': SupportTicket.PRIORITY_CHOICES,
+    })
+
+
+@superuser_required
+def org_support_detail(request, ticket_id):
+    """Tenant-side ticket detail — show thread, reply, mark resolved."""
+    tenant = getattr(request, 'tenant', None)
+    from tenants.models import SupportTicket, SupportMessage
+    try:
+        ticket = SupportTicket.objects.using('control').get(pk=ticket_id, tenant=tenant)
+    except SupportTicket.DoesNotExist:
+        messages.error(request, 'Ticket not found.')
+        return redirect('org_support_list')
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'reply')
+        if action == 'reply':
+            body = request.POST.get('body', '').strip()
+            if body:
+                SupportMessage.objects.using('control').create(
+                    ticket=ticket, body=body,
+                    author_username=request.user.username,
+                    author_role=SupportMessage.AUTHOR_TENANT,
+                )
+                # Re-open if previously waiting on user
+                if ticket.status == SupportTicket.STATUS_WAITING_USER:
+                    ticket.status = SupportTicket.STATUS_OPEN
+                ticket.save(using='control', update_fields=['status', 'updated_at'])
+                # Notify platform
+                try:
+                    from tenants.tasks import queue_email
+                    from django.contrib.auth.models import User
+                    owner_emails = list(
+                        User.objects.filter(profile__is_platform_owner=True, email__isnull=False)
+                        .exclude(email='').values_list('email', flat=True)
+                    )
+                    if owner_emails:
+                        queue_email(
+                            scope='platform',
+                            trigger_source='support_reply_from_tenant',
+                            triggered_by_username=request.user.username,
+                            tenant=tenant,
+                            subject=f'[Support #{ticket.pk}] Reply from {tenant.slug}: {ticket.subject}',
+                            body=f'{request.user.username} replied on ticket #{ticket.pk}:\n\n{body}\n',
+                            recipients=owner_emails,
+                            reply_to=request.user.email or None,
+                        )
+                except Exception:
+                    logger.exception('support reply notify failed')
+                messages.success(request, 'Reply sent.')
+        elif action == 'close':
+            ticket.status = SupportTicket.STATUS_CLOSED
+            from django.utils import timezone as _tz
+            ticket.resolved_at = ticket.resolved_at or _tz.now()
+            ticket.save(using='control', update_fields=['status', 'resolved_at', 'updated_at'])
+            messages.success(request, 'Ticket closed.')
+        return redirect('org_support_detail', ticket_id=ticket.pk)
+
+    # Tenant view hides internal notes
+    thread = list(ticket.messages.using('control').filter(is_internal=False).order_by('created_at'))
+    return render(request, 'videos/org_support_detail.html', {
+        'tenant': tenant, 'ticket': ticket, 'thread': thread,
+    })
+
+
+@superuser_required
 def org_ai_features(request):
     """
     Org admin page to enable/disable each AI feature in the pipeline.
@@ -2626,7 +3186,13 @@ def org_plan_upgrade_page(request):
         return render(request, 'videos/org_plan_upgrade.html', {'no_tenant': True})
 
     from tenants.models import Plan
-    plans = list(Plan.objects.using('control').all().order_by('price_usd'))
+    # Show only active plans + the tenant's current plan (so they always see what they're on,
+    # even if the platform owner disabled it after they subscribed).
+    qs = Plan.objects.using('control').filter(is_active=True)
+    if tenant.plan_id:
+        from django.db.models import Q
+        qs = Plan.objects.using('control').filter(Q(is_active=True) | Q(pk=tenant.plan_id))
+    plans = list(qs.distinct().order_by('price_usd'))
 
     return render(request, 'videos/org_plan_upgrade.html', {
         'tenant':         tenant,

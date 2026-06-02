@@ -183,6 +183,22 @@ STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 STRIPE_WEBHOOK_SECRET  = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 STRIPE_ENABLED         = bool(STRIPE_SECRET_KEY)
 
+# ── Managed email / SMTP system ──────────────────────────────────────────────
+# Master kill-switch: when False, all send_managed_email() calls are no-ops.
+EMAIL_ENABLED     = os.getenv('EMAIL_ENABLED', 'true').lower() == 'true'
+
+# When True, emails are printed to the application console instead of being
+# sent via SMTP. Useful for development. Bypasses managed connections entirely.
+EMAIL_USE_CONSOLE = os.getenv('EMAIL_USE_CONSOLE', 'true').lower() == 'true'
+
+# Fernet key for encrypting saved SMTP passwords at rest in the control DB.
+# Generate one with:
+#     python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# If unset in development, a deterministic fallback derived from SECRET_KEY is used
+# (so you don't lose access to dev test data on restart). In production set this
+# to a real Fernet key in .env — losing it means saved SMTP passwords are unrecoverable.
+EMAIL_SECRET_KEY  = os.getenv('EMAIL_SECRET_KEY', '')
+
 if MULTI_TENANT and _use_postgres:
     # Control plane DB — stores Tenant, Plan, UsageEvent rows
     DATABASES['control'] = {

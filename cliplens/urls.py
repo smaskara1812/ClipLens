@@ -9,6 +9,7 @@ from tenants.media_serve import protected_media
 from tenants.views import (
     onboard as tenant_onboard,
     onboard_success as tenant_onboard_success,
+    team_member_onboard as tenant_team_member_onboard,
     stripe_webhook as tenant_stripe_webhook,
     landing_page as tenant_landing_page,
     submit_lead as tenant_submit_lead,
@@ -28,6 +29,7 @@ urlpatterns = [
     # ── Onboarding — reachable at the TENANT subdomain (orgX.cliplens.local/onboard/<token>/)
     path('onboard/<str:token>/', tenant_onboard, name='onboard'),
     path('onboard/<str:token>/success/', tenant_onboard_success, name='onboard_success'),
+    path('team-invite/<str:token>/', tenant_team_member_onboard, name='team_member_onboard'),
 
     # ── Stripe webhook (no auth, signature-verified inside)
     path('api/stripe/webhook/', tenant_stripe_webhook, name='stripe_webhook'),

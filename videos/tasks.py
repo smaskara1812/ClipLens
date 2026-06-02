@@ -3874,3 +3874,4 @@ def encode_single_quality_task(self, video_id: str, target_height: int, **kwargs
 
     logger.info(f'[encode_single] {label} added to {video_id}; qualities now: {existing}')
     return {'ok': True, 'quality': label, 'all_qualities': existing}
+

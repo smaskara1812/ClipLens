@@ -104,14 +104,11 @@
 </head>
 <body>
   <div class="topbar">
-    <div class="topbar-brand">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2">
-        <polygon points="23 7 16 12 23 17 23 7"/>
-        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-      </svg>
-      ClipLens
+    <a href="{% url 'tenants:dashboard' %}" class="topbar-brand" style="text-decoration:none;color:inherit;">
+      <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens"
+           style="height:28px; width:auto; display:block;">
       <span class="badge">Control Plane</span>
-    </div>
+    </a>
     <nav class="topbar-nav">
       <a href="{% url 'tenants:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
       <a href="{% url 'tenants:manage_plans' %}" class="{% block nav_plans %}{% endblock %}">Plans</a>
@@ -140,6 +137,9 @@
       <a href="{% url 'tenants:manage_topups' %}">Top-up Products</a>
       <div class="sidebar-section">Sales</div>
       <a href="{% url 'tenants:manage_leads' %}">Leads</a>
+      <a href="{% url 'tenants:platform_email' %}">Email Settings</a>
+      <a href="{% url 'tenants:platform_email_log' %}">Email Log</a>
+      <a href="{% url 'tenants:platform_support_list' %}">Support Inbox</a>
       <div class="sidebar-section">System</div>
       <a href="{% url 'tenants:system_health' %}">Health Check</a>
       <a href="{% url 'tenants:system_databases' %}">Databases</a>

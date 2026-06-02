@@ -145,11 +145,10 @@
               <option value="superadmin" {% if u.profile.role == 'superadmin' %}selected{% endif %}>Superadmin</option>
             </select>
             {% if is_superadmin %}
-            <button class="btn btn-ghost btn-sm" style="color:var(--red);"
-                    onclick="deleteUser({{ u.id }}, '{{ u.username|escapejs }}', this)"
-                    title="Delete user">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-            </button>
+            <a class="btn btn-ghost btn-sm" href="{% url 'user_lifecycle' u.id %}"
+               title="Manage user (suspend, reassign content, delete)">
+              Manage
+            </a>
             {% endif %}
             {% else %}
             <span style="font-size:12px;color:var(--text-subtle);">You</span>

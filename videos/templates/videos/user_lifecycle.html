@@ -1,0 +1,232 @@
+{% extends 'videos/base.html' %}
+{% block title %}Manage {{ target.username }} — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .header-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 22px; margin-bottom: 16px;
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  }
+  .avatar {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700; color: var(--text);
+  }
+  .header-main { flex: 1; min-width: 200px; }
+  .header-main h1 { margin: 0 0 4px; font-size: 22px; }
+  .header-meta { color: var(--text-muted); font-size: 13px; }
+
+  .pill { padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .pill-active   { background: rgba(74,222,128,.15); color: #4ade80; }
+  .pill-suspended{ background: rgba(245,158,11,.15); color: #fbbf24; }
+  .pill-superadmin { background: rgba(168,85,247,.15); color: #c084fc; }
+  .pill-editor     { background: rgba(88,166,255,.15); color: #58a6ff; }
+  .pill-viewer     { background: var(--bg); color: var(--text-muted); }
+
+  .step {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px;
+    position: relative;
+  }
+  .step.done   { border-left: 3px solid #4ade80; }
+  .step.todo   { border-left: 3px solid #58a6ff; }
+  .step.blocked{ border-left: 3px solid #5b6678; opacity: .6; }
+  .step h3 { margin: 0 0 8px; font-size: 15px; display: flex; align-items: center; gap: 10px; }
+  .step h3 .num {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--bg);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+  }
+  .step.done h3 .num { background: rgba(74,222,128,.2); color: #4ade80; }
+  .step p { margin: 0 0 12px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+
+  .dep-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px; margin: 12px 0;
+  }
+  .dep-tile {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; text-align: center;
+  }
+  .dep-tile .n   { font-size: 22px; font-weight: 700; }
+  .dep-tile .lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
+  .dep-tile.has { border-color: #fbbf24; }
+  .dep-tile.has .n { color: #fbbf24; }
+  .dep-tile.clean .n { color: #4ade80; }
+
+  .reassign-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .reassign-row select { flex: 1; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 13px; }
+
+  .btn-danger-solid { background: #dc2626; color: #fff; border: none; padding: 9px 18px; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  .btn-danger-solid:disabled { background: var(--border); color: var(--text-subtle); cursor: not-allowed; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='user_management' %}
+
+  <div style="margin-bottom:14px;">
+    <a href="{% url 'user_management' %}" style="color:var(--text-muted); font-size:13px; text-decoration:none;">← Back to all users</a>
+  </div>
+
+  {% if messages %}
+  <ul style="list-style:none; padding:0;">
+    {% for m in messages %}
+    <li style="padding:10px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+               background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+               border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+               color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {# ── Header ──────────────────────────────────────────────────────────── #}
+  <div class="header-card">
+    <div class="avatar">{{ target.username|first|upper }}</div>
+    <div class="header-main">
+      <h1>{{ target.username }}</h1>
+      <div class="header-meta">
+        {{ target.email|default:'—' }} ·
+        <span class="pill pill-{{ target_role }}">{{ target_role|title }}</span> ·
+        <span class="pill {% if target.is_active %}pill-active{% else %}pill-suspended{% endif %}">
+          {% if target.is_active %}● Active{% else %}● Suspended{% endif %}
+        </span>
+        · joined {{ target.date_joined|date:'M d, Y' }}
+        {% if target.last_login %}· last seen {{ target.last_login|timesince }} ago{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ── Step 1: Suspend ──────────────────────────────────────────────────── #}
+  <div class="step {% if not target.is_active %}done{% else %}todo{% endif %}">
+    <h3>
+      <span class="num">{% if not target.is_active %}✓{% else %}1{% endif %}</span>
+      Suspend the user
+    </h3>
+    <p>
+      A suspended user <strong>cannot log in</strong> and will <strong>not receive any emails</strong>
+      from ClipLens (notifications, invites, warnings). Their content stays intact.
+    </p>
+    {% if target.is_active %}
+    <form method="post" style="display:inline;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="suspend">
+      <button type="submit" class="btn btn-primary">Suspend {{ target.username }}</button>
+    </form>
+    {% else %}
+    <form method="post" style="display:inline;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reactivate">
+      <button type="submit" class="btn btn-secondary">Reactivate user</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {# ── Step 2: Reassign content ─────────────────────────────────────────── #}
+  <div class="step {% if not deps.blocking %}done{% elif target.is_active %}blocked{% else %}todo{% endif %}">
+    <h3>
+      <span class="num">{% if not deps.blocking %}✓{% else %}2{% endif %}</span>
+      Reassign their content
+    </h3>
+    {% if target.is_active and deps.blocking %}
+    <p style="color:#fbbf24;">⚠ Suspend the user first (Step 1) before reassigning their content.</p>
+    {% endif %}
+
+    <div class="dep-grid">
+      <div class="dep-tile {% if deps.videos %}has{% else %}clean{% endif %}">
+        <div class="n">{{ deps.videos }}</div><div class="lbl">Videos</div>
+      </div>
+      <div class="dep-tile {% if deps.photos %}has{% else %}clean{% endif %}">
+        <div class="n">{{ deps.photos }}</div><div class="lbl">Photos</div>
+      </div>
+      <div class="dep-tile {% if deps.channels_owned %}has{% else %}clean{% endif %}">
+        <div class="n">{{ deps.channels_owned }}</div><div class="lbl">Channels owned</div>
+      </div>
+      <div class="dep-tile {% if deps.albums %}has{% else %}clean{% endif %}">
+        <div class="n">{{ deps.albums }}</div><div class="lbl">Albums</div>
+      </div>
+      <div class="dep-tile {% if deps.playlists %}has{% else %}clean{% endif %}">
+        <div class="n">{{ deps.playlists }}</div><div class="lbl">Playlists</div>
+      </div>
+      <div class="dep-tile {% if deps.api_keys %}has{% else %}clean{% endif %}">
+        <div class="n">{{ deps.api_keys }}</div><div class="lbl">API keys</div>
+      </div>
+    </div>
+
+    {% if deps.blocking %}
+    <p>
+      Pick a teammate to take over this user's content. <strong>Videos &amp; photos</strong>
+      will be re-attributed (upload credit changes from {{ target.username }} → the new owner).
+      <strong>Channels, albums, and playlists</strong> change ownership.
+    </p>
+
+    <form method="post" style="margin-top:6px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reassign">
+      <div class="reassign-row">
+        <select name="to_user_id" required>
+          <option value="">— pick a target user —</option>
+          {% for c in candidates %}
+          <option value="{{ c.id }}">
+            {{ c.username }}{% if c.email %} &lt;{{ c.email }}&gt;{% endif %}{% if c.profile__role %} · {{ c.profile__role|title }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary" {% if target.is_active %}disabled title="Suspend first"{% endif %}>
+          Reassign all content
+        </button>
+      </div>
+    </form>
+
+    {% if deps.api_keys %}
+    <p style="margin-top:14px; color:var(--text-muted); font-size:12px;">
+      <strong>API keys</strong> are personal access tokens — they shouldn't be transferred.
+      <form method="post" style="display:inline;" onsubmit="return confirm('Revoke all {{ deps.api_keys }} API key(s)? This breaks any integrations using them.')">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="revoke_api_keys">
+        <button type="submit" class="btn btn-sm btn-danger" style="margin-left:8px;">Revoke {{ deps.api_keys }} API key(s)</button>
+      </form>
+    </p>
+    {% endif %}
+    {% else %}
+    <p style="color:#4ade80;">✓ No content owned by this user. Nothing to reassign.</p>
+    {% endif %}
+
+    {% if deps.channels_editor_of %}
+    <p style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+      Note: this user is also listed as an additional editor on <strong>{{ deps.channels_editor_of }}</strong>
+      channel(s). Reassignment will move that editor grant to the target user too.
+    </p>
+    {% endif %}
+  </div>
+
+  {# ── Step 3: Delete ───────────────────────────────────────────────────── #}
+  <div class="step {% if target.is_active or deps.blocking %}blocked{% else %}todo{% endif %}">
+    <h3>
+      <span class="num">3</span>
+      Delete the user
+    </h3>
+    {% if target.is_active %}
+    <p style="color:#fbbf24;">⚠ Suspend the user (Step 1) before deleting.</p>
+    {% elif deps.blocking %}
+    <p style="color:#fbbf24;">⚠ Reassign their content (Step 2) before deleting. Otherwise their albums / playlists / API keys would be cascade-deleted.</p>
+    {% else %}
+    <p>
+      All dependencies cleared. Hard-deleting the user removes them permanently from
+      this organisation's database. Their past activity (watch history, likes, comments,
+      subscriptions) will be removed too. <strong>This cannot be undone.</strong>
+    </p>
+    {% endif %}
+
+    <form method="post" onsubmit="return confirm('Permanently delete {{ target.username|escapejs }}? This cannot be undone.')">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="delete">
+      <button type="submit" class="btn-danger-solid"
+              {% if target.is_active or deps.blocking %}disabled{% endif %}>
+        Permanently delete {{ target.username }}
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

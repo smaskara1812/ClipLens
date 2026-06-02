@@ -5,39 +5,133 @@
 {% block content %}
 <div class="page-header">
   <h1>Plans</h1>
-  <p>Subscription tiers that determine resource limits per organisation</p>
+  <p>Subscription tiers shown to new orgs during onboarding. Disabled plans stay assigned to their existing tenants but are hidden from new signups and the upgrade page.</p>
 </div>
 
+<style>
+  /* ── Override global rules from base.html that interfere with this page ── */
+  table.plans-tbl {
+    table-layout: fixed;       /* respect declared column widths */
+    width: 100%;
+    border-collapse: collapse;
+  }
+  table.plans-tbl th,
+  table.plans-tbl td {
+    padding: 8px 6px;
+    vertical-align: middle;
+  }
+  table.plans-tbl input[type="checkbox"] {
+    width: auto !important;    /* kill global input { width:100% } */
+    margin: 0;
+    padding: 0;
+  }
+  table.plans-tbl input[type="text"],
+  table.plans-tbl input[type="number"] {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 5px 7px; border-radius: 4px; font-size: 12px;
+    width: 100%; box-sizing: border-box;
+  }
+
+  /* Create-plan card: also stop the checkbox from stretching */
+  .card label.checkbox-label {
+    display: flex !important;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    cursor: pointer;
+    color: #c9d1d9;
+    line-height: 1.4;
+  }
+  .card label.checkbox-label input[type="checkbox"] {
+    width: auto !important;
+    margin: 3px 0 0 0;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .row-actions { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; }
+  .row-actions .btn { padding: 4px 8px; font-size: 11px; white-space: nowrap; }
+
+  .pill { padding: 2px 7px; border-radius: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  .pill-active { background: rgba(74,222,128,.15); color: #4ade80; }
+  .pill-hidden { background: rgba(245,158,11,.15); color: #fbbf24; }
+  tr.inactive td { opacity: .55; }
+  .inline-form { display: contents; }
+</style>
+
+{% if messages %}
+<ul style="list-style:none; padding:0;">
+  {% for m in messages %}
+  <li style="padding:8px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+             background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+             border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+             color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
 <div style="display:grid; grid-template-columns:1fr 340px; gap:20px; align-items:start;">
+
   <!-- Plans table -->
-  <div class="card">
-    <table>
+  <div class="card" style="overflow-x:auto;">
+    <table class="plans-tbl">
       <thead>
         <tr>
-          <th>Plan Name</th>
-          <th>Price</th>
-          <th>Storage</th>
-          <th>AI Minutes/mo</th>
-          <th>Max Users</th>
-          <th>Max Videos</th>
-          <th>Orgs</th>
+          <th style="width:14%;">Name</th>
+          <th style="width:9%;">Price/mo</th>
+          <th style="width:9%;">Storage GB</th>
+          <th style="width:10%;">AI Min/mo</th>
+          <th style="width:7%;">Users</th>
+          <th style="width:8%;">Videos</th>
+          <th style="width:11%;">Status</th>
+          <th style="width:7%;">Orgs</th>
+          <th style="width:25%;">Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for plan in plans %}
-        <tr>
-          <td><strong>{{ plan.name }}</strong></td>
-          <td>{% if plan.is_free %}<span style="color:#3fb950;">Free</span>{% else %}${{ plan.price_usd }}/mo{% endif %}</td>
-          <td>{{ plan.storage_limit_gb }} GB</td>
-          <td>{{ plan.ai_minutes_limit }}</td>
-          <td>{{ plan.max_users }}</td>
-          <td>{% if plan.max_videos == 0 %}Unlimited{% else %}{{ plan.max_videos }}{% endif %}</td>
-          <td style="color:#8b949e;">{{ plan.tenant_count }}</td>
+        <tr class="{% if not plan.is_active %}inactive{% endif %}">
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update">
+            <input type="hidden" name="plan_id" value="{{ plan.pk }}">
+            <td><input type="text"   name="name"             value="{{ plan.name }}" required></td>
+            <td><input type="number" name="price_usd"        value="{{ plan.price_usd }}" min="0" step="0.01" class="compact"></td>
+            <td><input type="number" name="storage_limit_gb" value="{{ plan.storage_limit_gb }}" min="1" class="compact"></td>
+            <td><input type="number" name="ai_minutes_limit" value="{{ plan.ai_minutes_limit }}" min="0" class="compact"></td>
+            <td><input type="number" name="max_users"        value="{{ plan.max_users }}" min="1" class="compact"></td>
+            <td><input type="number" name="max_videos"       value="{{ plan.max_videos }}" min="0" class="compact" title="0 = unlimited"></td>
+            <td style="white-space:nowrap;">
+              <label style="display:inline-flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;" title="Tick = visible to new signups">
+                <input type="checkbox" name="is_active" {% if plan.is_active %}checked{% endif %} style="margin:0;">
+                {% if plan.is_active %}<span class="pill pill-active">Active</span>{% else %}<span class="pill pill-hidden">Hidden</span>{% endif %}
+              </label>
+            </td>
+            <td style="color:#8b949e;">{{ plan.tenant_count }}</td>
+            <td class="row-actions">
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+          </form>
+
+          <form method="post" style="display:inline;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="toggle">
+            <input type="hidden" name="plan_id" value="{{ plan.pk }}">
+            <button type="submit" class="btn btn-sm btn-ghost" title="Quick toggle visibility">
+              {% if plan.is_active %}Hide{% else %}Show{% endif %}
+            </button>
+          </form>
+
+          <form method="post" style="display:inline;"
+                onsubmit="return confirm('Delete plan {{ plan.name|escapejs }}? This only works if no orgs are on it.')">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="plan_id" value="{{ plan.pk }}">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+          </form>
+            </td>
         </tr>
         {% empty %}
-        <tr>
-          <td colspan="7" style="text-align:center; color:#8b949e; padding:24px;">No plans yet.</td>
-        </tr>
+        <tr><td colspan="9" style="text-align:center; color:#8b949e; padding:24px;">No plans yet. Create one →</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -48,6 +142,7 @@
     <div class="card-title">Create New Plan</div>
     <form method="post">
       {% csrf_token %}
+      <input type="hidden" name="action" value="create">
       <div class="form-group">
         <label>Plan Name</label>
         <input type="text" name="name" placeholder="Starter" required>
@@ -55,7 +150,7 @@
       <div class="form-group">
         <label>Price / month (USD)</label>
         <input type="number" name="price_usd" value="0" min="0" step="0.01" required>
-        <small style="color:#8b949e;">Enter 0 for a free tier.</small>
+        <small style="color:#8b949e;">0 = free tier.</small>
       </div>
       <div class="form-group">
         <label>Storage Limit (GB)</label>
@@ -73,7 +168,16 @@
         <label>Max Videos <small style="color:#8b949e;">(0 = unlimited)</small></label>
         <input type="number" name="max_videos" value="0" min="0" required>
       </div>
-      <button type="submit" class="btn btn-primary">Create Plan</button>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="is_active" checked>
+          <span style="font-size:13px;">Visible to new signups</span>
+        </label>
+        <small style="color:#8b949e; display:block; margin-top:4px; font-size:11px; line-height:1.4;">
+          Uncheck to create as hidden — existing customers unaffected.
+        </small>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Create Plan</button>
     </form>
   </div>
 </div>

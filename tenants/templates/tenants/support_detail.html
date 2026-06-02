@@ -1,0 +1,128 @@
+{% extends "tenants/base.html" %}
+{% block title %}Ticket #{{ ticket.pk }} — ClipLens Control Plane{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:14px;">
+  <a href="{% url 'tenants:platform_support_list' %}" style="color:#8b949e; font-size:13px; text-decoration:none;">← All tickets</a>
+</div>
+
+<style>
+  .ticket-head { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px 20px; margin-bottom:16px; }
+  .ticket-head h2 { margin:0 0 6px; font-size:18px; color:#c9d1d9; }
+  .ticket-meta { color:#8b949e; font-size:12px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .pill { padding:2px 8px; border-radius:8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; display:inline-block; }
+  .pill-open { background:rgba(88,166,255,.15); color:#58a6ff; }
+  .pill-in_progress { background:rgba(168,85,247,.15); color:#c084fc; }
+  .pill-waiting_on_user { background:rgba(245,158,11,.15); color:#fbbf24; }
+  .pill-resolved { background:rgba(74,222,128,.15); color:#4ade80; }
+  .pill-closed { background:#1f2937; color:#8b949e; }
+  .pill-low{background:#1f2937;color:#8b949e;} .pill-normal{background:rgba(88,166,255,.12);color:#58a6ff;}
+  .pill-high{background:rgba(245,158,11,.15);color:#fbbf24;} .pill-urgent{background:rgba(239,68,68,.15);color:#fca5a5;}
+
+  .controls { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px; }
+  .controls form { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px 16px; }
+  .controls label { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em; display:block; margin-bottom:6px; }
+  .controls .row { display:flex; gap:8px; align-items:center; }
+  .controls select { flex:1; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:6px 8px; border-radius:4px; font-size:12px; }
+
+  .msg { padding:14px 18px; border-radius:8px; margin-bottom:10px; border:1px solid #30363d; }
+  .msg.tenant   { background:#161b22; border-left:3px solid #58a6ff; }
+  .msg.platform { background:#0d1117; border-left:3px solid #4ade80; }
+  .msg.internal { background:rgba(245,158,11,.06); border-left:3px solid #fbbf24; }
+  .msg-head { display:flex; gap:10px; align-items:center; font-size:11px; color:#8b949e; margin-bottom:6px; }
+  .msg-author { font-weight:700; color:#c9d1d9; }
+  .msg-body { white-space:pre-wrap; font-size:13px; line-height:1.6; color:#c9d1d9; }
+
+  .reply-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px 20px; margin-top:18px; }
+  .reply-card textarea { width:100%; min-height:140px; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:10px; border-radius:4px; font-family:inherit; font-size:13px; resize:vertical; }
+  .reply-actions { display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap; }
+  .reply-actions label { font-size:12px; color:#fbbf24; display:flex; align-items:center; gap:6px; }
+</style>
+
+{% if messages %}
+<ul style="list-style:none; padding:0;">
+  {% for m in messages %}
+  <li style="padding:10px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+             background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+             border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+             color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<div class="ticket-head">
+  <h2>#{{ ticket.pk }} · {{ ticket.subject }}</h2>
+  <div class="ticket-meta">
+    <span class="pill pill-{{ ticket.status }}">{{ ticket.get_status_display }}</span>
+    <span class="pill pill-{{ ticket.priority }}">{{ ticket.get_priority_display }}</span>
+    <span>{{ ticket.get_category_display }}</span>
+    <span><strong style="color:#c9d1d9;">{{ ticket.tenant.slug }}</strong> ({{ ticket.tenant.name }})</span>
+    <span>by {{ ticket.created_by_username }} &lt;{{ ticket.created_by_email|default:'—' }}&gt;</span>
+    <span>· {{ ticket.created_at|date:'M d, Y H:i' }}</span>
+  </div>
+</div>
+
+<div class="controls">
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="status">
+    <label>Status</label>
+    <div class="row">
+      <select name="status">
+        {% for k,v in status_choices %}<option value="{{ k }}" {% if ticket.status == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-primary btn-sm" type="submit">Update</button>
+    </div>
+  </form>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="priority">
+    <label>Priority</label>
+    <div class="row">
+      <select name="priority">
+        {% for k,v in priority_choices %}<option value="{{ k }}" {% if ticket.priority == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-primary btn-sm" type="submit">Update</button>
+    </div>
+  </form>
+</div>
+
+<div class="msg tenant">
+  <div class="msg-head">
+    <span class="msg-author">{{ ticket.created_by_username }}</span>
+    <span>{{ ticket.created_at|date:'M d, Y H:i' }}</span>
+    <span class="pill" style="background:rgba(88,166,255,.15); color:#58a6ff;">Tenant · original</span>
+  </div>
+  <div class="msg-body">{{ ticket.body }}</div>
+</div>
+
+{% for m in thread %}
+<div class="msg {% if m.is_internal %}internal{% else %}{{ m.author_role }}{% endif %}">
+  <div class="msg-head">
+    <span class="msg-author">{{ m.author_username }}</span>
+    <span>{{ m.created_at|date:'M d, Y H:i' }}</span>
+    {% if m.is_internal %}
+      <span class="pill" style="background:rgba(245,158,11,.15); color:#fbbf24;">Internal note</span>
+    {% else %}
+      <span class="pill" style="background:rgba({% if m.author_role == 'platform' %}74,222,128{% else %}88,166,255{% endif %},.15); color:{% if m.author_role == 'platform' %}#4ade80{% else %}#58a6ff{% endif %};">
+        {% if m.author_role == 'platform' %}ClipLens Team{% else %}Tenant{% endif %}
+      </span>
+    {% endif %}
+  </div>
+  <div class="msg-body">{{ m.body }}</div>
+</div>
+{% endfor %}
+
+<div class="reply-card">
+  <h3 style="margin:0 0 10px; font-size:14px; color:#c9d1d9;">Add a reply</h3>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="reply">
+    <textarea name="body" placeholder="Type your reply to the tenant…" required></textarea>
+    <div class="reply-actions">
+      <button class="btn btn-primary" type="submit">Send reply</button>
+      <label><input type="checkbox" name="is_internal" value="1"> Internal note (not emailed, hidden from tenant)</label>
+    </div>
+  </form>
+</div>
+{% endblock %}

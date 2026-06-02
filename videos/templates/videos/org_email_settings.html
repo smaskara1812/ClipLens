@@ -1,0 +1,281 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+
+{% block title %}Email — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .env-banner {
+    padding: 12px 16px; border-radius: var(--radius); margin-bottom: 18px;
+    font-size: 13px; line-height: 1.6;
+  }
+  .env-banner.disabled { background: rgba(239,68,68,.08);  border: 1px solid rgba(239,68,68,.3);  color: #fca5a5; }
+  .env-banner.console  { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); color: #fbbf24; }
+
+  .conn-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 10px; overflow: hidden;
+  }
+  .conn-card.active { border-color: #4ade80; }
+  details.conn-card > summary {
+    list-style: none; cursor: pointer;
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px;
+    user-select: none;
+  }
+  details.conn-card > summary::-webkit-details-marker { display: none; }
+  details.conn-card > summary::before {
+    content: '▸'; color: var(--text-subtle, #5b6678); font-size: 11px;
+    transition: transform .2s;
+  }
+  details.conn-card[open] > summary::before { transform: rotate(90deg); }
+
+  .conn-summary-main { flex: 1; min-width: 0; }
+  .conn-name { font-weight: 700; font-size: 14px; color: var(--text); }
+  .conn-spec {
+    color: var(--text-muted); font-size: 11px;
+    font-family: 'SF Mono', Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .conn-pill {
+    padding: 2px 9px; border-radius: 10px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0;
+  }
+  .conn-pill.active  { background: rgba(74,222,128,.15);  color: #4ade80; }
+  .conn-pill.idle    { background: var(--bg); color: var(--text-muted); }
+  .conn-pill.testok  { background: rgba(74,222,128,.12);  color: #4ade80; }
+  .conn-pill.testerr { background: rgba(239,68,68,.12);   color: #fca5a5; }
+
+  .conn-body { padding: 14px 18px; border-top: 1px solid var(--border); background: var(--bg); }
+  .conn-form {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px 16px;
+  }
+  .conn-form .field { display: flex; flex-direction: column; gap: 4px; }
+  .conn-form label  {
+    font-size: 11px; font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .conn-form input[type=text], .conn-form input[type=number],
+  .conn-form input[type=email], .conn-form input[type=password] {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 4px; font-size: 13px; font-family: inherit;
+  }
+  .conn-form .checkbox-row {
+    grid-column: 1 / -1; display: flex; gap: 18px; align-items: center;
+    font-size: 13px; color: var(--text);
+  }
+  .conn-form .checkbox-row label {
+    display: flex; align-items: center; gap: 6px; text-transform: none;
+    font-weight: 500; font-size: 13px; letter-spacing: 0; cursor: pointer;
+  }
+  .form-actions {
+    grid-column: 1 / -1; display: flex; gap: 8px; align-items: center;
+    padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .form-actions input[type=email] {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 4px; font-size: 12px; flex: 0 0 240px;
+  }
+  .form-actions .spacer { flex: 1 1 auto; }
+
+  .test-feedback { font-size: 12px; }
+  .test-feedback.ok  { color: #4ade80; }
+  .test-feedback.err { color: #fca5a5; }
+  .test-feedback.busy { color: var(--text-muted); }
+
+  .add-card {
+    background: var(--surface-2, #1a2230); border: 1px dashed var(--accent);
+    border-radius: var(--radius); padding: 18px; margin-top: 20px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_email_settings' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Email Settings</h1>
+    <p class="admin-hero-sub">
+      SMTP for emails sent <em>from your organisation</em> — usage warnings, user invites,
+      internal notifications. Platform emails (billing, onboarding) use a separate connection
+      managed by ClipLens.
+    </p>
+  </div>
+
+  {% if messages %}
+  <ul style="list-style:none; padding:0;">
+    {% for m in messages %}
+    <li style="padding:10px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+               background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+               border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+               color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if no_tenant %}
+  <p style="color:var(--text-muted);padding:20px">Email settings are only available in multi-tenant mode.</p>
+  {% else %}
+
+  {% if not email_enabled %}
+  <div class="env-banner disabled">
+    <strong>EMAIL_ENABLED is false</strong> on the platform — outbound emails are dropped.
+    Contact your platform administrator.
+  </div>
+  {% elif use_console %}
+  <div class="env-banner console">
+    <strong>EMAIL_USE_CONSOLE is true</strong> — platform is in development mode and
+    regular emails print to the terminal. <em>The "Send test" button still uses real SMTP</em>
+    so you can verify your saved connection.
+  </div>
+  {% endif %}
+
+  {% for c in connections %}
+  <details class="conn-card {% if c.is_active %}active{% endif %}">
+    <summary>
+      <div class="conn-summary-main">
+        <div class="conn-name">{{ c.name }}</div>
+        <div class="conn-spec">{{ c.host }}:{{ c.port }} · {% if c.use_tls %}TLS{% elif c.use_ssl %}SSL{% else %}plain{% endif %} · from {{ c.from_email }}</div>
+      </div>
+      <span class="conn-pill {% if c.is_active %}active{% else %}idle{% endif %}">
+        {% if c.is_active %}● Active{% else %}Inactive{% endif %}
+      </span>
+      {% if c.last_test_result == 'OK' %}
+        <span class="conn-pill testok" title="Tested {{ c.last_tested_at|date:'M d H:i' }}">✓ Test OK</span>
+      {% elif c.last_test_result %}
+        <span class="conn-pill testerr" title="{{ c.last_test_result }}">✗ Test failed</span>
+      {% endif %}
+    </summary>
+
+    <div class="conn-body">
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        {% if not c.is_active %}
+        <form method="post" style="display:inline;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="activate">
+          <input type="hidden" name="connection_id" value="{{ c.pk }}">
+          <button class="btn btn-sm btn-primary" type="submit">Activate</button>
+        </form>
+        {% endif %}
+        <form method="post" style="display:inline;" onsubmit="return confirm('Delete this connection?')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="connection_id" value="{{ c.pk }}">
+          <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+        </form>
+      </div>
+
+      <form method="post" class="conn-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update">
+        <input type="hidden" name="connection_id" value="{{ c.pk }}">
+
+        <div class="field"><label>Name</label><input type="text" name="name" value="{{ c.name }}" required></div>
+        <div class="field"><label>SMTP Host</label><input type="text" name="host" value="{{ c.host }}" required></div>
+        <div class="field"><label>Port</label><input type="number" name="port" value="{{ c.port }}" min="1" max="65535" required></div>
+        <div class="field"><label>Username</label><input type="text" name="username" value="{{ c.username }}" autocomplete="off"></div>
+        <div class="field"><label>Password</label><input type="password" name="password" placeholder="••• blank = keep · type CLEAR to erase" autocomplete="new-password"></div>
+        <div class="field"><label>From Email</label><input type="email" name="from_email" value="{{ c.from_email }}" required></div>
+        <div class="field"><label>From Name</label><input type="text" name="from_name" value="{{ c.from_name }}"></div>
+
+        <div class="checkbox-row">
+          <label><input type="checkbox" name="use_tls" {% if c.use_tls %}checked{% endif %}> STARTTLS (port 587)</label>
+          <label><input type="checkbox" name="use_ssl" {% if c.use_ssl %}checked{% endif %}> SSL/TLS (port 465)</label>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-sm btn-secondary" type="submit">Save changes</button>
+          <span class="spacer"></span>
+          <input type="email" id="test-recipient-{{ c.pk }}" placeholder="test recipient">
+          <button type="button" class="btn btn-sm btn-ghost" onclick="sendOrgTest({{ c.pk }})">Send test</button>
+          <span id="test-feedback-{{ c.pk }}" class="test-feedback"></span>
+        </div>
+      </form>
+    </div>
+  </details>
+  {% endfor %}
+
+  {% if not connections %}
+  <div class="conn-card">
+    <div class="conn-body" style="text-align:center; color:var(--text-muted); padding:24px;">
+      No email connections configured yet. Add one below.
+    </div>
+  </div>
+  {% endif %}
+
+  <details class="add-card">
+    <summary style="cursor:pointer; color:var(--accent); font-weight:600; font-size:14px; list-style:none;">
+      + Add a new connection
+    </summary>
+    <form method="post" class="conn-form" style="margin-top:14px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+
+      <div class="field"><label>Name</label><input type="text" name="name" placeholder="e.g. SendGrid prod" required></div>
+      <div class="field"><label>SMTP Host</label><input type="text" name="host" placeholder="smtp.sendgrid.net" required></div>
+      <div class="field"><label>Port</label><input type="number" name="port" value="587" min="1" max="65535" required></div>
+      <div class="field"><label>Username</label><input type="text" name="username" placeholder="apikey or user@example.com" autocomplete="off"></div>
+      <div class="field"><label>Password</label><input type="password" name="password" placeholder="API key or password" autocomplete="new-password"></div>
+      <div class="field"><label>From Email</label><input type="email" name="from_email" placeholder="alerts@yourcompany.com" required></div>
+      <div class="field"><label>From Name</label><input type="text" name="from_name" placeholder="Your Org Alerts"></div>
+
+      <div class="checkbox-row">
+        <label><input type="checkbox" name="use_tls" checked> STARTTLS (port 587)</label>
+        <label><input type="checkbox" name="use_ssl"> SSL/TLS (port 465)</label>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-sm btn-primary" type="submit">Save connection</button>
+      </div>
+    </form>
+  </details>
+
+  <p style="color:var(--text-subtle); font-size:12px; margin-top:24px; line-height:1.7;">
+    <strong>What this is for:</strong> emails sent from within your organisation — usage warnings,
+    audit alerts, user invites. Saved passwords are encrypted at rest with Fernet.
+  </p>
+
+  {% endif %}
+</div>
+
+<script>
+async function sendOrgTest(connId) {
+  const recipient = document.getElementById('test-recipient-' + connId).value.trim();
+  const feedback = document.getElementById('test-feedback-' + connId);
+  if (!recipient) {
+    feedback.className = 'test-feedback err';
+    feedback.textContent = 'Enter a recipient first';
+    return;
+  }
+  feedback.className = 'test-feedback busy';
+  feedback.textContent = 'Sending… (up to 10s)';
+
+  const fd = new FormData();
+  fd.append('action', 'test');
+  fd.append('connection_id', connId);
+  fd.append('test_recipient', recipient);
+  fd.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+  fd.append('ajax', '1');
+
+  try {
+    const r = await fetch(window.location.pathname, {
+      method: 'POST', body: fd, credentials: 'include',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.ok) {
+      feedback.className = 'test-feedback ok';
+      feedback.textContent = `✓ Sent to ${recipient}`;
+    } else {
+      feedback.className = 'test-feedback err';
+      feedback.textContent = '✗ ' + (data.error || `HTTP ${r.status}`);
+    }
+  } catch (e) {
+    feedback.className = 'test-feedback err';
+    feedback.textContent = '✗ ' + e.message;
+  }
+}
+</script>
+{% endblock %}

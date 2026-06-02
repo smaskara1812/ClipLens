@@ -13,7 +13,7 @@ from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 
-from .models import Plan, Tenant, UsageEvent, OnboardingInvite, LeadRequest
+from .models import Plan, Tenant, UsageEvent, OnboardingInvite, LeadRequest, EmailConnection
 from .provisioning import provision_tenant, provision_tenant_with_invite, claim_onboarding_invite
 
 logger = logging.getLogger(__name__)
@@ -306,10 +306,52 @@ def create_tenant(request):
     )
 
     if result['success']:
-        messages.success(
-            request,
-            f"Organisation '{name}' provisioned. Share the onboarding link with the admin."
-        )
+        # Build the onboarding URL the admin will use
+        scheme = 'https' if request.is_secure() else 'http'
+        host_parts = request.get_host().split('.')
+        if len(host_parts) >= 3:
+            host_parts[0] = slug
+            org_host = '.'.join(host_parts)
+        else:
+            org_host = f"{slug}.cliplens.local"
+        onboard_url = f"{scheme}://{org_host}/onboard/{result['token']}/"
+
+        # Best-effort: send the invite link to the admin's email
+        email_sent = False
+        try:
+            from .tasks import queue_email
+            email_sent = queue_email(
+                scope='platform',
+                trigger_source='create_tenant',
+                triggered_by_username=getattr(request.user, 'username', '') or '',
+                subject=f'Welcome to ClipLens — finish setting up {name}',
+                body=(
+                    f'Hi {admin_username},\n\n'
+                    f'A ClipLens organisation has been provisioned for you: {name}.\n\n'
+                    f'Click this one-time link to set your password and pick a plan:\n'
+                    f'{onboard_url}\n\n'
+                    f'The link expires in 7 days. After you complete onboarding, you can log in at:\n'
+                    f'{scheme}://{org_host}/login/\n\n'
+                    f'Need help? Reply to this email.\n\n'
+                    f'— The ClipLens team'
+                ),
+                recipients=[admin_email],
+            )
+        except Exception:
+            logger.exception("Failed to email onboarding invite to %s", admin_email)
+
+        if email_sent:
+            messages.success(
+                request,
+                f"Organisation '{name}' provisioned. Invite email sent to {admin_email}. "
+                f"You can also share the link manually below."
+            )
+        else:
+            messages.success(
+                request,
+                f"Organisation '{name}' provisioned. Email delivery is disabled or failed — "
+                f"share the onboarding link with the admin manually."
+            )
         return redirect('tenants:tenant_detail', tenant_id=result['tenant_id'])
     else:
         messages.error(request, f"Provisioning failed: {result['error']}")
@@ -334,7 +376,7 @@ def onboard(request, token: str):
         return render(request, 'tenants/onboard_invalid.html',
                       {'reason': reason}, status=410)
 
-    plans = list(Plan.objects.using('control').all().order_by('storage_limit_gb'))
+    plans = list(Plan.objects.using('control').filter(is_active=True).order_by('storage_limit_gb'))
 
     if request.method == 'GET':
         return render(request, 'tenants/onboard.html', {
@@ -419,6 +461,182 @@ def onboard(request, token: str):
     return redirect('/login/')
 
 
+def _create_team_invites_from_post(request, tenant, *, inviter_username: str, max_create: int = 999):
+    """
+    Parse parallel invite_username[]/invite_email[]/invite_role[] arrays from
+    request.POST and create TeamMemberInvite rows + queue invite emails.
+    Silently skips rows with no username or no email. Stops at max_create.
+    """
+    import secrets as _secrets
+    from datetime import timedelta as _td
+    from django.utils import timezone as _tz
+    from .models import TeamMemberInvite
+    from .tasks import queue_email
+
+    usernames = request.POST.getlist('invite_username[]') or request.POST.getlist('invite_username')
+    emails    = request.POST.getlist('invite_email[]')    or request.POST.getlist('invite_email')
+    roles     = request.POST.getlist('invite_role[]')     or request.POST.getlist('invite_role')
+
+    if not usernames:
+        return 0
+
+    valid_roles = {r for r, _ in TeamMemberInvite.ROLE_CHOICES}
+    scheme = 'https' if request.is_secure() else 'http'
+    # Always use the tenant's own subdomain in the invite link, even if the
+    # current request came via the admin/control plane.
+    host = request.get_host()
+    if not host.lower().startswith(f'{tenant.slug}.'):
+        # Replace whatever the leftmost label is with the tenant slug
+        port = ':' + host.split(':', 1)[1] if ':' in host else ''
+        bare = host.split(':', 1)[0]
+        parts = bare.split('.', 1)
+        host = f'{tenant.slug}.{parts[1]}{port}' if len(parts) > 1 else f'{tenant.slug}.cliplens.local{port}'
+
+    created = 0
+
+    for i, raw_username in enumerate(usernames):
+        if created >= max_create:
+            break
+        username = (raw_username or '').strip()
+        email    = (emails[i] if i < len(emails) else '').strip()
+        role     = (roles[i]  if i < len(roles)  else 'editor').strip()
+        if not username or not email:
+            continue
+        if role not in valid_roles:
+            role = 'editor'
+
+        token = _secrets.token_urlsafe(32)
+        invite = TeamMemberInvite.objects.using('control').create(
+            tenant=tenant,
+            token=token,
+            username=username,
+            email=email,
+            role=role,
+            invited_by_username=inviter_username or '',
+            expires_at=_tz.now() + _td(days=7),
+        )
+
+        accept_url = f'{scheme}://{host}/team-invite/{token}/'
+        try:
+            queue_email(
+                scope='platform',
+                trigger_source='team_member_invite',
+                triggered_by_username=inviter_username or '',
+                tenant=tenant,
+                subject=f'You have been invited to {tenant.name} on ClipLens',
+                body=(
+                    f'Hi {username},\n\n'
+                    f'{inviter_username or "An administrator"} has invited you to join '
+                    f'"{tenant.name}" on ClipLens as a {invite.get_role_display()}.\n\n'
+                    f'Click this one-time link within 7 days to set your password '
+                    f'and log in:\n{accept_url}\n\n'
+                    f'If you were not expecting this email, you can ignore it.\n'
+                ),
+                recipients=[email],
+            )
+        except Exception:
+            logger.exception('team invite email failed for %s', email)
+        created += 1
+
+    if created:
+        messages.success(request, f'{created} team invite(s) sent.')
+    return created
+
+
+def team_member_onboard(request, token: str):
+    """
+    Public page for an invited team member to set their password and join.
+    URL: <slug>.cliplens.local/team-invite/<token>/
+    """
+    from .models import TeamMemberInvite
+    try:
+        invite = TeamMemberInvite.objects.using('control').select_related('tenant').get(token=token)
+    except TeamMemberInvite.DoesNotExist:
+        return render(request, 'tenants/onboard_invalid.html',
+                      {'reason': 'This invite link is invalid.'}, status=404)
+
+    if not invite.is_valid():
+        reason = ('This invite has already been used.' if invite.consumed_at
+                  else 'This invite link has expired.')
+        return render(request, 'tenants/onboard_invalid.html',
+                      {'reason': reason}, status=410)
+
+    # Make sure we're on the tenant's subdomain
+    tenant = invite.tenant
+    host = request.get_host().lower().split(':')[0]
+    if not host.startswith(f'{tenant.slug}.'):
+        scheme = 'https' if request.is_secure() else 'http'
+        # Build redirect to the correct subdomain preserving port
+        port = ''
+        if ':' in request.get_host():
+            port = ':' + request.get_host().split(':', 1)[1]
+        if host.endswith('.cliplens.local'):
+            base = f'{tenant.slug}.cliplens.local{port}'
+        else:
+            base = f'{tenant.slug}.cliplens.com'
+        return redirect(f'{scheme}://{base}/team-invite/{token}/')
+
+    if request.method == 'GET':
+        return render(request, 'tenants/team_invite_onboard.html', {
+            'invite': invite, 'tenant': tenant,
+        })
+
+    password         = request.POST.get('password', '')
+    password_confirm = request.POST.get('password_confirm', '')
+    if len(password) < 8:
+        messages.error(request, 'Password must be at least 8 characters.')
+        return render(request, 'tenants/team_invite_onboard.html', {
+            'invite': invite, 'tenant': tenant,
+        }, status=400)
+    if password != password_confirm:
+        messages.error(request, 'Passwords do not match.')
+        return render(request, 'tenants/team_invite_onboard.html', {
+            'invite': invite, 'tenant': tenant,
+        }, status=400)
+
+    # Create the User + UserProfile in the tenant DB
+    from .provisioning import _register_db_alias
+    from django.contrib.auth.models import User
+    from django.contrib.auth.hashers import make_password
+    from videos.models import UserProfile
+
+    _register_db_alias(tenant.db_name)
+    db_alias = tenant.db_name
+
+    # If a User with this username already exists (e.g. retry after failure),
+    # update password instead of failing.
+    try:
+        user = User.objects.using(db_alias).get(username=invite.username)
+        user.email    = invite.email
+        user.password = make_password(password)
+        user.save(using=db_alias)
+    except User.DoesNotExist:
+        # Check for username clash
+        if User.objects.using(db_alias).filter(username=invite.username).exists():
+            messages.error(request, 'Username already exists in this organisation. Contact your admin.')
+            return render(request, 'tenants/team_invite_onboard.html', {
+                'invite': invite, 'tenant': tenant,
+            }, status=400)
+        user = User(
+            username=invite.username,
+            email=invite.email,
+            is_staff=(invite.role == 'superadmin'),
+            is_superuser=False,
+            password=make_password(password),
+        )
+        user.save(using=db_alias)
+
+    UserProfile.objects.using(db_alias).update_or_create(
+        user=user, defaults={'role': invite.role},
+    )
+
+    invite.consumed_at = __import__('django.utils.timezone', fromlist=['now']).now()
+    invite.save(using='control', update_fields=['consumed_at'])
+
+    messages.success(request, f'Welcome to {tenant.name}! Please log in with your new password.')
+    return redirect('/login/')
+
+
 def landing_page(request):
     """
     Public marketing site shown at the BARE root domain (cliplens.local / cliplens.com).
@@ -446,7 +664,7 @@ def landing_page(request):
         return redirect('/platform/')
 
     # 4. Unauthenticated visitor on bare root → marketing landing
-    plans = list(Plan.objects.using('control').all().order_by('price_usd'))
+    plans = list(Plan.objects.using('control').filter(is_active=True).order_by('price_usd'))
     return render(request, 'tenants/landing.html', {
         'plans': plans,
     })
@@ -475,7 +693,7 @@ def submit_lead(request):
         messages.error(request, 'Please provide your name and email.')
         return redirect('/?contact=1')
 
-    LeadRequest.objects.using('control').create(
+    lead = LeadRequest.objects.using('control').create(
         name=name,
         email=email,
         company=company,
@@ -486,6 +704,40 @@ def submit_lead(request):
         user_agent=request.META.get('HTTP_USER_AGENT', '')[:300],
         ip_address=(request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '').split(',')[0].strip() or None,
     )
+
+    # Notify platform owners by email — non-blocking on failure
+    try:
+        from .tasks import queue_email
+        from django.contrib.auth.models import User
+        owner_emails = list(
+            User.objects.filter(profile__is_platform_owner=True, email__isnull=False)
+            .exclude(email='').values_list('email', flat=True)
+        )
+        if owner_emails:
+            queue_email(
+                scope='platform',
+                trigger_source='submit_lead',
+                triggered_by_username='',  # public form — anonymous
+                subject=f'[ClipLens] New lead: {lead.name}' + (f' ({lead.company})' if lead.company else ''),
+                body=(
+                    f'A new contact form submission just came in.\n\n'
+                    f'Name:      {lead.name}\n'
+                    f'Email:     {lead.email}\n'
+                    f'Company:   {lead.company or "—"}\n'
+                    f'Phone:     {lead.phone or "—"}\n'
+                    f'Interest:  {lead.interest or "—"}\n'
+                    f'IP:        {lead.ip_address or "—"}\n\n'
+                    f'Message:\n{lead.message or "(none)"}\n\n'
+                    f'Reply to: {lead.email}\n'
+                    f'View in admin: '
+                    f'{request.build_absolute_uri("/")[:-1].replace("//", "//admin.", 1)}/platform/leads/'
+                ),
+                recipients=owner_emails,
+                reply_to=lead.email,
+            )
+    except Exception:
+        logger.exception("Failed to notify platform owners of new lead")
+
     messages.success(request, "Thanks! We'll be in touch within one business day.")
     return redirect('/?contact=ok#contact')
 
@@ -554,21 +806,351 @@ def toggle_tenant(request, tenant_id):
 @platform_owner_required
 def manage_plans(request):
     if request.method == 'POST':
-        data = {
-            'name': request.POST.get('name', '').strip(),
-            'price_usd': float(request.POST.get('price_usd', 0) or 0),
-            'storage_limit_gb': int(request.POST.get('storage_limit_gb', 100)),
-            'ai_minutes_limit': int(request.POST.get('ai_minutes_limit', 300)),
-            'max_users': int(request.POST.get('max_users', 3)),
-            'max_videos': int(request.POST.get('max_videos', 0)),
-        }
-        Plan.objects.using('control').create(**data)
-        messages.success(request, f"Plan '{data['name']}' created.")
+        action = request.POST.get('action', 'create')
+        plan_id = request.POST.get('plan_id', '')
+
+        if action == 'create':
+            data = {
+                'name':             request.POST.get('name', '').strip(),
+                'price_usd':        float(request.POST.get('price_usd', 0) or 0),
+                'storage_limit_gb': int(request.POST.get('storage_limit_gb', 100)),
+                'ai_minutes_limit': int(request.POST.get('ai_minutes_limit', 300)),
+                'max_users':        int(request.POST.get('max_users', 3)),
+                'max_videos':       int(request.POST.get('max_videos', 0)),
+                'is_active':        bool(request.POST.get('is_active', True)),
+            }
+            Plan.objects.using('control').create(**data)
+            messages.success(request, f"Plan '{data['name']}' created.")
+
+        elif action == 'update' and plan_id:
+            try:
+                p = Plan.objects.using('control').get(pk=int(plan_id))
+                p.name             = request.POST.get('name', p.name).strip()
+                p.price_usd        = float(request.POST.get('price_usd', p.price_usd) or 0)
+                p.storage_limit_gb = int(request.POST.get('storage_limit_gb', p.storage_limit_gb))
+                p.ai_minutes_limit = int(request.POST.get('ai_minutes_limit', p.ai_minutes_limit))
+                p.max_users        = int(request.POST.get('max_users', p.max_users))
+                p.max_videos       = int(request.POST.get('max_videos', p.max_videos))
+                p.is_active        = bool(request.POST.get('is_active'))
+                p.save(using='control')
+                messages.success(request, f"Plan '{p.name}' updated.")
+            except Plan.DoesNotExist:
+                messages.error(request, 'Plan not found.')
+
+        elif action == 'toggle' and plan_id:
+            try:
+                p = Plan.objects.using('control').get(pk=int(plan_id))
+                p.is_active = not p.is_active
+                p.save(using='control', update_fields=['is_active'])
+                messages.success(request, f"Plan '{p.name}' is now {'active' if p.is_active else 'hidden'}.")
+            except Plan.DoesNotExist:
+                messages.error(request, 'Plan not found.')
+
+        elif action == 'delete' and plan_id:
+            try:
+                p = Plan.objects.using('control').get(pk=int(plan_id))
+                from django.db.models import Count as _Count
+                in_use = Plan.objects.using('control').filter(pk=p.pk).annotate(c=_Count('tenants')).values_list('c', flat=True).first() or 0
+                if in_use:
+                    messages.error(request, f"Cannot delete '{p.name}' — {in_use} org(s) are on it. Disable instead.")
+                else:
+                    name = p.name
+                    p.delete(using='control')
+                    messages.success(request, f"Plan '{name}' deleted.")
+            except Plan.DoesNotExist:
+                messages.error(request, 'Plan not found.')
+
         return redirect('tenants:manage_plans')
 
     from django.db.models import Count
-    plans = Plan.objects.using('control').annotate(tenant_count=Count('tenants'))
+    plans = Plan.objects.using('control').annotate(tenant_count=Count('tenants')).order_by('price_usd', 'name')
     return render(request, 'tenants/manage_plans.html', {'plans': plans})
+
+
+# ── Email connections (platform scope) ────────────────────────────────────────
+
+def _email_form_save(request, connection, scope, tenant=None):
+    """Apply POST data to an EmailConnection instance (new or existing) and save."""
+    connection.scope = scope
+    connection.tenant = tenant
+    connection.name       = request.POST.get('name', '').strip() or 'Default'
+    connection.host       = request.POST.get('host', '').strip()
+    connection.port       = int(request.POST.get('port', '587') or 587)
+    connection.use_tls    = bool(request.POST.get('use_tls'))
+    connection.use_ssl    = bool(request.POST.get('use_ssl'))
+    connection.username   = request.POST.get('username', '').strip()
+    connection.from_email = request.POST.get('from_email', '').strip()
+    connection.from_name  = request.POST.get('from_name', '').strip()
+
+    # Password: only update if a new one was provided (or 'CLEAR' to wipe)
+    new_pw = request.POST.get('password', '')
+    if new_pw == 'CLEAR':
+        connection.set_password('')
+    elif new_pw:
+        connection.set_password(new_pw)
+
+    if not connection.pk:
+        connection.created_by_username = getattr(request.user, 'username', '') or ''
+
+    connection.save(using='control')
+    return connection
+
+
+def _activate_only(connection):
+    """Mark this connection active and deactivate every other connection in its scope."""
+    qs = EmailConnection.objects.using('control').filter(scope=connection.scope)
+    if connection.scope == EmailConnection.SCOPE_TENANT:
+        qs = qs.filter(tenant=connection.tenant)
+    else:
+        qs = qs.filter(tenant__isnull=True)
+    qs.exclude(pk=connection.pk).update(is_active=False)
+    if not connection.is_active:
+        connection.is_active = True
+        connection.save(using='control', update_fields=['is_active'])
+
+
+@platform_owner_required
+def manage_platform_email(request):
+    """Platform-scope email connections (used for invites, lead alerts, receipts)."""
+    if request.method == 'POST':
+        action = request.POST.get('action', '')
+        conn_id = request.POST.get('connection_id', '')
+        conn = None
+        if conn_id:
+            try:
+                conn = EmailConnection.objects.using('control').get(
+                    pk=int(conn_id), scope=EmailConnection.SCOPE_PLATFORM, tenant__isnull=True
+                )
+            except EmailConnection.DoesNotExist:
+                messages.error(request, 'Connection not found.')
+                return redirect('tenants:platform_email')
+
+        if action == 'create':
+            conn = EmailConnection()
+            _email_form_save(request, conn, EmailConnection.SCOPE_PLATFORM, tenant=None)
+            messages.success(request, f"Created '{conn.name}'.")
+        elif action == 'update' and conn:
+            _email_form_save(request, conn, EmailConnection.SCOPE_PLATFORM, tenant=None)
+            messages.success(request, f"Updated '{conn.name}'.")
+        elif action == 'delete' and conn:
+            name = conn.name
+            conn.delete(using='control')
+            messages.success(request, f"Deleted '{name}'.")
+        elif action == 'activate' and conn:
+            _activate_only(conn)
+            messages.success(request, f"Activated '{conn.name}'.")
+        elif action == 'test' and conn:
+            recipient = (request.POST.get('test_recipient', '') or request.user.email or '').strip()
+            is_ajax = request.POST.get('ajax') == '1' or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            if not recipient:
+                if is_ajax:
+                    from django.http import JsonResponse
+                    return JsonResponse({'ok': False, 'error': 'Provide a test recipient email.'}, status=400)
+                messages.error(request, 'Provide a test recipient email.')
+            else:
+                from .email_utils import test_connection
+                ok, msg_text = test_connection(conn, recipient,
+                                               triggered_by_username=getattr(request.user, 'username', '') or '')
+                if is_ajax:
+                    from django.http import JsonResponse
+                    return JsonResponse({'ok': ok, 'error': '' if ok else msg_text, 'recipient': recipient})
+                if ok:
+                    messages.success(request, f"Test email sent to {recipient}.")
+                else:
+                    messages.error(request, f"Test failed: {msg_text}")
+        return redirect('tenants:platform_email')
+
+    connections = list(
+        EmailConnection.objects.using('control')
+        .filter(scope=EmailConnection.SCOPE_PLATFORM, tenant__isnull=True)
+    )
+    from django.conf import settings as dj_settings
+    return render(request, 'tenants/manage_email.html', {
+        'scope':         'platform',
+        'page_title':    'Platform Email Connections',
+        'page_intro':    'Outbound email used for onboarding invites, lead alerts, '
+                         'and payment-related notifications across all tenants.',
+        'connections':   connections,
+        'email_enabled': getattr(dj_settings, 'EMAIL_ENABLED', True),
+        'use_console':   getattr(dj_settings, 'EMAIL_USE_CONSOLE', False),
+        'submit_url':    'tenants:platform_email',
+    })
+
+
+@platform_owner_required
+def platform_support_list(request):
+    """All tickets across all tenants, with filters."""
+    from .models import SupportTicket
+    from django.core.paginator import Paginator
+    from django.db.models import Q
+
+    qs = SupportTicket.objects.using('control').select_related('tenant').all()
+    f_status   = request.GET.get('status', '')
+    f_priority = request.GET.get('priority', '')
+    f_tenant   = request.GET.get('tenant', '')
+    f_search   = request.GET.get('q', '').strip()
+    if f_status:   qs = qs.filter(status=f_status)
+    if f_priority: qs = qs.filter(priority=f_priority)
+    if f_tenant:   qs = qs.filter(tenant_id=f_tenant) if f_tenant.isdigit() else qs.filter(tenant__slug=f_tenant)
+    if f_search:
+        qs = qs.filter(
+            Q(subject__icontains=f_search) |
+            Q(body__icontains=f_search) |
+            Q(created_by_username__icontains=f_search) |
+            Q(created_by_email__icontains=f_search)
+        )
+
+    # Counters (all-time, open vs closed)
+    counts = {
+        'open':         SupportTicket.objects.using('control').filter(status='open').count(),
+        'in_progress':  SupportTicket.objects.using('control').filter(status='in_progress').count(),
+        'waiting':      SupportTicket.objects.using('control').filter(status='waiting_on_user').count(),
+        'resolved':     SupportTicket.objects.using('control').filter(status='resolved').count(),
+    }
+    paginator = Paginator(qs, 30)
+    page = paginator.get_page(request.GET.get('page'))
+    tenants_list = list(Tenant.objects.using('control').order_by('slug').values('id', 'slug', 'name'))
+
+    return render(request, 'tenants/support_list.html', {
+        'page_obj': page, 'counts': counts, 'tenants_list': tenants_list,
+        'f_status': f_status, 'f_priority': f_priority, 'f_tenant': f_tenant, 'f_search': f_search,
+        'status_choices':   SupportTicket.STATUS_CHOICES,
+        'priority_choices': SupportTicket.PRIORITY_CHOICES,
+    })
+
+
+@platform_owner_required
+def platform_support_detail(request, ticket_id):
+    """Platform-side ticket view — reply, change status, change priority, add internal notes."""
+    from .models import SupportTicket, SupportMessage
+    try:
+        ticket = SupportTicket.objects.using('control').select_related('tenant').get(pk=ticket_id)
+    except SupportTicket.DoesNotExist:
+        messages.error(request, 'Ticket not found.')
+        return redirect('tenants:platform_support_list')
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'reply')
+        if action == 'reply':
+            body = request.POST.get('body', '').strip()
+            is_internal = bool(request.POST.get('is_internal'))
+            if body:
+                SupportMessage.objects.using('control').create(
+                    ticket=ticket, body=body,
+                    author_username=request.user.username,
+                    author_role=SupportMessage.AUTHOR_PLATFORM,
+                    is_internal=is_internal,
+                )
+                ticket.save(using='control', update_fields=['updated_at'])
+                # Email tenant only if NOT internal
+                if not is_internal and ticket.created_by_email:
+                    try:
+                        from .tasks import queue_email
+                        queue_email(
+                            scope='platform',
+                            trigger_source='support_reply_from_platform',
+                            triggered_by_username=request.user.username,
+                            tenant=ticket.tenant,
+                            subject=f'[Support #{ticket.pk}] Reply: {ticket.subject}',
+                            body=(
+                                f'ClipLens support has replied to your ticket #{ticket.pk}.\n\n'
+                                f'{body}\n\n'
+                                f'View the full thread in your admin panel under "Support".\n'
+                            ),
+                            recipients=[ticket.created_by_email],
+                        )
+                    except Exception:
+                        logger.exception('support reply email failed')
+                messages.success(request, 'Reply added.' + (' (internal note)' if is_internal else ''))
+        elif action == 'status':
+            new_status = request.POST.get('status', '')
+            valid = dict(SupportTicket.STATUS_CHOICES)
+            if new_status in valid:
+                ticket.status = new_status
+                if new_status in (SupportTicket.STATUS_RESOLVED, SupportTicket.STATUS_CLOSED):
+                    from django.utils import timezone as _tz
+                    ticket.resolved_at = ticket.resolved_at or _tz.now()
+                ticket.save(using='control', update_fields=['status', 'resolved_at', 'updated_at'])
+                messages.success(request, f'Status → {valid[new_status]}')
+        elif action == 'priority':
+            new_p = request.POST.get('priority', '')
+            valid = dict(SupportTicket.PRIORITY_CHOICES)
+            if new_p in valid:
+                ticket.priority = new_p
+                ticket.save(using='control', update_fields=['priority', 'updated_at'])
+                messages.success(request, f'Priority → {valid[new_p]}')
+        return redirect('tenants:platform_support_detail', ticket_id=ticket.pk)
+
+    thread = list(ticket.messages.using('control').order_by('created_at'))
+    return render(request, 'tenants/support_detail.html', {
+        'ticket': ticket, 'thread': thread,
+        'status_choices':   SupportTicket.STATUS_CHOICES,
+        'priority_choices': SupportTicket.PRIORITY_CHOICES,
+    })
+
+
+@platform_owner_required
+def platform_email_log(request):
+    """Platform-wide email log viewer with filters."""
+    from .models import EmailLog
+    from django.core.paginator import Paginator
+
+    qs = EmailLog.objects.using('control').select_related('tenant', 'connection').all()
+
+    # ── Filters ──
+    f_status  = request.GET.get('status', '')
+    f_scope   = request.GET.get('scope', '')
+    f_tenant  = request.GET.get('tenant', '')
+    f_trigger = request.GET.get('trigger', '')
+    f_search  = request.GET.get('q', '').strip()
+
+    if f_status:  qs = qs.filter(status=f_status)
+    if f_scope:   qs = qs.filter(scope=f_scope)
+    if f_tenant:  qs = qs.filter(tenant_id=f_tenant) if f_tenant.isdigit() else qs.filter(tenant__slug=f_tenant)
+    if f_trigger: qs = qs.filter(trigger_source=f_trigger)
+    if f_search:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(subject__icontains=f_search) |
+            Q(from_email__icontains=f_search) |
+            Q(error_message__icontains=f_search) |
+            Q(triggered_by_username__icontains=f_search)
+        )
+
+    paginator = Paginator(qs, 50)
+    page = paginator.get_page(request.GET.get('page'))
+
+    # Summary counters across the unfiltered last 24h
+    from django.utils import timezone
+    from datetime import timedelta
+    since = timezone.now() - timedelta(hours=24)
+    counts = {
+        'sent':    EmailLog.objects.using('control').filter(status='sent',    queued_at__gte=since).count(),
+        'failed':  EmailLog.objects.using('control').filter(status='failed',  queued_at__gte=since).count(),
+        'dropped': EmailLog.objects.using('control').filter(status='dropped', queued_at__gte=since).count(),
+        'queued':  EmailLog.objects.using('control').filter(status='queued',  queued_at__gte=since).count(),
+    }
+
+    tenants_list = list(
+        Tenant.objects.using('control').order_by('slug').values('id', 'slug', 'name')
+    )
+    trigger_sources = list(
+        EmailLog.objects.using('control')
+        .exclude(trigger_source='')
+        .values_list('trigger_source', flat=True).distinct().order_by('trigger_source')
+    )
+
+    return render(request, 'tenants/email_log.html', {
+        'page_obj':         page,
+        'counts':           counts,
+        'tenants_list':     tenants_list,
+        'trigger_sources':  trigger_sources,
+        'f_status':         f_status,
+        'f_scope':          f_scope,
+        'f_tenant':         f_tenant,
+        'f_trigger':        f_trigger,
+        'f_search':         f_search,
+    })
 
 
 # ── System health ─────────────────────────────────────────────────────────────

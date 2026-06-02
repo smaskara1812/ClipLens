@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join {{ tenant.name }} — ClipLens</title>
+  {% load static %}
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'videos/logos/favicon-32x32-dark.png' %}">
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #c9d1d9; --text-muted: #8b949e; --accent: #58a6ff;
+      --success: #4ade80; --danger: #fca5a5; --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 30px 20px; }
+    .container { max-width: 460px; width: 100%; }
+    .header { text-align: center; margin-bottom: 24px; }
+    .header img { height: 36px; }
+    .header h1 { font-size: 22px; margin: 18px 0 6px; }
+    .header p { color: var(--text-muted); font-size: 14px; margin: 0; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 16px; }
+    .row { margin-bottom: 14px; }
+    .row label { display: block; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; font-weight: 700; }
+    .row input { width: 100%; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 14px; }
+    .row input:disabled { opacity: .6; cursor: not-allowed; }
+    .row .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .role-pill { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 700; background: rgba(88,166,255,.15); color: #58a6ff; text-transform: uppercase; letter-spacing: .04em; }
+    .btn { background: var(--accent); color: #fff; border: none; padding: 12px 24px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; }
+    .btn:hover { opacity: .9; }
+    .msg { padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: 13px; }
+    .msg.error { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens">
+      <h1>Join {{ tenant.name }}</h1>
+      <p>{{ invite.invited_by_username|default:"An administrator" }} invited you · <span class="role-pill">{{ invite.get_role_display }}</span></p>
+    </div>
+
+    {% if messages %}
+    {% for m in messages %}
+    <div class="msg error">{{ m }}</div>
+    {% endfor %}
+    {% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="card">
+        <div class="row">
+          <label>Username</label>
+          <input type="text" value="{{ invite.username }}" disabled>
+          <div class="hint">Chosen by your administrator. This is what you'll log in with.</div>
+        </div>
+        <div class="row">
+          <label>Email</label>
+          <input type="email" value="{{ invite.email }}" disabled>
+        </div>
+        <div class="row">
+          <label for="password">Choose a password</label>
+          <input type="password" name="password" id="password" minlength="8" required autocomplete="new-password">
+          <div class="hint">Minimum 8 characters.</div>
+        </div>
+        <div class="row">
+          <label for="password_confirm">Confirm password</label>
+          <input type="password" name="password_confirm" id="password_confirm" minlength="8" required autocomplete="new-password">
+        </div>
+      </div>
+      <button type="submit" class="btn">Set password and join</button>
+    </form>
+
+    <p style="text-align:center; color:var(--text-muted); font-size:12px; margin-top:20px;">
+      Invite expires {{ invite.expires_at|date:"M d, Y H:i" }}
+    </p>
+  </div>
+</body>
+</html>

@@ -180,24 +180,41 @@ def _create_media_folder(media_folder: str) -> None:
 
 
 def _create_admin_user(db_alias: str, email: str, password: str, username: str) -> User:
-    """Create the first superadmin user in the tenant DB."""
-    user = User(
-        username=username,
-        email=email,
-        is_staff=True,
-        is_superuser=True,   # gives full Django admin access within this tenant's DB
-        password=make_password(password),
-    )
-    user.save(using=db_alias)
+    """Create (or update) the first superadmin user in the tenant DB.
 
-    # Create the UserProfile with superadmin role
+    Idempotent: if the user already exists (e.g. from a previously failed
+    onboarding attempt) we update password/email/role instead of inserting
+    a duplicate row.
+    """
+    try:
+        user = User.objects.using(db_alias).get(username=username)
+        user.email       = email
+        user.is_staff    = True
+        user.is_superuser = True
+        user.password    = make_password(password)
+        user.save(using=db_alias)
+        logger.info("Updated existing admin user '%s' in %s", username, db_alias)
+    except User.DoesNotExist:
+        user = User(
+            username=username,
+            email=email,
+            is_staff=True,
+            is_superuser=True,   # gives full Django admin access within this tenant's DB
+            password=make_password(password),
+        )
+        user.save(using=db_alias)
+        logger.info("Created admin user '%s' in %s", username, db_alias)
+
+    # Ensure the UserProfile exists with superadmin role.
+    # The post_save signal in videos/apps.py already creates a profile when the
+    # User is saved (and pins it to the same DB). We use update_or_create here
+    # to (a) avoid the duplicate-key error if the signal already ran, and
+    # (b) guarantee the role is 'superadmin' regardless of signal default.
     from videos.models import UserProfile
-    # UserProfile has related_name='profile' — create it in the tenant DB
-    profile = UserProfile(user=user, role='superadmin')
-    profile.save(using=db_alias)
-    logger.info("Created UserProfile (superadmin) for '%s' in %s", user.username, db_alias)
-
-    logger.info("Created admin user '%s' in %s", username, db_alias)
+    UserProfile.objects.using(db_alias).update_or_create(
+        user=user, defaults={'role': 'superadmin'}
+    )
+    logger.info("Ensured UserProfile (superadmin) for '%s' in %s", user.username, db_alias)
     return user
 
 
