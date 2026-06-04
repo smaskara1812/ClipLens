@@ -28,6 +28,25 @@ urlpatterns = [
     path('admin-panel/support/<int:ticket_id>/', views.org_support_detail, name='org_support_detail'),
     path('admin-panel/team-invites/',            views.org_team_invites,   name='org_team_invites'),
     path('admin-panel/users/<int:user_id>/lifecycle/', views.user_lifecycle, name='user_lifecycle'),
+
+    # Redactions
+    path('video/<uuid:video_id>/redact/',          views.video_redact_editor,    name='video_redact_editor'),
+    path('api/videos/<uuid:video_id>/redactions/',                  views.video_redactions_api,        name='video_redactions_api'),
+    path('api/videos/<uuid:video_id>/redactions/toggle-raw-block/', views.video_redactions_toggle_raw, name='video_redactions_toggle_raw'),
+    path('api/videos/<uuid:video_id>/face-identities/',             views.video_face_identities_api,    name='video_face_identities_api'),
+    path('api/videos/<uuid:video_id>/redact-face-identity/',        views.video_redact_face_identity,   name='video_redact_face_identity'),
+    path('api/videos/<uuid:video_id>/speaker-identities/',          views.video_speaker_identities_api, name='video_speaker_identities_api'),
+    path('api/videos/<uuid:video_id>/redact-speaker-identity/',     views.video_redact_speaker_identity, name='video_redact_speaker_identity'),
+
+    # Save drafts + auto-render
+    path('api/videos/<uuid:video_id>/save-redactions/',             views.video_save_redactions,         name='video_save_redactions'),
+
+    # Phase 3 — render export (manual trigger; auto-fires on save now)
+    path('api/videos/<uuid:video_id>/render-redacted/',             views.video_render_redacted,        name='video_render_redacted'),
+    path('api/videos/<uuid:video_id>/redaction-renders/',           views.video_redaction_renders_api,  name='video_redaction_renders_api'),
+    path('api/videos/<uuid:video_id>/download-redacted/<int:render_id>/', views.video_download_redacted, name='video_download_redacted'),
+    path('api/redaction-renders/<int:render_id>/',                  views.video_redaction_render_detail, name='video_redaction_render_detail'),
+    path('api/redactions/<int:redaction_id>/',                      views.video_redaction_detail,      name='video_redaction_detail'),
     path('admin-panel/encoding/',    views.org_encoding_settings,   name='org_encoding_settings'),
     path('api/videos/<uuid:video_id>/encode-quality/', views.video_encode_quality),
     path('api/videos/<uuid:video_id>/qualities/',      views.video_qualities_status),

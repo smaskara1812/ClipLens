@@ -3875,3 +3875,133 @@ def encode_single_quality_task(self, video_id: str, target_height: int, **kwargs
     logger.info(f'[encode_single] {label} added to {video_id}; qualities now: {existing}')
     return {'ok': True, 'quality': label, 'all_qualities': existing}
 
+
+
+# ── Redaction render export (Phase 3) ────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.render_redacted_video_task',
+    queue='processing',
+    max_retries=1,
+    default_retry_delay=120,
+    acks_late=True,
+)
+def render_redacted_video_task(self, render_id, *, tenant_slug='', **kwargs):
+    """
+    Bake all current Redactions for a Video into a new MP4 derivative.
+
+    `render_id` — PK of a RedactionRender row that should already be in
+    'queued' state. We update it through 'rendering' → 'ready'/'failed'.
+    """
+    from .models import Video, Redaction, RedactionRender
+    from .redaction_render import render_redacted_video
+    from django.utils import timezone
+    import os
+
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            logger.exception('render_redacted_video_task: tenant ctx failed')
+
+    try:
+        render = RedactionRender.objects.select_related('video').get(pk=render_id)
+    except RedactionRender.DoesNotExist:
+        return {'ok': False, 'error': 'render row not found'}
+
+    render.status = RedactionRender.STATUS_RENDERING
+    render.started_at = timezone.now()
+    render.celery_task_id = self.request.id or ''
+    render.save(update_fields=['status', 'started_at', 'celery_task_id'])
+
+    video = render.video
+    if not video.original_file or not os.path.exists(video.original_file.path):
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = 'Original file missing on disk'
+        render.finished_at = timezone.now()
+        render.save(update_fields=['status', 'error_message', 'finished_at'])
+        return {'ok': False, 'error': render.error_message}
+
+    redactions = list(Redaction.objects.filter(video=video))
+    if not redactions:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = 'No redactions to bake in'
+        render.finished_at = timezone.now()
+        render.save(update_fields=['status', 'error_message', 'finished_at'])
+        return {'ok': False, 'error': render.error_message}
+
+    # Parse video resolution
+    try:
+        vw, vh = video.resolution.split('x', 1)
+        vw, vh = int(vw), int(vh)
+    except Exception:
+        vw, vh = 1920, 1080
+    duration_s = float(video.duration or 0)
+    if duration_s <= 0:
+        # Probe with ffprobe
+        try:
+            out = subprocess.check_output([
+                settings.FFPROBE_PATH, '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video.original_file.path,
+            ], timeout=20).decode().strip()
+            duration_s = float(out) if out else 600.0
+        except Exception:
+            duration_s = 600.0
+
+    # Compute destination path inside the tenant's media root
+    rel_path = render.file_path  # already set by the view that queued us
+    if not rel_path:
+        from .redaction_render import new_render_filename
+        rel_path = new_render_filename(video.id)
+        render.file_path = rel_path
+        render.save(update_fields=['file_path'])
+
+    # Use the tenant-aware storage backend to resolve the absolute path.
+    # rel_path is e.g. "redacted/<uuid>__<ts>.mp4" relative to the tenant root.
+    storage = video.original_file.storage
+    abs_path = storage.path(rel_path)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+
+    src_path = video.original_file.path
+
+    from .redaction_render import render_redacted_video as _do
+    ok, message = _do(
+        src_path=src_path,
+        dst_path=abs_path,
+        redactions=redactions,
+        video_w=vw, video_h=vh,
+        duration_s=duration_s,
+    )
+
+    if not ok:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = message[:4000]
+        render.finished_at = timezone.now()
+        render.save(update_fields=['status', 'error_message', 'finished_at'])
+        return {'ok': False, 'error': message}
+
+    file_size = os.path.getsize(abs_path)
+    render.status = RedactionRender.STATUS_READY
+    render.file_size_bytes = file_size
+    render.duration_s = duration_s
+    render.redaction_count = len(redactions)
+    render.included_redaction_ids = [r.pk for r in redactions]
+    render.finished_at = timezone.now()
+    render.save(update_fields=[
+        'status', 'file_size_bytes', 'duration_s',
+        'redaction_count', 'included_redaction_ids', 'finished_at',
+    ])
+
+    # Count against tenant storage quota
+    if tenant_slug:
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(tenant_slug, file_size)
+        except Exception:
+            logger.exception('render_redacted_video_task: storage logging failed')
+
+    return {'ok': True, 'file_size': file_size, 'redactions': len(redactions)}

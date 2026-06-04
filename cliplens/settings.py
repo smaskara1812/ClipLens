@@ -525,9 +525,19 @@ SEEK_THUMBNAIL_QUALITY   = int(os.getenv('SEEK_THUMBNAIL_QUALITY', '4'))
 # ── Django Debug Toolbar (dev only) ──────────────────────────────────────────
 if DEBUG:
     INTERNAL_IPS = ['127.0.0.1', '::1']
+    def _show_debug_toolbar(request):
+        """Skip the toolbar for download endpoints — it buffers large file
+        responses in memory and breaks Safari's connection mid-download."""
+        if not DEBUG:
+            return False
+        p = request.path or ''
+        if '/download/' in p or '/api/media/' in p:
+            return False
+        return True
+
     DEBUG_TOOLBAR_CONFIG = {
-        # Show toolbar for all requests from INTERNAL_IPS, not just HTML responses
-        'SHOW_TOOLBAR_CALLBACK': lambda request: DEBUG,
+        # Show toolbar for all requests from INTERNAL_IPS except large downloads
+        'SHOW_TOOLBAR_CALLBACK': _show_debug_toolbar,
         # Panels to enable — all the useful ones
         'PANELS': [
             'debug_toolbar.panels.history.HistoryPanel',

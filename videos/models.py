@@ -189,6 +189,10 @@ class Video(models.Model):
     hls_path          = models.CharField(max_length=500, blank=True)
     thumbnail         = models.ImageField(upload_to='thumbnails/', blank=True, null=True)
 
+    # When True, non-admins can only download the rendered redacted copy.
+    # Set to True by admins when this video has sensitive redactions.
+    redacted_raw_blocked = models.BooleanField(default=False)
+
     duration   = models.FloatField(null=True, blank=True)
     file_size  = models.BigIntegerField(null=True, blank=True,
                                         help_text='Size of the original uploaded file in bytes')
@@ -318,6 +322,208 @@ class Video(models.Model):
                 return True  # owner
             return ChannelSubscription.objects.filter(user=user, channel=self.channel).exists()
         return False
+
+
+# ── Redactions ────────────────────────────────────────────────────────────────
+
+class Redaction(models.Model):
+    """
+    A single redaction applied to one Video (or Photo in Phase 4). Stored
+    non-destructively as metadata — the player applies it as an overlay at
+    playback time, and a "render redacted copy" Celery task can bake it into
+    a derivative MP4 on demand.
+
+    Targets four concerns:
+      - face        : blur/pixelate/black-box over a face (tracked or fixed)
+      - voice       : mute/beep/voice-change audio range tied to a speaker
+      - region      : manual rectangle blur over generic content
+      - audio_range : manual time-range mute/beep (no specific speaker)
+      - text        : OCR-detected text region (Phase 7)
+    """
+    TARGET_FACE         = 'face'
+    TARGET_VOICE        = 'voice'
+    TARGET_REGION       = 'region'
+    TARGET_AUDIO_RANGE  = 'audio_range'
+    TARGET_TEXT         = 'text'
+    TARGET_CHOICES = [
+        (TARGET_FACE,        'Face (visual)'),
+        (TARGET_VOICE,       'Voice (audio + transcript)'),
+        (TARGET_REGION,      'Generic region'),
+        (TARGET_AUDIO_RANGE, 'Audio range'),
+        (TARGET_TEXT,        'On-screen text'),
+    ]
+
+    METHOD_BLUR         = 'blur'
+    METHOD_PIXELATE     = 'pixelate'
+    METHOD_BLACK_BOX    = 'black_box'
+    METHOD_MUTE         = 'mute'
+    METHOD_BEEP         = 'beep'
+    METHOD_VOICE_CHANGE = 'voice_change'
+    METHOD_CHOICES = [
+        (METHOD_BLUR,         'Blur'),
+        (METHOD_PIXELATE,     'Pixelate'),
+        (METHOD_BLACK_BOX,    'Black box'),
+        (METHOD_MUTE,         'Mute (silence)'),
+        (METHOD_BEEP,         'Beep tone'),
+        (METHOD_VOICE_CHANGE, 'Voice change (pitch shift)'),
+    ]
+
+    SEVERITY_LIGHT  = 'light'
+    SEVERITY_MEDIUM = 'medium'
+    SEVERITY_HEAVY  = 'heavy'
+    SEVERITY_CHOICES = [
+        (SEVERITY_LIGHT,  'Light'),
+        (SEVERITY_MEDIUM, 'Medium'),
+        (SEVERITY_HEAVY,  'Heavy'),
+    ]
+
+    SPATIAL_WHOLE_FRAME  = 'whole_frame'
+    SPATIAL_FIXED_BOX    = 'fixed_box'
+    SPATIAL_TRACKED_FACE = 'tracked_face'
+    SPATIAL_CHOICES = [
+        (SPATIAL_WHOLE_FRAME,  'Whole frame'),
+        (SPATIAL_FIXED_BOX,    'Fixed box'),
+        (SPATIAL_TRACKED_FACE, 'Tracks face detections'),
+    ]
+
+    SOURCE_MANUAL          = 'manual'
+    SOURCE_AI_FACE         = 'ai_face'
+    SOURCE_AI_VOICE        = 'ai_voice'
+    SOURCE_POLICY          = 'policy'
+    SOURCE_TRANSCRIPT_WORD = 'transcript_word'
+    SOURCE_CHOICES = [
+        (SOURCE_MANUAL,          'Manual'),
+        (SOURCE_AI_FACE,         'From face detection'),
+        (SOURCE_AI_VOICE,        'From speaker diarization'),
+        (SOURCE_POLICY,          'Auto-applied by policy'),
+        (SOURCE_TRANSCRIPT_WORD, 'Picked from transcript'),
+    ]
+
+    video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name='redactions')
+
+    target_type = models.CharField(max_length=20, choices=TARGET_CHOICES)
+    # Optional identity FKs (populated when target is face / voice)
+    target_face_identity = models.ForeignKey(
+        'FaceIdentity', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+',
+    )
+    target_speaker_identity = models.ForeignKey(
+        'SpeakerIdentity', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+',
+    )
+
+    method   = models.CharField(max_length=20, choices=METHOD_CHOICES)
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default=SEVERITY_MEDIUM)
+
+    # Time range. For whole-video redactions, start=0 and end=video.duration.
+    time_start_s = models.FloatField(default=0)
+    time_end_s   = models.FloatField(default=0)
+
+    # Spatial (visual redactions only). Stored as 0-1 percentages so they
+    # survive any future resolution / aspect changes.
+    spatial_mode = models.CharField(max_length=20, choices=SPATIAL_CHOICES,
+                                    default=SPATIAL_FIXED_BOX)
+    bbox_x = models.FloatField(default=0, help_text='0-1 from left')
+    bbox_y = models.FloatField(default=0, help_text='0-1 from top')
+    bbox_w = models.FloatField(default=0, help_text='0-1 width')
+    bbox_h = models.FloatField(default=0, help_text='0-1 height')
+
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_MANUAL)
+
+    # Future Phase 6: policy back-reference. Held as integer FK for now to
+    # avoid a circular import — RedactionPolicy will be created later.
+    applied_by_policy_id = models.IntegerField(null=True, blank=True, db_index=True)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────
+    # Drafts can be freely edited / deleted in the editor. After the user
+    # clicks "Save & render", drafts flip to is_saved=True — at which point
+    # only the human label remains editable.
+    is_saved   = models.BooleanField(default=False, db_index=True)
+    saved_at   = models.DateTimeField(null=True, blank=True)
+
+    label = models.CharField(max_length=120, blank=True,
+                             help_text='Optional human label, e.g. "blur CEO 0:32"')
+    created_by_username = models.CharField(max_length=150, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['video', 'time_start_s']),
+            models.Index(fields=['target_type']),
+            models.Index(fields=['applied_by_policy_id']),
+        ]
+        ordering = ['video', 'time_start_s']
+
+    def __str__(self):
+        return f'{self.get_target_type_display()} {self.method} on {self.video_id} ({self.time_start_s:.1f}-{self.time_end_s:.1f}s)'
+
+    @property
+    def is_visual(self) -> bool:
+        return self.target_type in (self.TARGET_FACE, self.TARGET_REGION, self.TARGET_TEXT)
+
+    @property
+    def is_audio(self) -> bool:
+        return self.target_type in (self.TARGET_VOICE, self.TARGET_AUDIO_RANGE)
+
+
+class RedactionRender(models.Model):
+    """
+    A rendered MP4 derivative of a Video with all visual/audio Redactions
+    baked in via ffmpeg filter_complex. Lives in media/tenants/<slug>/redacted/.
+    Multiple renders per video are possible (each is a snapshot of the
+    redactions at render time).
+    """
+    STATUS_QUEUED    = 'queued'
+    STATUS_RENDERING = 'rendering'
+    STATUS_READY     = 'ready'
+    STATUS_FAILED    = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_QUEUED,    'Queued'),
+        (STATUS_RENDERING, 'Rendering'),
+        (STATUS_READY,     'Ready'),
+        (STATUS_FAILED,    'Failed'),
+    ]
+
+    video           = models.ForeignKey(Video, on_delete=models.CASCADE,
+                                        related_name='redaction_renders')
+    status          = models.CharField(max_length=15, choices=STATUS_CHOICES,
+                                       default=STATUS_QUEUED, db_index=True)
+    file_path       = models.CharField(max_length=600, blank=True,
+                                       help_text='Path under MEDIA_ROOT, e.g. "redacted/uuid__ts.mp4"')
+    file_size_bytes = models.BigIntegerField(default=0)
+    duration_s      = models.FloatField(default=0)
+    redaction_count = models.PositiveIntegerField(default=0,
+                       help_text='How many Redaction rows were baked in')
+    included_redaction_ids = models.JSONField(default=list, blank=True,
+                       help_text='Snapshot of Redaction PKs at render time')
+
+    queued_at       = models.DateTimeField(auto_now_add=True)
+    started_at      = models.DateTimeField(null=True, blank=True)
+    finished_at     = models.DateTimeField(null=True, blank=True)
+    expires_at      = models.DateTimeField(null=True, blank=True,
+                       help_text='Optional automatic-cleanup date')
+
+    download_count  = models.PositiveIntegerField(default=0)
+    last_downloaded_at = models.DateTimeField(null=True, blank=True)
+
+    rendered_by_username = models.CharField(max_length=150, blank=True)
+    error_message   = models.TextField(blank=True)
+    celery_task_id  = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        ordering = ['-queued_at']
+        indexes = [
+            models.Index(fields=['video', '-queued_at']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f'render {self.pk} {self.status} for {self.video_id}'
+
+    @property
+    def filename(self) -> str:
+        return self.file_path.rsplit('/', 1)[-1] if self.file_path else ''
 
 
 # ── Engagement ────────────────────────────────────────────────────────────────

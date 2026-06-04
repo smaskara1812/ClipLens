@@ -31,7 +31,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.clickjacking import xframe_options_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -2407,6 +2407,764 @@ def org_team_invites(request):
     })
 
 
+# ── Redactions (Phase 1: manual region + audio range, non-destructive) ───────
+
+def _can_edit_redactions(user, video) -> bool:
+    """Channel owner / editor of the video, or org superadmin."""
+    if not user.is_authenticated:
+        return False
+    if _is_superadmin(user):
+        return True
+    if _is_video_owner(user, video):
+        return True
+    if _is_editor(user) and hasattr(user, 'editable_channels'):
+        return user.editable_channels.filter(id=video.channel_id).exists()
+    return False
+
+
+def _serialize_redaction(r) -> dict:
+    """Common JSON shape for both API and player overlay."""
+    return {
+        'id':                r.pk,
+        'target_type':       r.target_type,
+        'method':            r.method,
+        'severity':          r.severity,
+        'time_start_s':      r.time_start_s,
+        'time_end_s':        r.time_end_s,
+        'spatial_mode':      r.spatial_mode,
+        'bbox':              {'x': r.bbox_x, 'y': r.bbox_y, 'w': r.bbox_w, 'h': r.bbox_h},
+        'target_face_identity_id':    r.target_face_identity_id,
+        'target_speaker_identity_id': r.target_speaker_identity_id,
+        'source':            r.source,
+        'label':             r.label,
+        'created_by':        r.created_by_username,
+        'created_at':        r.created_at.isoformat(),
+        'is_visual':         r.is_visual,
+        'is_audio':          r.is_audio,
+        'is_saved':          r.is_saved,
+        'saved_at':          r.saved_at.isoformat() if r.saved_at else None,
+    }
+
+
+@login_required
+def video_redactions_api(request, video_id):
+    """
+    GET  /api/videos/<id>/redactions/  — list all redactions for this video
+    POST /api/videos/<id>/redactions/  — create a new redaction
+    """
+    from .models import Video, Redaction
+    video = get_object_or_404(Video, id=video_id)
+
+    if request.method == 'GET':
+        rows = list(Redaction.objects.filter(video=video).order_by('time_start_s'))
+        return JsonResponse({
+            'ok': True,
+            'count': len(rows),
+            'redactions': [_serialize_redaction(r) for r in rows],
+            'video': {
+                'id': str(video.id),
+                'duration': float(video.duration or 0),
+                'redacted_raw_blocked': video.redacted_raw_blocked,
+            },
+            'can_edit': _can_edit_redactions(request.user, video),
+        })
+
+    if request.method == 'POST':
+        if not _can_edit_redactions(request.user, video):
+            return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+        try:
+            payload = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+
+        valid_targets = dict(Redaction.TARGET_CHOICES)
+        valid_methods = dict(Redaction.METHOD_CHOICES)
+        target_type = payload.get('target_type', '')
+        method      = payload.get('method', '')
+        if target_type not in valid_targets:
+            return JsonResponse({'ok': False, 'error': f'Invalid target_type'}, status=400)
+        if method not in valid_methods:
+            return JsonResponse({'ok': False, 'error': f'Invalid method'}, status=400)
+
+        bbox = payload.get('bbox') or {}
+        r = Redaction.objects.create(
+            video=video,
+            target_type=target_type,
+            method=method,
+            severity=payload.get('severity', Redaction.SEVERITY_MEDIUM),
+            time_start_s=float(payload.get('time_start_s', 0) or 0),
+            time_end_s=float(payload.get('time_end_s', 0) or 0),
+            spatial_mode=payload.get('spatial_mode', Redaction.SPATIAL_FIXED_BOX),
+            bbox_x=float(bbox.get('x', 0) or 0),
+            bbox_y=float(bbox.get('y', 0) or 0),
+            bbox_w=float(bbox.get('w', 0) or 0),
+            bbox_h=float(bbox.get('h', 0) or 0),
+            source=Redaction.SOURCE_MANUAL,
+            label=(payload.get('label') or '')[:120],
+            created_by_username=request.user.username,
+        )
+
+        # Optional: update the video's "block raw download" flag at creation time
+        block_raw = payload.get('block_raw_download')
+        if block_raw is not None and bool(block_raw) != video.redacted_raw_blocked:
+            video.redacted_raw_blocked = bool(block_raw)
+            video.save(update_fields=['redacted_raw_blocked'])
+
+        return JsonResponse({'ok': True, 'redaction': _serialize_redaction(r)}, status=201)
+
+    return JsonResponse({'ok': False, 'error': 'Method not allowed'}, status=405)
+
+
+@login_required
+@require_http_methods(['PATCH', 'POST', 'DELETE'])
+def video_redaction_detail(request, redaction_id):
+    """
+    PATCH /api/redactions/<id>/  — edit
+    POST  /api/redactions/<id>/  — edit (form-friendly)
+    DELETE /api/redactions/<id>/ — remove
+    """
+    from .models import Redaction
+    r = get_object_or_404(Redaction, id=redaction_id)
+    if not _can_edit_redactions(request.user, r.video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    if request.method == 'DELETE':
+        if r.is_saved:
+            return JsonResponse({'ok': False, 'error': 'Saved redactions cannot be deleted.'}, status=400)
+        r.delete()
+        return JsonResponse({'ok': True, 'deleted': redaction_id})
+
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+
+    # SAVED redactions: only label is editable
+    if r.is_saved:
+        if 'label' in payload:
+            r.label = str(payload['label'])[:120]
+            r.save(update_fields=['label', 'updated_at'])
+        return JsonResponse({'ok': True, 'redaction': _serialize_redaction(r)})
+
+    # DRAFT redactions: full edit
+    updatable = {
+        'method':       lambda v: v if v in dict(Redaction.METHOD_CHOICES) else None,
+        'severity':     lambda v: v if v in dict(Redaction.SEVERITY_CHOICES) else None,
+        'time_start_s': lambda v: float(v),
+        'time_end_s':   lambda v: float(v),
+        'label':        lambda v: str(v)[:120],
+    }
+    for k, parser in updatable.items():
+        if k in payload:
+            try:
+                val = parser(payload[k])
+                if val is not None:
+                    setattr(r, k, val)
+            except (ValueError, TypeError):
+                continue
+    if 'bbox' in payload and isinstance(payload['bbox'], dict):
+        b = payload['bbox']
+        try:
+            r.bbox_x = float(b.get('x', r.bbox_x))
+            r.bbox_y = float(b.get('y', r.bbox_y))
+            r.bbox_w = float(b.get('w', r.bbox_w))
+            r.bbox_h = float(b.get('h', r.bbox_h))
+        except (ValueError, TypeError):
+            pass
+    r.save()
+    return JsonResponse({'ok': True, 'redaction': _serialize_redaction(r)})
+
+
+@login_required
+@require_POST
+def video_redactions_toggle_raw(request, video_id):
+    """POST /api/videos/<id>/redactions/toggle-raw-block/ — set Video.redacted_raw_blocked"""
+    from .models import Video
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+    video.redacted_raw_blocked = bool(payload.get('block'))
+    video.save(update_fields=['redacted_raw_blocked'])
+    return JsonResponse({'ok': True, 'redacted_raw_blocked': video.redacted_raw_blocked})
+
+
+@login_required
+def video_face_identities_api(request, video_id):
+    """
+    GET /api/videos/<id>/face-identities/ — list FaceIdentity rows that
+    appear in this video, with detection counts. Powers the "Blur a person"
+    dropdown in the redact editor.
+    """
+    from .models import Video, DetectedFace
+    from django.db.models import Count, Min, Max
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    rows = (
+        DetectedFace.objects.filter(video=video, identity__isnull=False)
+        .values('identity_id', 'identity__name', 'identity__thumbnail',
+                'identity__is_auto_named')
+        .annotate(
+            detections=Count('id'),
+            first_seen=Min('timestamp'),
+            last_seen=Max('timestamp'),
+        )
+        .order_by('-detections')
+    )
+    out = []
+    for r in rows:
+        thumb = r['identity__thumbnail']
+        out.append({
+            'identity_id':   r['identity_id'],
+            'name':          r['identity__name'],
+            'is_auto_named': r['identity__is_auto_named'],
+            'thumbnail_url': f'/media/{thumb}' if thumb else None,
+            'detections':    r['detections'],
+            'first_seen':    r['first_seen'],
+            'last_seen':     r['last_seen'],
+        })
+    return JsonResponse({'ok': True, 'identities': out, 'count': len(out)})
+
+
+def _parse_resolution(video) -> tuple[int, int]:
+    """Return (w, h) for a video; falls back to 1920x1080 if not set."""
+    try:
+        w, h = video.resolution.split('x', 1)
+        return int(w), int(h)
+    except Exception:
+        return 1920, 1080
+
+
+@login_required
+@require_POST
+def video_redact_face_identity(request, video_id):
+    """
+    POST /api/videos/<id>/redact-face-identity/
+
+    Body JSON:
+      {
+        "identity_id":  42,
+        "method":       "blur" | "pixelate" | "black_box",
+        "severity":     "light" | "medium" | "heavy",
+        "padding_pct":  0.30,         # inflate bbox by this fraction to hide jitter
+      }
+
+    Walks every DetectedFace for this identity in this video, creates one
+    Redaction row per detection (spatial_mode='tracked_face'). Time ranges
+    are sized to overlap with adjacent samples (≈ FRAME_INTERVAL_SECONDS)
+    so the box stays visible between detection points (hold-last behaviour).
+
+    Replaces any existing AI-sourced face redactions for the same identity
+    on this video so re-running is idempotent.
+    """
+    from .models import Video, Redaction, DetectedFace, FaceIdentity
+    import json as _json
+
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+
+    identity_id = payload.get('identity_id')
+    method      = payload.get('method', 'blur')
+    severity    = payload.get('severity', 'heavy')
+    padding_pct = float(payload.get('padding_pct', 0.30))
+
+    valid_methods = {'blur', 'pixelate', 'black_box'}
+    valid_sevs    = {'light', 'medium', 'heavy'}
+    if method not in valid_methods:
+        return JsonResponse({'ok': False, 'error': 'Invalid method'}, status=400)
+    if severity not in valid_sevs:
+        return JsonResponse({'ok': False, 'error': 'Invalid severity'}, status=400)
+
+    try:
+        identity = FaceIdentity.objects.get(pk=int(identity_id))
+    except (FaceIdentity.DoesNotExist, TypeError, ValueError):
+        return JsonResponse({'ok': False, 'error': 'Identity not found'}, status=404)
+
+    # Wipe any prior DRAFT AI face redactions for this same (video, identity) pair.
+    # Saved ones are immutable and stay.
+    Redaction.objects.filter(
+        video=video, target_face_identity=identity,
+        source=Redaction.SOURCE_AI_FACE,
+        is_saved=False,
+    ).delete()
+
+    # Pull all detections for this identity in this video, time-sorted
+    detections = list(
+        DetectedFace.objects
+        .filter(video=video, identity=identity)
+        .order_by('timestamp')
+        .values('timestamp', 'bbox')
+    )
+    if not detections:
+        return JsonResponse({
+            'ok': True, 'created': 0,
+            'message': f'No detections of "{identity.name}" found in this video.',
+        })
+
+    vid_w, vid_h = _parse_resolution(video)
+    if vid_w <= 0 or vid_h <= 0:
+        vid_w, vid_h = 1920, 1080
+
+    # Default hold time per detection — matches your FRAME_INTERVAL_SECONDS so
+    # the box covers up to the next sample.
+    hold = float(getattr(settings, 'FRAME_INTERVAL_SECONDS', 5)) + 0.5
+
+    to_create = []
+    for i, d in enumerate(detections):
+        try:
+            box = _json.loads(d['bbox']) if isinstance(d['bbox'], str) else d['bbox']
+            x1, y1, x2, y2 = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        except Exception:
+            continue
+        # Inflate to mask jitter / off-by-one
+        w = max(0, x2 - x1)
+        h = max(0, y2 - y1)
+        pad_x = w * padding_pct
+        pad_y = h * padding_pct
+        x1 = max(0, x1 - pad_x); x2 = min(vid_w, x2 + pad_x)
+        y1 = max(0, y1 - pad_y); y2 = min(vid_h, y2 + pad_y)
+        # Normalise to 0-1 percentages
+        bx = x1 / vid_w
+        by = y1 / vid_h
+        bw = (x2 - x1) / vid_w
+        bh = (y2 - y1) / vid_h
+        if bw <= 0 or bh <= 0:
+            continue
+
+        # Time range — extends to next detection or +hold seconds
+        t_start = max(0, float(d['timestamp']) - 0.2)
+        if i + 1 < len(detections):
+            t_end = min(float(detections[i + 1]['timestamp']) + 0.2,
+                        float(d['timestamp']) + hold)
+        else:
+            t_end = float(d['timestamp']) + hold
+
+        to_create.append(Redaction(
+            video=video,
+            target_type=Redaction.TARGET_FACE,
+            target_face_identity=identity,
+            method=method,
+            severity=severity,
+            time_start_s=t_start,
+            time_end_s=t_end,
+            spatial_mode=Redaction.SPATIAL_TRACKED_FACE,
+            bbox_x=bx, bbox_y=by, bbox_w=bw, bbox_h=bh,
+            source=Redaction.SOURCE_AI_FACE,
+            label=f'{identity.name}',
+            created_by_username=request.user.username,
+        ))
+
+    Redaction.objects.bulk_create(to_create)
+    return JsonResponse({
+        'ok': True,
+        'created': len(to_create),
+        'identity': identity.name,
+        'message': f'Created {len(to_create)} blur regions across {len(detections)} face detections.',
+    })
+
+
+@login_required
+def video_speaker_identities_api(request, video_id):
+    """
+    GET /api/videos/<id>/speaker-identities/ — list SpeakerIdentity rows that
+    have segments in this video, with segment counts and time-spans.
+    """
+    from .models import Video, VideoSegment
+    from django.db.models import Count, Min, Max, Sum, F, FloatField, ExpressionWrapper
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    rows = (
+        VideoSegment.objects
+        .filter(video=video, speaker_identity__isnull=False)
+        .values('speaker_identity_id', 'speaker_identity__name')
+        .annotate(
+            segments=Count('id'),
+            first_seen=Min('start_seconds'),
+            last_seen=Max('end_seconds'),
+            total_speech=Sum(ExpressionWrapper(F('end_seconds') - F('start_seconds'),
+                                               output_field=FloatField())),
+        )
+        .order_by('-total_speech')
+    )
+    out = [{
+        'identity_id':  r['speaker_identity_id'],
+        'name':         r['speaker_identity__name'],
+        'segments':     r['segments'],
+        'first_seen':   r['first_seen'],
+        'last_seen':    r['last_seen'],
+        'total_speech': round(r['total_speech'] or 0, 1),
+    } for r in rows]
+    return JsonResponse({'ok': True, 'speakers': out, 'count': len(out)})
+
+
+@login_required
+@require_POST
+def video_redact_speaker_identity(request, video_id):
+    """
+    POST /api/videos/<id>/redact-speaker-identity/
+
+    Body JSON:
+      {
+        "identity_id":   3,
+        "method":        "mute" | "beep",
+        "merge_gap_s":   0.5,    # merge adjacent segments closer than this
+      }
+
+    Walks every VideoSegment for this speaker in this video, optionally merges
+    adjacent ones, and creates Redaction rows with target_type='voice'.
+    Idempotent: replaces prior AI-voice redactions for the same speaker.
+    """
+    from .models import Video, VideoSegment, Redaction, SpeakerIdentity
+
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+
+    identity_id = payload.get('identity_id')
+    method      = payload.get('method', 'mute')
+    merge_gap   = float(payload.get('merge_gap_s', 0.5))
+
+    if method not in ('mute', 'beep'):
+        return JsonResponse({'ok': False, 'error': 'method must be mute or beep'}, status=400)
+
+    try:
+        identity = SpeakerIdentity.objects.get(pk=int(identity_id))
+    except (SpeakerIdentity.DoesNotExist, TypeError, ValueError):
+        return JsonResponse({'ok': False, 'error': 'Speaker not found'}, status=404)
+
+    # Wipe prior DRAFT AI-voice redactions for this (video, speaker) — saved stay
+    Redaction.objects.filter(
+        video=video,
+        target_speaker_identity=identity,
+        source=Redaction.SOURCE_AI_VOICE,
+        is_saved=False,
+    ).delete()
+
+    segments = list(
+        VideoSegment.objects
+        .filter(video=video, speaker_identity=identity)
+        .order_by('start_seconds')
+        .values('start_seconds', 'end_seconds')
+    )
+    if not segments:
+        return JsonResponse({
+            'ok': True, 'created': 0,
+            'message': f'No speech segments for "{identity.name}" in this video.',
+        })
+
+    # Merge adjacent segments separated by a tiny gap (cleaner playback)
+    merged = []
+    cur_start = segments[0]['start_seconds']
+    cur_end   = segments[0]['end_seconds']
+    for seg in segments[1:]:
+        if seg['start_seconds'] - cur_end <= merge_gap:
+            cur_end = max(cur_end, seg['end_seconds'])
+        else:
+            merged.append((cur_start, cur_end))
+            cur_start = seg['start_seconds']
+            cur_end   = seg['end_seconds']
+    merged.append((cur_start, cur_end))
+
+    to_create = [
+        Redaction(
+            video=video,
+            target_type=Redaction.TARGET_VOICE,
+            target_speaker_identity=identity,
+            method=method,
+            severity=Redaction.SEVERITY_MEDIUM,
+            time_start_s=max(0, s),
+            time_end_s=e,
+            spatial_mode=Redaction.SPATIAL_WHOLE_FRAME,
+            source=Redaction.SOURCE_AI_VOICE,
+            label=f'{identity.name}',
+            created_by_username=request.user.username,
+        )
+        for (s, e) in merged
+    ]
+    Redaction.objects.bulk_create(to_create)
+    return JsonResponse({
+        'ok': True,
+        'created': len(to_create),
+        'speaker': identity.name,
+        'message': f'Created {len(to_create)} {method} ranges across {len(segments)} speech segments.',
+    })
+
+
+# ── Save & render (commit drafts) ───────────────────────────────────────────
+
+@login_required
+@require_POST
+def video_save_redactions(request, video_id):
+    """
+    POST /api/videos/<id>/save-redactions/
+
+    1. Flips every draft Redaction (is_saved=False) on this video to saved=True
+    2. Deletes prior RedactionRender rows (file on disk + DB) — only latest kept
+    3. Queues a new render Celery task
+    Returns the new render id so the frontend can poll for status.
+    """
+    from .models import Video, Redaction, RedactionRender
+    from .redaction_render import new_render_filename
+    from .tasks import render_redacted_video_task
+    from django.utils import timezone
+    import os as _os
+
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    total_redactions = Redaction.objects.filter(video=video).count()
+    if total_redactions == 0:
+        return JsonResponse({'ok': False, 'error': 'No redactions to save.'}, status=400)
+
+    # ── 1. Flip drafts → saved ─────────────────────────────────────────
+    now = timezone.now()
+    drafts_count = Redaction.objects.filter(video=video, is_saved=False).update(
+        is_saved=True, saved_at=now,
+    )
+
+    # ── 2. Delete prior renders' FILES + ROWS (keep history clean) ─────
+    prior = list(RedactionRender.objects.filter(video=video))
+    freed_bytes = 0
+    storage = video.original_file.storage if video.original_file else None
+    for p in prior:
+        if storage and p.file_path:
+            try:
+                abs_path = storage.path(p.file_path)
+                if _os.path.exists(abs_path):
+                    freed_bytes += _os.path.getsize(abs_path)
+                    _os.remove(abs_path)
+            except Exception:
+                logger.exception('Failed to delete prior render %s', p.file_path)
+        p.delete()
+
+    # Credit storage quota back for the deleted files
+    slug = _tenant_slug(request)
+    if slug and freed_bytes:
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(slug, -freed_bytes)
+        except Exception:
+            pass
+
+    # ── 3. Queue a fresh render ────────────────────────────────────────
+    rel_path = new_render_filename(video.id)
+    render = RedactionRender.objects.create(
+        video=video,
+        status=RedactionRender.STATUS_QUEUED,
+        file_path=rel_path,
+        rendered_by_username=request.user.username,
+    )
+    try:
+        render_redacted_video_task.delay(render.id, tenant_slug=slug or '')
+    except Exception as exc:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = f'Could not queue: {exc}'
+        render.save(update_fields=['status', 'error_message'])
+        return JsonResponse({'ok': False, 'error': str(exc)}, status=500)
+
+    return JsonResponse({
+        'ok': True,
+        'render_id': render.id,
+        'drafts_committed': drafts_count,
+        'prior_renders_deleted': len(prior),
+        'total_redactions': total_redactions,
+    })
+
+
+# ── Redaction render export (Phase 3) ───────────────────────────────────────
+
+@login_required
+@require_POST
+def video_render_redacted(request, video_id):
+    """
+    POST /api/videos/<id>/render-redacted/
+    Queue a Celery task to bake current Redactions into a new MP4.
+    Returns the new RedactionRender row's id + status.
+    """
+    from .models import Video, Redaction, RedactionRender
+    from .redaction_render import new_render_filename
+    from .tasks import render_redacted_video_task
+
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    if not Redaction.objects.filter(video=video).exists():
+        return JsonResponse({'ok': False, 'error': 'No redactions to bake in.'}, status=400)
+
+    rel_path = new_render_filename(video.id)
+    render = RedactionRender.objects.create(
+        video=video,
+        status=RedactionRender.STATUS_QUEUED,
+        file_path=rel_path,
+        rendered_by_username=request.user.username,
+    )
+    try:
+        render_redacted_video_task.delay(render.id, tenant_slug=_tenant_slug(request))
+    except Exception as exc:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = f'Could not queue: {exc}'
+        render.save(update_fields=['status', 'error_message'])
+        return JsonResponse({'ok': False, 'error': str(exc)}, status=500)
+
+    return JsonResponse({
+        'ok': True,
+        'render_id': render.id,
+        'status': render.status,
+        'message': 'Render queued. Refresh in 1–3 min depending on video length.',
+    })
+
+
+def _serialize_render(r) -> dict:
+    return {
+        'id':              r.id,
+        'status':          r.status,
+        'file_size_bytes': r.file_size_bytes,
+        'duration_s':      r.duration_s,
+        'redaction_count': r.redaction_count,
+        'queued_at':       r.queued_at.isoformat() if r.queued_at else None,
+        'started_at':      r.started_at.isoformat() if r.started_at else None,
+        'finished_at':     r.finished_at.isoformat() if r.finished_at else None,
+        'download_count':  r.download_count,
+        'error_message':   r.error_message,
+        'rendered_by':     r.rendered_by_username,
+        'filename':        r.filename,
+        'download_url':    f'/api/videos/{r.video_id}/download-redacted/{r.id}/' if r.status == 'ready' else None,
+    }
+
+
+@login_required
+def video_redaction_renders_api(request, video_id):
+    """GET /api/videos/<id>/redaction-renders/ — list render history for this video."""
+    from .models import Video, RedactionRender
+    video = get_object_or_404(Video, id=video_id)
+    renders = list(RedactionRender.objects.filter(video=video).order_by('-queued_at'))
+    return JsonResponse({
+        'ok': True,
+        'count': len(renders),
+        'renders': [_serialize_render(r) for r in renders],
+    })
+
+
+@login_required
+def video_download_redacted(request, video_id, render_id):
+    """
+    GET /api/videos/<id>/download-redacted/<render_id>/ — download a rendered redacted copy.
+    Anyone with normal watch access can download (this IS the safe-to-share artefact).
+    """
+    from .models import Video, RedactionRender
+    from django.utils import timezone
+    import os as _os
+    video = get_object_or_404(Video, id=video_id)
+    try:
+        render = RedactionRender.objects.get(pk=render_id, video=video)
+    except RedactionRender.DoesNotExist:
+        raise Http404('Render not found')
+    if render.status != RedactionRender.STATUS_READY:
+        return JsonResponse({'ok': False, 'error': f'Render is {render.status}, not ready.'}, status=400)
+
+    storage = video.original_file.storage if video.original_file else None
+    if not storage:
+        raise Http404('No source video')
+    abs_path = storage.path(render.file_path)
+    if not _os.path.exists(abs_path):
+        raise Http404('Rendered file missing on disk')
+
+    render.download_count += 1
+    render.last_downloaded_at = timezone.now()
+    render.save(update_fields=['download_count', 'last_downloaded_at'])
+
+    safe_title = "".join(c for c in video.title if c.isalnum() or c in ' -_').strip() or 'video'
+    filename = f"{safe_title}_redacted.mp4"
+    file_size = _os.path.getsize(abs_path)
+
+    # IMPORTANT: serve as application/octet-stream so Safari doesn't try to
+    # preview/play the MP4 inline. Safari's media handler makes range requests
+    # for video/mp4 even with Content-Disposition=attachment, and that breaks
+    # our chunked streamer mid-download.
+    def _stream(path, chunk=1024 * 1024):
+        with open(path, 'rb') as fh:
+            while True:
+                data = fh.read(chunk)
+                if not data:
+                    break
+                yield data
+    response = StreamingHttpResponse(_stream(abs_path), content_type='application/octet-stream')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Content-Length'] = file_size
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@login_required
+@require_http_methods(['DELETE', 'POST'])
+def video_redaction_render_detail(request, render_id):
+    """DELETE /api/redaction-renders/<id>/ — remove a render (file + row)."""
+    from .models import RedactionRender
+    render = get_object_or_404(RedactionRender, pk=render_id)
+    if not _can_edit_redactions(request.user, render.video):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    # Delete the file on disk if it exists
+    import os as _os
+    try:
+        if render.file_path and render.video.original_file:
+            storage = render.video.original_file.storage
+            abs_path = storage.path(render.file_path)
+            if _os.path.exists(abs_path):
+                size = _os.path.getsize(abs_path)
+                _os.remove(abs_path)
+                # Free up tenant storage quota
+                slug = _tenant_slug(request)
+                if slug and size:
+                    try:
+                        from tenants.metering import log_storage_delta
+                        log_storage_delta(slug, -size)
+                    except Exception:
+                        pass
+    except Exception:
+        logger.exception('Failed to delete rendered file %s', render.file_path)
+
+    render.delete()
+    return JsonResponse({'ok': True})
+
+
+@login_required
+def video_redact_editor(request, video_id):
+    """Dedicated 'Redact' editor page: player + tools + timeline + list."""
+    from .models import Video, Redaction
+    video = get_object_or_404(Video, id=video_id)
+    if not _can_edit_redactions(request.user, video):
+        messages.error(request, "You don't have permission to redact this video.")
+        return redirect('watch', video_id=video.id)
+
+    redactions = list(Redaction.objects.filter(video=video).order_by('time_start_s'))
+    return render(request, 'videos/redact_editor.html', {
+        'video':      video,
+        'redactions': redactions,
+    })
+
+
 # ── User lifecycle: suspend → reassign → delete ──────────────────────────────
 
 def _user_dependencies(user):
@@ -4557,6 +5315,27 @@ def video_download(request, video_id):
         if not _is_editor(request.user):
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    # ── Phase 3: route non-admins to the redacted copy when one exists ──
+    # Non-admins always get the latest redacted MP4 if any ready render exists,
+    # regardless of which quality they asked for. Admins are unaffected and
+    # can pick anything explicitly.
+    if not _is_superadmin(request.user):
+        from .models import RedactionRender
+        latest = (
+            RedactionRender.objects
+            .filter(video=video, status=RedactionRender.STATUS_READY)
+            .order_by('-finished_at').first()
+        )
+        if latest:
+            # 302 redirect — browser follows transparently, no JSON noise
+            from django.shortcuts import redirect as _redirect
+            return _redirect('video_download_redacted', video_id=video.id, render_id=latest.id)
+        # No render but admin has blocked raw downloads → hard stop
+        if getattr(video, 'redacted_raw_blocked', False):
+            return Response({
+                'error': 'Raw download is disabled and no redacted copy is ready yet. Ask an admin.',
+            }, status=status.HTTP_403_FORBIDDEN)
+
     quality = request.GET.get('quality', 'original').strip()
 
     # Sanitise the video title for use as a filename
@@ -4565,18 +5344,26 @@ def video_download(request, video_id):
     if quality == 'original':
         if not video.original_file:
             return Response({'error': 'Original file not available.'}, status=status.HTTP_404_NOT_FOUND)
-        file_path = Path(settings.MEDIA_ROOT) / video.original_file.name
+        file_path = Path(video.original_file.path)
         if not file_path.exists():
             return Response({'error': 'Original file not found on disk.'}, status=status.HTTP_404_NOT_FOUND)
         ext = file_path.suffix.lstrip('.') or 'mp4'
-        # Derive content-type from actual extension rather than assuming mp4
-        _ext_map = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'mkv': 'video/x-matroska',
-                    'webm': 'video/webm', 'avi': 'video/x-msvideo'}
-        content_type = _ext_map.get(ext.lower(), 'video/mp4')
         filename = f"{safe_title}_original.{ext}"
-        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
+        size = file_path.stat().st_size
+
+        def _stream(path, chunk=1024 * 1024):
+            with open(path, 'rb') as fh:
+                while True:
+                    data = fh.read(chunk)
+                    if not data:
+                        break
+                    yield data
+        # application/octet-stream → Safari saves as binary, no inline preview
+        response = StreamingHttpResponse(_stream(str(file_path)),
+                                         content_type='application/octet-stream')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        response['Content-Length'] = file_path.stat().st_size
+        response['Content-Length'] = size
+        response['X-Content-Type-Options'] = 'nosniff'
         return response
 
     # HLS-based quality
@@ -4587,7 +5374,17 @@ def video_download(request, video_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    hls_playlist = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id) / quality / 'playlist.m3u8'
+    # HLS path can live under tenants/<slug>/hls/<id>/ OR plain hls/<id>/.
+    # Use the stored hls_path which already resolves correctly, OR the tenant
+    # storage's path() if we have the original_file's storage backend.
+    storage = video.original_file.storage if video.original_file else None
+    if storage:
+        try:
+            hls_playlist = Path(storage.path(f'hls/{video.id}/{quality}/playlist.m3u8'))
+        except Exception:
+            hls_playlist = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id) / quality / 'playlist.m3u8'
+    else:
+        hls_playlist = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id) / quality / 'playlist.m3u8'
     if not hls_playlist.exists():
         return Response({'error': 'Rendition playlist not found on disk.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -4626,9 +5423,11 @@ def video_download(request, video_id):
             except OSError:
                 pass
 
-    response = StreamingHttpResponse(_stream_and_delete(tmp_path), content_type='video/mp4')
+    response = StreamingHttpResponse(_stream_and_delete(tmp_path),
+                                     content_type='application/octet-stream')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     response['Content-Length'] = file_size
+    response['X-Content-Type-Options'] = 'nosniff'
     return response
 
 

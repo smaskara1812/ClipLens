@@ -1,0 +1,1393 @@
+{% extends 'videos/base.html' %}
+{% load static %}
+{% block title %}Redact — {{ video.title }}{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── Page layout: top bar + video + timeline + tools  ───────────────── */
+  .redact-page { padding: 12px 18px 24px; max-width: 1400px; margin: 0 auto; }
+
+  .redact-topbar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 8px 0 14px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .redact-topbar .title { flex: 1; min-width: 0; }
+  .redact-topbar h2 { margin: 0; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .redact-topbar .sub { font-size: 11px; color: var(--text-muted); }
+
+  .top-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 14px; border-radius: 5px; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .top-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .top-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .top-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .top-btn.primary:hover:not(:disabled) { opacity: .9; color: #fff; border-color: var(--accent); }
+  .top-btn.danger:hover { border-color: #fca5a5; color: #fca5a5; }
+
+  .dirty-pill {
+    padding: 2px 9px; border-radius: 10px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em;
+    background: rgba(251,191,36,.15); color: #fbbf24;
+  }
+  .saved-pill {
+    padding: 2px 9px; border-radius: 10px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em;
+    background: rgba(74,222,128,.15); color: #4ade80;
+  }
+
+  /* ── Video stage ─────────────────────────────────────────────────────── */
+  .video-wrap { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; }
+  .video-wrap video { width: 100%; display: block; max-height: 56vh; object-fit: contain; background: #000; }
+
+  #drawCanvas { position: absolute; inset: 0; pointer-events: none; z-index: 8; background: transparent; }
+  #drawCanvas.active { cursor: crosshair; pointer-events: auto; background: rgba(0,0,0,.01); }
+  #redactBoxes { position: absolute; inset: 0; pointer-events: none; z-index: 7; overflow: hidden; }
+
+  /* Visual drag-preview rectangle (DIV — independent of canvas buffer size) */
+  #dragPreview {
+    position: absolute;
+    border: 2px dashed #58a6ff;
+    background: rgba(88,166,255,.1);
+    box-sizing: border-box;
+    pointer-events: none;
+    display: none;
+    z-index: 9;
+  }
+  .rdx-box { position: absolute; pointer-events: none; background: #000; }
+  .rdx-box.selected { outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 9; }
+  .rdx-box.editable { pointer-events: auto; cursor: move; }
+
+  /* Resize handles on a selected DRAFT box */
+  .box-handle {
+    position: absolute;
+    width: 12px; height: 12px;
+    background: var(--accent);
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,.6);
+    z-index: 10;
+  }
+  .box-handle.h-nw { top: -8px;    left: -8px;   cursor: nwse-resize; }
+  .box-handle.h-ne { top: -8px;    right: -8px;  cursor: nesw-resize; }
+  .box-handle.h-sw { bottom: -8px; left: -8px;   cursor: nesw-resize; }
+  .box-handle.h-se { bottom: -8px; right: -8px;  cursor: nwse-resize; }
+  .box-handle.h-n  { top: -8px;    left: 50%;   transform: translateX(-50%); cursor: ns-resize; }
+  .box-handle.h-s  { bottom: -8px; left: 50%;   transform: translateX(-50%); cursor: ns-resize; }
+  .box-handle.h-e  { right: -8px;  top: 50%;    transform: translateY(-50%); cursor: ew-resize; }
+  .box-handle.h-w  { left: -8px;   top: 50%;    transform: translateY(-50%); cursor: ew-resize; }
+
+  .draw-hint {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(88,166,255,.95); color: #fff; padding: 6px 14px;
+    border-radius: 20px; font-size: 12px; font-weight: 600; z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4); display: none; align-items: center; gap: 10px;
+  }
+  .draw-hint.show { display: flex; }
+  .draw-hint button {
+    background: rgba(255,255,255,.2); border: none; color: #fff; padding: 2px 8px;
+    border-radius: 10px; font-size: 11px; cursor: pointer;
+  }
+
+  /* ── Tools bar (replaces right panel) ───────────────────────────────── */
+  .tools-bar {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    margin-top: 12px; padding: 10px 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .tools-bar .group {
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .tools-bar .sep {
+    width: 1px; background: var(--border); margin: 0 4px;
+  }
+
+  /* ── Timeline editor ─────────────────────────────────────────────────── */
+  .timeline-wrap { margin-top: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .timeline-hdr { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+  .tl-ruler-row, .tl-track {
+    position: relative;
+    height: 32px;
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+  .tl-ruler-row { background: var(--bg); }
+  .tl-track:nth-child(odd) { background: var(--bg); }
+  .tl-row-label {
+    width: 160px; flex-shrink: 0;
+    padding: 6px 10px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    font-size: 11px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 6px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .tl-row-label .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tl-row-area {
+    position: relative; flex: 1; cursor: pointer;
+  }
+  .tl-playhead {
+    position: absolute; top: -1px; bottom: -1px; width: 2px;
+    background: #fff; pointer-events: none;
+    box-shadow: 0 0 6px rgba(255,255,255,.6); z-index: 4;
+  }
+
+  .tl-seg {
+    position: absolute; top: 4px; bottom: 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3);
+    overflow: hidden;
+    transition: outline .1s, transform .05s;
+  }
+  .tl-seg.draft.seg-face        { background: rgba(168,85,247,.7); cursor: move; }
+  .tl-seg.draft.seg-voice       { background: rgba(245,158,11,.7); cursor: move; }
+  .tl-seg.draft.seg-region      { background: rgba(88,166,255,.7); cursor: move; }
+  .tl-seg.draft.seg-audio_range { background: rgba(74,222,128,.7); cursor: move; }
+  .tl-seg.draft.seg-text        { background: rgba(239,68,68,.7); cursor: move; }
+  /* Saved: muted colors + no handles, no drag */
+  .tl-seg.saved { background: rgba(180,180,180,.45) !important; border: 1px solid rgba(180,180,180,.7); }
+  .tl-seg.saved .tl-handle { display: none; }
+  .tl-seg.saved::before {
+    content: '🔒'; position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+    font-size: 11px; opacity: .6;
+  }
+  .tl-seg.selected { outline: 2px solid #fff; outline-offset: -2px; z-index: 3; }
+  .tl-seg.dragging { opacity: .9; outline: 2px solid #fff; }
+
+  .tl-handle {
+    position: absolute; top: 0; bottom: 0;
+    width: 6px; cursor: ew-resize;
+    background: rgba(255,255,255,.25);
+  }
+  .tl-handle:hover { background: rgba(255,255,255,.55); }
+  .tl-handle.left { left: 0; border-left: 2px solid rgba(255,255,255,.7); }
+  .tl-handle.right { right: 0; border-right: 2px solid rgba(255,255,255,.7); }
+  .tl-seg-label {
+    position: absolute; left: 14px; right: 14px; top: 0; bottom: 0;
+    display: flex; align-items: center;
+    color: #fff; font-size: 10px; font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0,0,0,.6);
+    pointer-events: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tl-seg.saved .tl-seg-label { color: rgba(255,255,255,.85); padding-left: 12px; }
+
+  /* ── Inline edit panel — shown when a segment is selected ───────────── */
+  .edit-panel {
+    margin-top: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    display: none;
+  }
+  .edit-panel.show { display: block; }
+  .edit-panel .row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .edit-panel .row:last-child { margin-bottom: 0; }
+  .edit-panel label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+  .edit-panel input[type=text], .edit-panel input[type=number] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 4px; font-size: 13px;
+  }
+  .edit-panel input.name { flex: 1; min-width: 200px; }
+  .edit-panel input.num { width: 80px; }
+  .edit-panel .actions { margin-left: auto; display: flex; gap: 6px; }
+  .edit-panel .saved-notice {
+    background: rgba(74,222,128,.08);
+    border: 1px solid rgba(74,222,128,.25);
+    color: #4ade80;
+    padding: 4px 10px; border-radius: 4px;
+    font-size: 11px;
+  }
+
+  /* ── Save modal ─────────────────────────────────────────────────────── */
+  .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 999; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-back.show { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px; max-width: 540px; width: 100%; }
+  .modal h3 { margin: 0 0 14px; font-size: 16px; }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .modal .warning-list { font-size: 13px; line-height: 1.6; color: var(--text); margin: 0 0 12px; padding-left: 20px; }
+  .modal .warning-list li { margin-bottom: 6px; }
+  .modal .danger-box {
+    background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3);
+    border-radius: 4px; padding: 10px 12px; font-size: 12px; color: #fca5a5;
+    margin: 12px 0;
+  }
+
+  /* ── Render status ──────────────────────────────────────────────────── */
+  .render-status {
+    margin-top: 12px; padding: 10px 14px; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; font-size: 13px;
+  }
+  .render-status .status-icon { font-size: 18px; }
+  .render-status .meta { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+  .render-status .actions { margin-left: auto; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; padding: 12px 18px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-left: 4px solid #4ade80;
+    border-radius: 6px; font-size: 13px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.4); z-index: 9999;
+    transform: translateX(120%); transition: transform .25s ease-out;
+  }
+  .toast.show { transform: translateX(0); }
+  .toast.error { border-left-color: #fca5a5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="redact-page">
+
+  <!-- ── TOP BAR ─────────────────────────────────────────────────────── -->
+  <div class="redact-topbar">
+    <a href="{% url 'watch' video.id %}" style="color: var(--text-muted); font-size: 13px; text-decoration: none;">← Back</a>
+    <div class="title">
+      <h2>Redact: {{ video.title }}</h2>
+      <div class="sub">
+        <span id="dirtyCount">0</span> draft · <span id="savedCount">0</span> saved
+        <span id="dirtyPill" class="dirty-pill" style="display:none; margin-left:6px;">UNSAVED CHANGES</span>
+      </div>
+    </div>
+    <button class="top-btn" id="btnUndo" disabled title="Undo last change (drafts only)">↶ Undo</button>
+    <button class="top-btn primary" id="btnSave" disabled title="Save all drafts & render baked copy">
+      💾 Save &amp; Render
+    </button>
+  </div>
+
+  <!-- ── VIDEO ───────────────────────────────────────────────────────── -->
+  <div class="video-wrap" id="videoWrap">
+    <video id="videoEl" controls playsinline preload="metadata"></video>
+    <div id="redactBoxes"></div>
+    <div id="dragPreview"></div>
+    <!-- Event-capture overlay (NOT a canvas — canvas has intrinsic 300x150
+         layout dims that don't stretch even with inset:0 in some browsers) -->
+    <div id="drawCanvas"></div>
+    <div class="draw-hint" id="drawHint">
+      <span>🟦 Drawing mode — click &amp; drag on the video. Esc to exit.</span>
+      <button type="button" onclick="exitDrawMode()">Done</button>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+
+  <!-- ── TOOLS BAR ─────────────────────────────────────────────────── -->
+  <div class="tools-bar">
+    <div class="group">
+      <button class="top-btn" id="tool-region">🟦 Draw region</button>
+      <button class="top-btn" id="tool-mute">🔇 Mute range</button>
+      <button class="top-btn" id="tool-beep">🔊 Beep range</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button class="top-btn" id="tool-face">🧑 Blur a person</button>
+      <button class="top-btn" id="tool-speaker">🎙️ Mute / beep a speaker</button>
+    </div>
+    <div class="group" style="margin-left:auto;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+        <input type="checkbox" id="blockRaw" {% if video.redacted_raw_blocked %}checked{% endif %}>
+        Block raw download
+      </label>
+    </div>
+  </div>
+
+  <!-- ── TIMELINE ────────────────────────────────────────────────────── -->
+  <div class="timeline-wrap">
+    <div class="timeline-hdr">
+      <span id="curTime">0:00</span>
+      <span>Drag segment middle to move · drag edges to resize · click to select &amp; jump</span>
+      <span id="totTime">0:00</span>
+    </div>
+    <div class="tl-ruler-row">
+      <div class="tl-row-label" style="background: var(--surface);">▶ Playhead</div>
+      <div class="tl-row-area" id="tlRulerArea">
+        <div class="tl-playhead" id="playhead"></div>
+      </div>
+    </div>
+    <div id="tlTracks"></div>
+  </div>
+
+  <!-- ── INLINE EDIT PANEL (shown when a segment is selected) ────────── -->
+  <div class="edit-panel" id="editPanel">
+    <div id="editPanelContent"></div>
+  </div>
+
+  <!-- ── RENDER STATUS ────────────────────────────────────────────────── -->
+  <div class="render-status" id="renderStatus" style="display:none;">
+    <span class="status-icon" id="rsIcon">▶</span>
+    <div style="flex:1;">
+      <div id="rsTitle">No render yet</div>
+      <div class="meta" id="rsMeta"></div>
+    </div>
+    <div class="actions" id="rsActions"></div>
+  </div>
+
+</div>
+
+<!-- ── Save & Render confirmation modal ─────────────────────────────── -->
+<div class="modal-back" id="saveModalBack">
+  <div class="modal">
+    <h3>Save and render redacted copy?</h3>
+    <p style="font-size:13px; color:var(--text); margin:0 0 12px;">
+      You're about to commit <strong id="saveDraftCount">0</strong> draft redaction(s).
+      After saving:
+    </p>
+    <ul class="warning-list">
+      <li>Saved redactions are <strong>permanent</strong> — they cannot be deleted</li>
+      <li>Only the <strong>name/label</strong> can be edited after saving</li>
+      <li>A new redacted MP4 will be rendered (replacing any previous version)</li>
+      <li>You can <strong>add more</strong> drafts later and save them on top</li>
+    </ul>
+    <div class="danger-box">
+      ⚠ This action cannot be undone. The redacted file will be served to non-admin users instead of the original.
+    </div>
+    <div class="actions">
+      <button class="top-btn" onclick="closeSaveModal()">Cancel</button>
+      <button class="top-btn primary" id="saveConfirmBtn">Save &amp; Render</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Manual-region / audio-range modal (same shape, simplified) ───── -->
+<div class="modal-back" id="modalBack">
+  <div class="modal">
+    <h3 id="modalTitle">New redaction</h3>
+    <div id="modalWarning" style="display:none;"></div>
+    <form id="modalForm" onsubmit="return false;">
+      <input type="hidden" id="m_target_type">
+      <input type="hidden" id="m_spatial_mode">
+      <input type="hidden" id="m_bbox_x">
+      <input type="hidden" id="m_bbox_y">
+      <input type="hidden" id="m_bbox_w">
+      <input type="hidden" id="m_bbox_h">
+      <input type="hidden" id="m_method">
+      <input type="hidden" id="m_severity" value="heavy">
+
+      <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+        <div style="flex:1;">
+          <label style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Start (sec)</label>
+          <input type="number" step="0.1" min="0" id="m_start" value="0" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:4px; font-size:13px;">
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">End (sec)</label>
+          <input type="number" step="0.1" min="0" id="m_end" value="0" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:4px; font-size:13px;">
+        </div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Name (optional)</label>
+        <input type="text" id="m_label" maxlength="120" placeholder="e.g. blur CEO at start"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:4px; font-size:13px;">
+      </div>
+      <div style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">
+        Will be saved as a <strong>draft</strong>. Click <strong>Save &amp; Render</strong> at the top to commit.
+      </div>
+      <div class="actions">
+        <button type="button" class="top-btn" onclick="closeModal()">Cancel</button>
+        <button type="button" class="top-btn primary" id="m_save">Add draft</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Face redaction modal (compact) ─────────────────────────────────── -->
+<div class="modal-back" id="faceModalBack">
+  <div class="modal">
+    <h3>Blur a person</h3>
+    <p style="font-size:12px; color:var(--text-muted); margin:0 0 10px;">
+      Auto-creates one DRAFT black-box redaction per detected appearance.
+    </p>
+    <div id="faceList" style="max-height: 280px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px; margin-bottom: 10px;">Loading…</div>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <div style="flex:1;">
+        <label style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Box padding (%)</label>
+        <input type="number" id="fm_padding" value="50" min="0" max="150" step="10"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:4px; font-size:13px;">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="top-btn" onclick="closeFaceModal()">Cancel</button>
+      <button type="button" class="top-btn primary" id="fm_save" disabled style="opacity:.6;">Add drafts</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Speaker modal (compact) ────────────────────────────────────────── -->
+<div class="modal-back" id="speakerModalBack">
+  <div class="modal">
+    <h3>Mute or beep a speaker</h3>
+    <p style="font-size:12px; color:var(--text-muted); margin:0 0 10px;">
+      Auto-creates DRAFT audio redactions per speech segment.
+    </p>
+    <div id="speakerList" style="max-height: 280px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px; margin-bottom: 10px;">Loading…</div>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <div style="flex:1;">
+        <label style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Method</label>
+        <select id="sm_method" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:4px; font-size:13px;">
+          <option value="mute" selected>Mute</option>
+          <option value="beep">Beep</option>
+        </select>
+      </div>
+      <div style="flex:1;">
+        <label style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Merge gap (sec)</label>
+        <input type="number" id="sm_merge" value="0.5" step="0.1" min="0" max="5"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:4px; font-size:13px;">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="top-btn" onclick="closeSpeakerModal()">Cancel</button>
+      <button type="button" class="top-btn primary" id="sm_save" disabled style="opacity:.6;">Add drafts</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+const VIDEO_ID  = '{{ video.id }}';
+const API_LIST    = `/api/videos/${VIDEO_ID}/redactions/`;
+const API_DETAIL  = (id) => `/api/redactions/${id}/`;
+const API_SAVE    = `/api/videos/${VIDEO_ID}/save-redactions/`;
+const API_RENDERS = `/api/videos/${VIDEO_ID}/redaction-renders/`;
+
+function getCsrfToken() {
+  const v = document.cookie.match('(^|;) ?csrftoken=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
+function fmtTime(s) {
+  if (!s || s < 0) s = 0;
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// ── State ────────────────────────────────────────────────────────────────
+let redactions = [];
+let videoDuration = 0;
+let currentMode = null;         // 'region' | null
+let drawStart = null;
+let drawEnd   = null;
+let selectedId = null;
+let undoStack = [];              // local-only, cleared on save
+let renders = [];
+
+const video    = document.getElementById('videoEl');
+const drawCv   = document.getElementById('drawCanvas');   // now a DIV (not canvas)
+const boxesEl  = document.getElementById('redactBoxes');
+const drawHint = document.getElementById('drawHint');
+const toastEl  = document.getElementById('toast');
+const playhead = document.getElementById('playhead');
+const btnSave  = document.getElementById('btnSave');
+const btnUndo  = document.getElementById('btnUndo');
+
+// ── HLS ──────────────────────────────────────────────────────────────────
+{% if video.hls_path %}
+(function initHls() {
+  const HLS_SRC = '{{ request.scheme }}://{{ request.get_host }}/media/{{ video.hls_path }}';
+  if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+    const hls = new Hls({ enableWorker: true });
+    hls.loadSource(HLS_SRC);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      for (let i = 0; i < video.textTracks.length; i++) video.textTracks[i].mode = 'hidden';
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = HLS_SRC;
+  } else {
+    video.src = '{{ video.original_file.url }}';
+  }
+})();
+{% else %}
+video.src = '{{ video.original_file.url }}';
+{% endif %}
+
+// Web Audio: beep oscillator + video.muted for silence
+let audioCtx = null, beepOsc = null, beepGain = null;
+let weMutedVideo = false;
+let userVolumeBeforeMute = null;
+function ensureAudio() {
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return;
+  }
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    beepOsc  = audioCtx.createOscillator();
+    beepGain = audioCtx.createGain();
+    beepOsc.frequency.value = 1000;
+    beepGain.gain.value = 0;
+    beepOsc.connect(beepGain).connect(audioCtx.destination);
+    beepOsc.start();
+  } catch (e) { console.warn('audio init failed', e); }
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────
+let toastTimer = null;
+function toast(msg, kind) {
+  toastEl.className = 'toast' + (kind === 'error' ? ' error' : '');
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2500);
+}
+
+// ── Undo stack (drafts only) ────────────────────────────────────────────
+function pushUndo(op) {
+  // op: { type: 'create' | 'delete' | 'edit', payload }
+  undoStack.push(op);
+  if (undoStack.length > 30) undoStack.shift();
+  refreshTopbarState();
+}
+function clearUndo() {
+  undoStack = [];
+  refreshTopbarState();
+}
+async function performUndo() {
+  const op = undoStack.pop();
+  if (!op) return;
+  if (op.type === 'create') {
+    // Undo a creation = delete the redaction
+    await fetch(API_DETAIL(op.id), { method: 'DELETE', credentials: 'include', headers: {'X-CSRFToken': getCsrfToken()} });
+    redactions = redactions.filter(r => r.id !== op.id);
+  } else if (op.type === 'edit') {
+    await fetch(API_DETAIL(op.id), {
+      method: 'PATCH', credentials: 'include',
+      headers: {'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+      body: JSON.stringify(op.before),
+    });
+    const r = redactions.find(x => x.id === op.id);
+    if (r) Object.assign(r, op.before);
+  }
+  renderAll();
+  toast('↶ Undone');
+  refreshTopbarState();
+}
+
+// (No canvas resizing needed — drawCv is a DIV that fills its parent via CSS inset:0)
+window.addEventListener('resize', renderOverlay);
+
+// ── Loading ──────────────────────────────────────────────────────────────
+async function loadRedactions() {
+  const r = await fetch(API_LIST, { credentials: 'include' });
+  const data = await r.json();
+  if (!data.ok) return;
+  redactions = data.redactions || [];
+  videoDuration = data.video.duration || video.duration || 0;
+  document.getElementById('totTime').textContent = fmtTime(videoDuration);
+  renderAll();
+}
+async function loadRenders() {
+  try {
+    const r = await fetch(API_RENDERS, { credentials: 'include' });
+    const data = await r.json();
+    renders = data.renders || [];
+    renderRenderStatus();
+  } catch (e) {}
+}
+function renderAll() {
+  renderTimeline();
+  renderOverlay();
+  refreshTopbarState();
+  renderSelectedPanel();
+}
+
+// ── Topbar state ─────────────────────────────────────────────────────────
+function refreshTopbarState() {
+  const drafts = redactions.filter(r => !r.is_saved);
+  const saved  = redactions.filter(r => r.is_saved);
+  document.getElementById('dirtyCount').textContent = drafts.length;
+  document.getElementById('savedCount').textContent = saved.length;
+  document.getElementById('dirtyPill').style.display = drafts.length > 0 ? 'inline-block' : 'none';
+  btnSave.disabled = drafts.length === 0;
+  btnUndo.disabled = undoStack.length === 0;
+}
+
+// ── Visual overlay on the player ─────────────────────────────────────────
+function renderOverlay() {
+  const t = video.currentTime;
+  const wantIds = new Set();
+  redactions.forEach(r => {
+    if (!r.is_visual) return;
+    if (t < r.time_start_s || t > r.time_end_s) return;
+    if (r.bbox.w <= 0 || r.bbox.h <= 0) return;
+    wantIds.add(r.id);
+  });
+  Array.from(boxesEl.children).forEach(node => {
+    if (!wantIds.has(parseInt(node.dataset.rdxId, 10))) node.remove();
+  });
+  redactions.forEach(r => {
+    if (!wantIds.has(r.id)) return;
+    let node = boxesEl.querySelector(`[data-rdx-id="${r.id}"]`);
+    const isSelected = (r.id === selectedId);
+    const editable = isSelected && !r.is_saved;
+    if (!node) {
+      node = document.createElement('div');
+      node.dataset.rdxId = r.id;
+      boxesEl.appendChild(node);
+    }
+    node.className = 'rdx-box' + (isSelected ? ' selected' : '') + (editable ? ' editable' : '');
+    node.style.left   = (r.bbox.x * 100) + '%';
+    node.style.top    = (r.bbox.y * 100) + '%';
+    node.style.width  = (r.bbox.w * 100) + '%';
+    node.style.height = (r.bbox.h * 100) + '%';
+
+    if (editable) {
+      _ensureBoxHandles(node, r);
+    } else {
+      // Strip any leftover handles + drag listeners
+      node.querySelectorAll('.box-handle').forEach(h => h.remove());
+      if (node._dragWired) {
+        node.removeEventListener('mousedown', node._dragWired);
+        node._dragWired = null;
+      }
+    }
+  });
+}
+
+function _ensureBoxHandles(node, rdx) {
+  if (node.querySelector('.box-handle')) return;     // already wired
+  ['nw','n','ne','e','se','s','sw','w'].forEach(pos => {
+    const h = document.createElement('div');
+    h.className = `box-handle h-${pos}`;
+    h.dataset.handlePos = pos;
+    node.appendChild(h);
+  });
+  _attachBoxDrag(node, rdx);
+}
+
+function _attachBoxDrag(node, rdx) {
+  let mode = null;
+  let startMouseX = 0, startMouseY = 0;
+  let startBox = null;
+  let parentRect = null;
+  let didDrag = false;
+  let snapshot = null;
+
+  function onDown(e) {
+    if (e.button !== 0) return;
+    const handle = e.target.closest('.box-handle');
+    mode = handle ? handle.dataset.handlePos : 'move';
+    startMouseX = e.clientX;
+    startMouseY = e.clientY;
+    startBox = { ...rdx.bbox };
+    parentRect = boxesEl.getBoundingClientRect();
+    didDrag = false;
+    snapshot = { ...rdx.bbox };
+    e.preventDefault();
+    e.stopPropagation();
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp, { once: true });
+  }
+  function onMove(e) {
+    if (!mode) return;
+    const dx = (e.clientX - startMouseX) / parentRect.width;
+    const dy = (e.clientY - startMouseY) / parentRect.height;
+    if (Math.abs(dx) * parentRect.width > 2 || Math.abs(dy) * parentRect.height > 2) didDrag = true;
+    let { x, y, w, h } = startBox;
+    if (mode === 'move') {
+      x = Math.max(0, Math.min(1 - startBox.w, startBox.x + dx));
+      y = Math.max(0, Math.min(1 - startBox.h, startBox.y + dy));
+    } else {
+      // Resize from edge / corner
+      if (mode.includes('n')) {
+        const newY = Math.max(0, Math.min(startBox.y + startBox.h - 0.01, startBox.y + dy));
+        h = (startBox.y + startBox.h) - newY;
+        y = newY;
+      }
+      if (mode.includes('s')) {
+        h = Math.max(0.01, Math.min(1 - startBox.y, startBox.h + dy));
+      }
+      if (mode.includes('w')) {
+        const newX = Math.max(0, Math.min(startBox.x + startBox.w - 0.01, startBox.x + dx));
+        w = (startBox.x + startBox.w) - newX;
+        x = newX;
+      }
+      if (mode.includes('e')) {
+        w = Math.max(0.01, Math.min(1 - startBox.x, startBox.w + dx));
+      }
+    }
+    rdx.bbox = { x, y, w, h };
+    node.style.left   = (x * 100) + '%';
+    node.style.top    = (y * 100) + '%';
+    node.style.width  = (w * 100) + '%';
+    node.style.height = (h * 100) + '%';
+  }
+  async function onUp() {
+    mode = null;
+    document.removeEventListener('mousemove', onMove);
+    if (!didDrag) return;
+    try {
+      await fetch(API_DETAIL(rdx.id), {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ bbox: rdx.bbox }),
+      });
+      pushUndo({ type: 'edit', id: rdx.id, before: { bbox: snapshot } });
+      toast('✓ Box updated');
+    } catch (e) { toast('✗ ' + e.message, 'error'); }
+  }
+  node.addEventListener('mousedown', onDown);
+  node._dragWired = onDown;
+}
+
+// ── Audio at playback ────────────────────────────────────────────────────
+function applyAudioForFrame() {
+  const t = video.currentTime;
+  let muteActive = false, beepActive = false;
+  for (const r of redactions) {
+    if (!r.is_audio) continue;
+    if (t < r.time_start_s || t > r.time_end_s) continue;
+    if (r.method === 'mute' || r.method === 'beep') muteActive = true;
+    if (r.method === 'beep') beepActive = true;
+  }
+  if (muteActive) {
+    if (!weMutedVideo) { userVolumeBeforeMute = video.volume; weMutedVideo = true; }
+    if (!video.muted) video.muted = true;
+    if (video.volume !== 0) video.volume = 0;
+  } else if (weMutedVideo) {
+    video.muted = false;
+    if (userVolumeBeforeMute !== null) video.volume = userVolumeBeforeMute;
+    userVolumeBeforeMute = null;
+    weMutedVideo = false;
+  }
+  if (beepGain && audioCtx) {
+    if (beepActive && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
+    beepGain.gain.value = beepActive ? 0.18 : 0;
+  }
+}
+
+// ── Tick loop ────────────────────────────────────────────────────────────
+function tick() {
+  const dur = videoDuration || video.duration || 1;
+  if (playhead) playhead.style.left = `${(video.currentTime / dur) * 100}%`;
+  document.getElementById('curTime').textContent = fmtTime(video.currentTime);
+  applyAudioForFrame();
+  renderOverlay();
+  requestAnimationFrame(tick);
+}
+function seekTo(t) { video.currentTime = t; }
+
+// ── Timeline ─────────────────────────────────────────────────────────────
+function _rowKeyFor(r) {
+  if (r.target_face_identity_id)    return `face-${r.target_face_identity_id}`;
+  if (r.target_speaker_identity_id) return `voice-${r.target_speaker_identity_id}`;
+  return `rdx-${r.id}`;
+}
+function _rowLabelFor(r) {
+  if (r.target_face_identity_id)    return `🧑 ${r.label || 'Face ' + r.target_face_identity_id}`;
+  if (r.target_speaker_identity_id) return `🎙️ ${r.label || 'Speaker ' + r.target_speaker_identity_id}`;
+  if (r.target_type === 'region')      return '🟦 ' + (r.label || 'Region');
+  if (r.target_type === 'audio_range') return (r.method === 'beep' ? '🔊 Beep' : '🔇 Mute') + (r.label ? ' · ' + r.label : '');
+  return r.target_type;
+}
+function _rowDotColor(t) {
+  return {face:'#c084fc', voice:'#fbbf24', region:'#58a6ff', audio_range:'#4ade80', text:'#fca5a5'}[t] || '#8b949e';
+}
+function renderTimeline() {
+  const tracksEl = document.getElementById('tlTracks');
+  const groups = {}; const order = [];
+  redactions.forEach(r => {
+    const k = _rowKeyFor(r);
+    if (!groups[k]) {
+      groups[k] = { key: k, label: _rowLabelFor(r), type: r.target_type, segs: [] };
+      order.push(k);
+    }
+    groups[k].segs.push(r);
+  });
+  tracksEl.innerHTML = order.map(k => {
+    const g = groups[k];
+    return `
+      <div class="tl-track" data-row-key="${k}">
+        <div class="tl-row-label" title="${g.label}">
+          <span class="dot" style="background:${_rowDotColor(g.type)}"></span>
+          <span style="overflow:hidden; text-overflow:ellipsis;">${g.label}</span>
+        </div>
+        <div class="tl-row-area" data-row-key="${k}"></div>
+      </div>`;
+  }).join('');
+  if (!order.length) {
+    tracksEl.innerHTML = '<div style="padding:20px; color:var(--text-muted); font-size:12px; text-align:center;">No redactions yet. Use the tools above to add the first one.</div>';
+  }
+  const dur = videoDuration || 1;
+  // Re-wire seek-on-click for the newly created row areas
+  _wireTimelineSeek();
+
+  Object.values(groups).forEach(g => {
+    const rowArea = tracksEl.querySelector(`.tl-row-area[data-row-key="${g.key}"]`);
+    g.segs.forEach(r => {
+      const seg = document.createElement('div');
+      const stateCls = r.is_saved ? 'saved' : 'draft';
+      seg.className = `tl-seg ${stateCls} seg-${r.target_type}` + (r.id === selectedId ? ' selected' : '');
+      seg.dataset.rdxId = r.id;
+      seg.style.left  = (r.time_start_s / dur) * 100 + '%';
+      seg.style.width = Math.max(0.3, ((r.time_end_s - r.time_start_s) / dur) * 100) + '%';
+      seg.title = `${r.method}/${r.severity} · ${fmtTime(r.time_start_s)}–${fmtTime(r.time_end_s)}`;
+      const handles = r.is_saved ? '' : `
+        <div class="tl-handle left" data-handle="left"></div>
+        <div class="tl-handle right" data-handle="right"></div>`;
+      seg.innerHTML = `
+        ${handles}
+        <div class="tl-seg-label">${fmtTime(r.time_start_s)} → ${fmtTime(r.time_end_s)}</div>
+      `;
+      rowArea.appendChild(seg);
+      _attachSegmentDrag(seg, r, rowArea);
+    });
+  });
+}
+// Click ANY empty space in the ruler OR any track row to seek the player.
+// (Clicks on segments themselves are handled separately by _attachSegmentDrag.)
+function _wireTimelineSeek() {
+  const areas = document.querySelectorAll('#tlRulerArea, #tlTracks .tl-row-area');
+  areas.forEach(a => {
+    if (a._seekWired) return;
+    a._seekWired = true;
+    a.addEventListener('mousedown', e => {
+      // Ignore clicks landing on a segment or handle — those have their own logic
+      if (e.target.closest('.tl-seg')) return;
+      const rect = a.getBoundingClientRect();
+      const pct  = (e.clientX - rect.left) / rect.width;
+      seekTo(pct * (videoDuration || 0));
+    });
+  });
+}
+_wireTimelineSeek();
+
+// ── Per-segment drag with video-seek on edges ────────────────────────────
+function _attachSegmentDrag(segEl, rdx, rowArea) {
+  let mode = null;
+  let startMouseX = 0;
+  let startStart  = 0, startEnd = 0;
+  let trackWidth  = 0;
+  let didDrag = false;
+  let beforeSnapshot = null;
+
+  function onDown(e) {
+    if (e.button !== 0) return;
+    // Select on click — BUT we mustn't rebuild the timeline DOM here, or the
+    // segEl reference below would point to a removed element and the drag
+    // would silently fail. So just toggle the .selected class in place and
+    // refresh the side panels.
+    selectedId = rdx.id;
+    document.querySelectorAll('.tl-seg').forEach(s => s.classList.remove('selected'));
+    segEl.classList.add('selected');
+    renderOverlay();
+    renderSelectedPanel();
+
+    if (rdx.is_saved) return;          // saved: no drag
+    const handle = e.target.closest('.tl-handle');
+    mode = handle ? handle.dataset.handle : 'move';
+    startMouseX = e.clientX;
+    startStart  = rdx.time_start_s;
+    startEnd    = rdx.time_end_s;
+    trackWidth  = rowArea.getBoundingClientRect().width;
+    didDrag = false;
+    beforeSnapshot = { time_start_s: rdx.time_start_s, time_end_s: rdx.time_end_s };
+    segEl.classList.add('dragging');
+    e.preventDefault(); e.stopPropagation();
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp, { once: true });
+  }
+  function onMove(e) {
+    if (!mode) return;
+    const dx = e.clientX - startMouseX;
+    if (Math.abs(dx) > 2) didDrag = true;
+    const dur = videoDuration || 1;
+    const dt = (dx / trackWidth) * dur;
+    let newStart = startStart;
+    let newEnd = startEnd;
+    if (mode === 'left') {
+      newStart = Math.max(0, Math.min(startEnd - 0.1, startStart + dt));
+      video.currentTime = newStart;          // ← seek video to follow edge
+    } else if (mode === 'right') {
+      newEnd = Math.min(dur, Math.max(startStart + 0.1, startEnd + dt));
+      video.currentTime = newEnd;
+    } else {
+      const len = startEnd - startStart;
+      newStart = Math.max(0, Math.min(dur - len, startStart + dt));
+      newEnd = newStart + len;
+    }
+    rdx.time_start_s = newStart;
+    rdx.time_end_s   = newEnd;
+    segEl.style.left  = (newStart / dur) * 100 + '%';
+    segEl.style.width = Math.max(0.3, ((newEnd - newStart) / dur) * 100) + '%';
+    segEl.querySelector('.tl-seg-label').textContent = `${fmtTime(newStart)} → ${fmtTime(newEnd)}`;
+  }
+  async function onUp() {
+    mode = null;
+    segEl.classList.remove('dragging');
+    document.removeEventListener('mousemove', onMove);
+    if (!didDrag) { seekTo(rdx.time_start_s); renderSelectedPanel(); return; }
+    // Persist
+    try {
+      await fetch(API_DETAIL(rdx.id), {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ time_start_s: rdx.time_start_s, time_end_s: rdx.time_end_s }),
+      });
+      pushUndo({ type: 'edit', id: rdx.id, before: beforeSnapshot });
+      toast(`✓ ${fmtTime(rdx.time_start_s)} → ${fmtTime(rdx.time_end_s)}`);
+    } catch (e) { toast('✗ ' + e.message, 'error'); }
+    renderSelectedPanel();
+  }
+  segEl.addEventListener('mousedown', onDown);
+}
+
+// ── Inline edit panel ────────────────────────────────────────────────────
+function renderSelectedPanel() {
+  const panel = document.getElementById('editPanel');
+  const body  = document.getElementById('editPanelContent');
+  const r = redactions.find(x => x.id === selectedId);
+  if (!r) { panel.classList.remove('show'); return; }
+  panel.classList.add('show');
+  if (r.is_saved) {
+    body.innerHTML = `
+      <div class="row">
+        <div class="saved-notice">🔒 SAVED · permanent · only the name can be edited</div>
+      </div>
+      <div class="row">
+        <label>Name</label>
+        <input type="text" class="name" id="ep_label" value="${(r.label||'').replace(/"/g,'&quot;')}" maxlength="120">
+        <span style="font-size:11px; color:var(--text-muted);">${fmtTime(r.time_start_s)} → ${fmtTime(r.time_end_s)} · ${r.method}</span>
+        <div class="actions">
+          <button class="top-btn" onclick="seekTo(${r.time_start_s})">Jump</button>
+          <button class="top-btn" onclick="selectedId=null; renderAll();">Deselect</button>
+        </div>
+      </div>`;
+    body.querySelector('#ep_label').addEventListener('change', async (e) => {
+      const newLabel = e.target.value;
+      await fetch(API_DETAIL(r.id), {
+        method: 'PATCH', credentials: 'include',
+        headers: {'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+        body: JSON.stringify({ label: newLabel }),
+      });
+      r.label = newLabel;
+      toast('✓ Name updated');
+      renderTimeline();
+    });
+  } else {
+    body.innerHTML = `
+      <div class="row">
+        <label>Name</label>
+        <input type="text" class="name" id="ep_label" value="${(r.label||'').replace(/"/g,'&quot;')}" placeholder="e.g. blur CEO" maxlength="120">
+        <label>Start</label>
+        <input type="number" class="num" id="ep_start" value="${r.time_start_s.toFixed(2)}" step="0.1" min="0">
+        <label>End</label>
+        <input type="number" class="num" id="ep_end" value="${r.time_end_s.toFixed(2)}" step="0.1" min="0">
+        <div class="actions">
+          <button class="top-btn" onclick="seekTo(${r.time_start_s})">Jump</button>
+          <button class="top-btn danger" onclick="deleteRedaction(${r.id})">Delete draft</button>
+          <button class="top-btn" onclick="selectedId=null; renderAll();">Close</button>
+        </div>
+      </div>`;
+    const applyChange = async () => {
+      const before = { time_start_s: r.time_start_s, time_end_s: r.time_end_s, label: r.label };
+      const newStart = parseFloat(body.querySelector('#ep_start').value) || 0;
+      const newEnd   = parseFloat(body.querySelector('#ep_end').value)   || 0;
+      const newLabel = body.querySelector('#ep_label').value;
+      if (newEnd <= newStart) { toast('End must be after start', 'error'); return; }
+      r.time_start_s = newStart; r.time_end_s = newEnd; r.label = newLabel;
+      await fetch(API_DETAIL(r.id), {
+        method: 'PATCH', credentials: 'include',
+        headers: {'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+        body: JSON.stringify({ time_start_s: newStart, time_end_s: newEnd, label: newLabel }),
+      });
+      pushUndo({ type: 'edit', id: r.id, before });
+      renderTimeline(); renderOverlay();
+      toast('✓ Updated');
+    };
+    body.querySelector('#ep_label').addEventListener('change', applyChange);
+    body.querySelector('#ep_start').addEventListener('change', applyChange);
+    body.querySelector('#ep_end').addEventListener('change', applyChange);
+  }
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────
+async function deleteRedaction(id) {
+  const r = redactions.find(x => x.id === id);
+  if (!r) return;
+  if (r.is_saved) { toast('Saved redactions can\'t be deleted', 'error'); return; }
+  if (!confirm('Delete this draft redaction?')) return;
+  const resp = await fetch(API_DETAIL(id), {
+    method: 'DELETE', credentials: 'include',
+    headers: { 'X-CSRFToken': getCsrfToken() },
+  });
+  const data = await resp.json();
+  if (!data.ok) { toast('✗ Delete failed', 'error'); return; }
+  redactions = redactions.filter(x => x.id !== id);
+  if (selectedId === id) selectedId = null;
+  renderAll();
+  toast('🗑 Deleted');
+}
+
+// ── Region drawing ───────────────────────────────────────────────────────
+function enterDrawMode() {
+  currentMode = 'region';
+  drawCv.classList.add('active');
+  drawHint.classList.add('show');
+  video.pause();
+  // CRITICAL: remove native <video controls> while drawing — otherwise the
+  // browser's click-to-play/pause behavior intercepts our mouse events even
+  // though the overlay div is on top.
+  video.removeAttribute('controls');
+  drawCv.style.pointerEvents = 'auto';
+}
+function exitDrawMode() {
+  currentMode = null;
+  drawCv.classList.remove('active');
+  drawHint.classList.remove('show');
+  drawCv.style.pointerEvents = '';
+  video.setAttribute('controls', 'controls');
+  const preview = document.getElementById('dragPreview');
+  if (preview) preview.style.display = 'none';
+  drawStart = drawEnd = null;
+}
+window.exitDrawMode = exitDrawMode;
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && currentMode === 'region') exitDrawMode();
+  // Cmd+Z / Ctrl+Z undo
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+    if (!btnUndo.disabled) { e.preventDefault(); performUndo(); }
+  }
+});
+// DIV-based drag preview — works regardless of canvas buffer size
+const dragPreviewEl = document.getElementById('dragPreview');
+
+function _updateDragPreview() {
+  if (!drawStart || !drawEnd) {
+    dragPreviewEl.style.display = 'none';
+    return;
+  }
+  const x = Math.min(drawStart.x, drawEnd.x);
+  const y = Math.min(drawStart.y, drawEnd.y);
+  const w = Math.abs(drawEnd.x - drawStart.x);
+  const h = Math.abs(drawEnd.y - drawStart.y);
+  dragPreviewEl.style.left   = x + 'px';
+  dragPreviewEl.style.top    = y + 'px';
+  dragPreviewEl.style.width  = w + 'px';
+  dragPreviewEl.style.height = h + 'px';
+  dragPreviewEl.style.display = 'block';
+}
+
+drawCv.addEventListener('mousedown', e => {
+  if (currentMode !== 'region') return;
+  const rect = drawCv.getBoundingClientRect();
+  drawStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  drawEnd = null;
+  dragPreviewEl.style.display = 'none';
+  e.preventDefault();
+});
+drawCv.addEventListener('mousemove', e => {
+  if (currentMode !== 'region' || !drawStart) return;
+  const rect = drawCv.getBoundingClientRect();
+  drawEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  _updateDragPreview();
+});
+drawCv.addEventListener('mouseup', () => {
+  if (currentMode !== 'region' || !drawStart) return;
+  if (!drawEnd) { drawStart = null; dragPreviewEl.style.display = 'none'; return; }
+  // Normalise using getBoundingClientRect (NOT canvas buffer dims, which can be 0)
+  const rect = drawCv.getBoundingClientRect();
+  const refW = rect.width  || 1;
+  const refH = rect.height || 1;
+  const x = Math.min(drawStart.x, drawEnd.x) / refW;
+  const y = Math.min(drawStart.y, drawEnd.y) / refH;
+  const w = Math.abs(drawEnd.x - drawStart.x) / refW;
+  const h = Math.abs(drawEnd.y - drawStart.y) / refH;
+  drawStart = drawEnd = null;
+  dragPreviewEl.style.display = 'none';
+  if (w < 0.01 || h < 0.01) return;
+  openModal({
+    title: 'New region redaction',
+    target_type: 'region', method: 'black_box',
+    spatial_mode: 'fixed_box', bbox: { x, y, w, h },
+    time_start_s: Math.max(0, video.currentTime - 0.1),
+    time_end_s:   Math.min(videoDuration, video.currentTime + 5),
+  });
+});
+
+// ── Audio range tool ─────────────────────────────────────────────────────
+function openAudioModal(method) {
+  ensureAudio();
+  openModal({
+    title: method === 'mute' ? 'New mute range' : 'New beep range',
+    target_type: 'audio_range', method: method,
+    spatial_mode: 'whole_frame', bbox: { x: 0, y: 0, w: 0, h: 0 },
+    time_start_s: Math.max(0, video.currentTime),
+    time_end_s:   Math.min(videoDuration, video.currentTime + 3),
+  });
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────
+const modalBack = document.getElementById('modalBack');
+function openModal(opts) {
+  document.getElementById('modalTitle').textContent = opts.title;
+  document.getElementById('m_target_type').value = opts.target_type;
+  document.getElementById('m_spatial_mode').value = opts.spatial_mode;
+  document.getElementById('m_method').value = opts.method;
+  document.getElementById('m_bbox_x').value = opts.bbox.x;
+  document.getElementById('m_bbox_y').value = opts.bbox.y;
+  document.getElementById('m_bbox_w').value = opts.bbox.w;
+  document.getElementById('m_bbox_h').value = opts.bbox.h;
+  document.getElementById('m_start').value = opts.time_start_s.toFixed(1);
+  document.getElementById('m_end').value   = opts.time_end_s.toFixed(1);
+  document.getElementById('m_label').value = '';
+  modalBack.classList.add('show');
+}
+function closeModal() { modalBack.classList.remove('show'); }
+window.closeModal = closeModal;
+modalBack.addEventListener('click', e => { if (e.target === modalBack) closeModal(); });
+
+document.getElementById('m_save').addEventListener('click', async () => {
+  const payload = {
+    target_type:  document.getElementById('m_target_type').value,
+    method:       document.getElementById('m_method').value,
+    severity:     document.getElementById('m_severity').value,
+    time_start_s: parseFloat(document.getElementById('m_start').value) || 0,
+    time_end_s:   parseFloat(document.getElementById('m_end').value) || 0,
+    spatial_mode: document.getElementById('m_spatial_mode').value,
+    bbox: {
+      x: parseFloat(document.getElementById('m_bbox_x').value) || 0,
+      y: parseFloat(document.getElementById('m_bbox_y').value) || 0,
+      w: parseFloat(document.getElementById('m_bbox_w').value) || 0,
+      h: parseFloat(document.getElementById('m_bbox_h').value) || 0,
+    },
+    label: document.getElementById('m_label').value,
+  };
+  if (payload.time_end_s <= payload.time_start_s) { toast('End must be after start', 'error'); return; }
+  const r = await fetch(API_LIST, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json();
+  if (!data.ok) { toast('✗ ' + (data.error || 'Save failed'), 'error'); return; }
+  redactions.push(data.redaction);
+  redactions.sort((a, b) => a.time_start_s - b.time_start_s);
+  pushUndo({ type: 'create', id: data.redaction.id });
+  selectedId = data.redaction.id;
+  renderAll();
+  closeModal();
+  exitDrawMode();   // restore video controls after region is committed
+  toast('✓ Draft added');
+});
+
+// ── Save & Render flow ──────────────────────────────────────────────────
+const saveModalBack = document.getElementById('saveModalBack');
+btnSave.addEventListener('click', () => {
+  const drafts = redactions.filter(r => !r.is_saved);
+  document.getElementById('saveDraftCount').textContent = drafts.length;
+  saveModalBack.classList.add('show');
+});
+function closeSaveModal() { saveModalBack.classList.remove('show'); }
+window.closeSaveModal = closeSaveModal;
+saveModalBack.addEventListener('click', e => { if (e.target === saveModalBack) closeSaveModal(); });
+
+document.getElementById('saveConfirmBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('saveConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const r = await fetch(API_SAVE, {
+      method: 'POST', credentials: 'include',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+    const data = await r.json();
+    if (!data.ok) { toast('✗ ' + (data.error || 'Save failed'), 'error'); return; }
+    toast(`✓ Committed ${data.drafts_committed} draft(s) · rendering…`);
+    closeSaveModal();
+    clearUndo();
+    await loadRedactions();
+    await loadRenders();
+    // Poll renders for ~5 min so the user sees the new ready state
+    let polls = 0;
+    const poller = setInterval(async () => {
+      await loadRenders();
+      const inflight = renders.some(r => r.status === 'queued' || r.status === 'rendering');
+      if (!inflight || ++polls > 60) clearInterval(poller);
+    }, 5000);
+  } catch (e) {
+    toast('✗ ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save & Render';
+  }
+});
+
+// ── Render status ───────────────────────────────────────────────────────
+function renderRenderStatus() {
+  const box = document.getElementById('renderStatus');
+  if (!renders.length) { box.style.display = 'none'; return; }
+  const latest = renders[0];
+  box.style.display = 'flex';
+  const icon = {queued:'⏳', rendering:'⚙️', ready:'✓', failed:'✗'}[latest.status] || '▶';
+  const color = {queued:'#58a6ff', rendering:'#fbbf24', ready:'#4ade80', failed:'#fca5a5'}[latest.status] || '#8b949e';
+  document.getElementById('rsIcon').textContent = icon;
+  document.getElementById('rsIcon').style.color = color;
+  document.getElementById('rsTitle').innerHTML = `<strong>${latest.status.toUpperCase()}</strong> · latest rendered copy`;
+  if (latest.status === 'ready') {
+    const sizeMb = Math.round(latest.file_size_bytes / 1024 / 1024);
+    document.getElementById('rsMeta').textContent =
+      `${sizeMb} MB · ${latest.redaction_count} redactions · ${latest.download_count} downloads · finished ${new Date(latest.finished_at).toLocaleString()}`;
+    document.getElementById('rsActions').innerHTML = `<a class="top-btn primary" href="${latest.download_url}" download>Download</a>`;
+  } else if (latest.status === 'failed') {
+    document.getElementById('rsMeta').textContent = latest.error_message || 'Render failed';
+    document.getElementById('rsActions').innerHTML = '';
+  } else {
+    document.getElementById('rsMeta').textContent = 'Working… check back in a minute';
+    document.getElementById('rsActions').innerHTML = '';
+  }
+}
+
+// ── Undo button ─────────────────────────────────────────────────────────
+btnUndo.addEventListener('click', performUndo);
+
+// ── Tool buttons ────────────────────────────────────────────────────────
+document.getElementById('tool-region').addEventListener('click', enterDrawMode);
+document.getElementById('tool-mute').addEventListener('click', () => openAudioModal('mute'));
+document.getElementById('tool-beep').addEventListener('click', () => openAudioModal('beep'));
+
+// ── Face modal ──────────────────────────────────────────────────────────
+const faceModalBack = document.getElementById('faceModalBack');
+let selectedFaceId = null;
+document.getElementById('tool-face').addEventListener('click', openFaceModal);
+async function openFaceModal() {
+  faceModalBack.classList.add('show');
+  selectedFaceId = null;
+  const saveBtn = document.getElementById('fm_save');
+  saveBtn.disabled = true; saveBtn.style.opacity = '.6';
+  const list = document.getElementById('faceList');
+  list.innerHTML = 'Loading…';
+  try {
+    const r = await fetch(`/api/videos/${VIDEO_ID}/face-identities/`, { credentials: 'include' });
+    const data = await r.json();
+    if (!data.ok || data.count === 0) { list.innerHTML = '<div style="color:var(--text-muted); padding:14px; text-align:center; font-size:12px;">No identified people in this video yet. Confirm faces from the People page first.</div>'; return; }
+    list.innerHTML = data.identities.map(p => `
+      <label style="display:flex; gap:10px; align-items:center; padding:6px 8px; background:var(--surface); border:1px solid var(--border); border-radius:4px; cursor:pointer; margin-bottom:4px;" class="face-row" data-id="${p.identity_id}">
+        <input type="radio" name="face_id" value="${p.identity_id}" style="margin:0;">
+        ${p.thumbnail_url ? `<img src="${p.thumbnail_url}" style="width:28px; height:28px; border-radius:3px; object-fit:cover;">` : '<div style="width:28px; height:28px; border-radius:3px; background:var(--bg);"></div>'}
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:12px; font-weight:600;">${p.is_auto_named ? '<em>'+p.name+'</em>' : p.name}</div>
+          <div style="font-size:10px; color:var(--text-muted);">${p.detections} detections</div>
+        </div>
+      </label>`).join('');
+    list.querySelectorAll('.face-row').forEach(row => row.addEventListener('click', () => {
+      selectedFaceId = parseInt(row.dataset.id, 10);
+      row.querySelector('input').checked = true;
+      saveBtn.disabled = false; saveBtn.style.opacity = '1';
+      list.querySelectorAll('.face-row').forEach(r => r.style.borderColor = 'var(--border)');
+      row.style.borderColor = 'var(--accent)';
+    }));
+  } catch (e) { list.innerHTML = '<div style="color:#fca5a5;">Error: ' + e.message + '</div>'; }
+}
+function closeFaceModal() { faceModalBack.classList.remove('show'); }
+window.closeFaceModal = closeFaceModal;
+faceModalBack.addEventListener('click', e => { if (e.target === faceModalBack) closeFaceModal(); });
+document.getElementById('fm_save').addEventListener('click', async () => {
+  if (!selectedFaceId) return;
+  const btn = document.getElementById('fm_save'); btn.disabled = true; btn.textContent = 'Applying…';
+  try {
+    const r = await fetch(`/api/videos/${VIDEO_ID}/redact-face-identity/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({
+        identity_id: selectedFaceId, method: 'black_box', severity: 'heavy',
+        padding_pct: (parseFloat(document.getElementById('fm_padding').value) || 50) / 100,
+      }),
+    });
+    const data = await r.json();
+    if (!data.ok) { toast('✗ ' + (data.error || 'Failed'), 'error'); }
+    else { toast(`✓ ${data.message}`); closeFaceModal(); await loadRedactions(); }
+  } catch (e) { toast('✗ ' + e.message, 'error'); }
+  btn.disabled = false; btn.textContent = 'Add drafts';
+});
+
+// ── Speaker modal ───────────────────────────────────────────────────────
+const speakerModalBack = document.getElementById('speakerModalBack');
+let selectedSpeakerId = null;
+document.getElementById('tool-speaker').addEventListener('click', openSpeakerModal);
+async function openSpeakerModal() {
+  speakerModalBack.classList.add('show');
+  selectedSpeakerId = null;
+  const saveBtn = document.getElementById('sm_save');
+  saveBtn.disabled = true; saveBtn.style.opacity = '.6';
+  const list = document.getElementById('speakerList');
+  list.innerHTML = 'Loading…';
+  try {
+    const r = await fetch(`/api/videos/${VIDEO_ID}/speaker-identities/`, { credentials: 'include' });
+    const data = await r.json();
+    if (!data.ok || data.count === 0) { list.innerHTML = '<div style="color:var(--text-muted); padding:14px; text-align:center; font-size:12px;">No identified speakers. Run diarization first.</div>'; return; }
+    list.innerHTML = data.speakers.map(s => `
+      <label style="display:flex; gap:10px; align-items:center; padding:6px 8px; background:var(--surface); border:1px solid var(--border); border-radius:4px; cursor:pointer; margin-bottom:4px;" class="spk-row" data-id="${s.identity_id}">
+        <input type="radio" name="spk_id" value="${s.identity_id}" style="margin:0;">
+        <div style="width:28px; height:28px; border-radius:3px; background:var(--bg); display:flex; align-items:center; justify-content:center;">🎙️</div>
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:12px; font-weight:600;">${s.name}</div>
+          <div style="font-size:10px; color:var(--text-muted);">${s.segments} segs · ${fmtTime(s.total_speech)}</div>
+        </div>
+      </label>`).join('');
+    list.querySelectorAll('.spk-row').forEach(row => row.addEventListener('click', () => {
+      selectedSpeakerId = parseInt(row.dataset.id, 10);
+      row.querySelector('input').checked = true;
+      saveBtn.disabled = false; saveBtn.style.opacity = '1';
+      list.querySelectorAll('.spk-row').forEach(r => r.style.borderColor = 'var(--border)');
+      row.style.borderColor = 'var(--accent)';
+    }));
+  } catch (e) { list.innerHTML = '<div style="color:#fca5a5;">Error: ' + e.message + '</div>'; }
+}
+function closeSpeakerModal() { speakerModalBack.classList.remove('show'); }
+window.closeSpeakerModal = closeSpeakerModal;
+speakerModalBack.addEventListener('click', e => { if (e.target === speakerModalBack) closeSpeakerModal(); });
+document.getElementById('sm_save').addEventListener('click', async () => {
+  if (!selectedSpeakerId) return;
+  const btn = document.getElementById('sm_save'); btn.disabled = true; btn.textContent = 'Applying…';
+  try {
+    const r = await fetch(`/api/videos/${VIDEO_ID}/redact-speaker-identity/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      body: JSON.stringify({
+        identity_id: selectedSpeakerId,
+        method: document.getElementById('sm_method').value,
+        merge_gap_s: parseFloat(document.getElementById('sm_merge').value) || 0.5,
+      }),
+    });
+    const data = await r.json();
+    if (!data.ok) { toast('✗ ' + (data.error || 'Failed'), 'error'); }
+    else { toast(`✓ ${data.message}`); closeSpeakerModal(); await loadRedactions(); }
+  } catch (e) { toast('✗ ' + e.message, 'error'); }
+  btn.disabled = false; btn.textContent = 'Add drafts';
+});
+
+// ── Block-raw toggle ────────────────────────────────────────────────────
+document.getElementById('blockRaw').addEventListener('change', async (e) => {
+  await fetch(`/api/videos/${VIDEO_ID}/redactions/toggle-raw-block/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify({ block: e.target.checked }),
+  });
+  toast(e.target.checked ? '🔒 Raw download blocked for non-admins' : '🔓 Raw download allowed');
+});
+
+// ── Init ────────────────────────────────────────────────────────────────
+video.addEventListener('loadedmetadata', () => {
+  videoDuration = video.duration || 0;
+  document.getElementById('totTime').textContent = fmtTime(videoDuration);
+  renderOverlay();
+});
+video.addEventListener('play', ensureAudio);
+video.addEventListener('seeked', renderOverlay);
+
+tick();
+loadRedactions();
+loadRenders();
+</script>
+{% endblock %}
