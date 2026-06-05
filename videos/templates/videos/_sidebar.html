@@ -219,6 +219,12 @@
     </svg>
     Support
   </a>
+  <a href="{% url 'org_redaction_policies' %}" class="sidebar-item {% if url_name == 'org_redaction_policies' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8v8H8z" fill="currentColor" opacity=".25"/>
+    </svg>
+    Redaction Policies
+  </a>
   <a href="{% url 'admin_trash' %}" class="sidebar-item {% if url_name == 'admin_trash' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <polyline points="3 6 5 6 21 6"/>

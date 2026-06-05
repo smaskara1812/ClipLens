@@ -13,6 +13,14 @@
 # Prerequisites (must be running before ./start.sh):
 #   • PostgreSQL   — brew services start postgresql@15  (or your version)
 #   • Redis        — brew services start redis
+#   • nginx        — sudo brew services start nginx
+#                    (proxies *.cliplens.local → :8000; config in
+#                    deploy/nginx/cliplens-local.conf)
+#
+# NOTE: After adding a new Celery task to videos/tasks.py or tenants/tasks.py
+#       you MUST restart this script — Celery only registers tasks at startup.
+#       If you see "Received unregistered task of type ..." in worker logs,
+#       that's the signal: Ctrl-C and re-run.
 #
 # Ctrl-C kills all processes cleanly.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -57,6 +65,22 @@ if ! python manage.py check --database default &>/dev/null; then
   exit 1
 fi
 echo "  ✓ PostgreSQL"
+
+# Count tasks by scanning the task modules — gives a quick sanity number
+# at startup. If you add a task and the number doesn't go up, your import
+# is broken; if it goes up but worker says "unregistered", restart this script.
+TASK_COUNT=$(python -c "
+import django, os
+os.environ.setdefault('DJANGO_SETTINGS_MODULE','cliplens.settings')
+django.setup()
+from videos import tasks as _vt
+from tenants import tasks as _tt
+import inspect
+n = sum(1 for m in (_vt, _tt) for v in vars(m).values()
+        if hasattr(v, 'delay') and hasattr(v, 'name'))
+print(n)
+" 2>/dev/null || echo "?")
+echo "  ✓ ${TASK_COUNT} Celery tasks registered"
 echo ""
 
 # ── 1. Django dev server ─────────────────────────────────────────────────────

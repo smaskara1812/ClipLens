@@ -647,21 +647,26 @@ def landing_page(request):
       • admin.cliplens.*     → go straight to the control plane (or its login)
       • bare cliplens.*      → marketing landing
     """
+    # Preserve query string across all redirects so search forms targeting "/"
+    # (e.g. ?q=tech) don't lose their parameters when we route to /player/ etc.
+    qs = request.META.get('QUERY_STRING', '')
+    qs_suffix = ('?' + qs) if qs else ''
+
     # 1. Tenant subdomain → send them to the app
     if getattr(request, 'tenant', None) is not None:
-        return redirect('/player/')
+        return redirect('/player/' + qs_suffix)
 
     # 2. admin subdomain → control plane (don't show marketing here)
     host = request.get_host().lower().split(':')[0]
     is_admin_subdomain = host.startswith('admin.')
     if is_admin_subdomain:
         if request.user.is_authenticated:
-            return redirect('/platform/')
-        return redirect('/login/?next=/platform/')
+            return redirect('/platform/' + qs_suffix)
+        return redirect('/login/?next=/platform/' + (('&' + qs) if qs else ''))
 
     # 3. Logged in to the bare root → bump them to the control plane too
     if request.user.is_authenticated:
-        return redirect('/platform/')
+        return redirect('/platform/' + qs_suffix)
 
     # 4. Unauthenticated visitor on bare root → marketing landing
     plans = list(Plan.objects.using('control').filter(is_active=True).order_by('price_usd'))

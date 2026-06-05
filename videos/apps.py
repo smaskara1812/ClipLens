@@ -27,3 +27,42 @@ class VideosConfig(AppConfig):
 
         # Wire authentication audit signals (login / logout / login_failed)
         from . import signals  # noqa: F401
+
+        # ── Subtitle ↔ VideoSegment sync ──────────────────────────────
+        # When a primary-language Subtitle (auto-generated, not a translation)
+        # is saved, parse its VTT and replace VideoSegment rows so DB stays
+        # consistent with what's on disk.
+        @receiver(post_save, sender='videos.Subtitle')
+        def sync_segments_from_primary_subtitle(sender, instance, created, raw, using, **kwargs):
+            if raw:
+                return
+            if instance.is_translation:
+                # Translations are language variants — segments are
+                # language-agnostic (one set per video, based on primary).
+                return
+            if not instance.is_auto_generated:
+                # Manual uploads are NOT auto-synced to avoid clobbering
+                # user-curated transcripts. They can use the repair tool.
+                return
+            try:
+                from .management.commands.repair_video_segments import parse_vtt_file
+                from .models import VideoSegment
+                path = instance.file.path
+                import os as _os
+                if not _os.path.exists(path):
+                    return
+                cues = list(parse_vtt_file(path))
+                if not cues:
+                    return
+                db_alias = instance._state.db or 'default'
+                VideoSegment.objects.using(db_alias).filter(video_id=instance.video_id).delete()
+                VideoSegment.objects.using(db_alias).bulk_create([
+                    VideoSegment(video_id=instance.video_id,
+                                 start_seconds=s, end_seconds=e, text=t)
+                    for (s, e, t) in cues
+                ])
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    'sync_segments_from_primary_subtitle failed for subtitle %s',
+                    getattr(instance, 'pk', '?'))

@@ -790,7 +790,8 @@
     <div class="video-wrap" id="videoWrap">
       {% if video.status == 'ready' and video.hls_path %}
         <div class="player-loading" id="loader"><div class="spinner"></div></div>
-        <video id="videoEl" playsinline>
+        <video id="videoEl" playsinline preload="auto"
+               {% if video.thumbnail_url %}poster="{{ video.thumbnail_url }}"{% endif %}>
           {% for sub in subtitles %}
           <track kind="subtitles"
                  src="{{ sub.url }}"
@@ -2596,15 +2597,24 @@
       watchHls.on(Hls.Events.MANIFEST_PARSED, () => {
         loader.style.display = 'none';
         document.getElementById('bigPlay').classList.remove('hidden');
-        // Suppress native track rendering — we use a custom draggable overlay
         for (let i = 0; i < videoEl.textTracks.length; i++) videoEl.textTracks[i].mode = 'hidden';
         if (!_playerInited && _hlsSeekTo != null) {
           videoEl.currentTime = _hlsSeekTo;
           showToast('info', 'Jumped to {{ seek_to|default:"0"|floatformat:0 }}s', 'from search result');
         }
         videoEl.play().catch(() => {
-          // Autoplay blocked — show controls so user can start manually
-          watchSyncPlayIcon(true);
+          // Autoplay blocked — kick off a muted-play so the frame at the seek
+          // position actually renders (instead of staying black), then sync the
+          // play-icon. User clicks play to enable audio.
+          videoEl.muted = true;
+          videoEl.play().then(() => {
+            // Pause immediately — frame is now rendered. Unmute waits for click.
+            videoEl.pause();
+            videoEl.muted = false;
+            watchSyncPlayIcon(true);
+          }).catch(() => {
+            watchSyncPlayIcon(true);
+          });
         });
         buildQualityMenu(watchHls);
         _playerInited = true;
@@ -4340,12 +4350,15 @@
         userVolumeBeforeMute = null;
         weMuted = false;
       }
-      // Beep: resume audio context if needed, then pulse the gain
+      // Beep: resume audio context if needed, then pulse the gain.
+      // Silence while paused/ended — otherwise the oscillator keeps tooting
+      // forever because currentTime is frozen inside the beep range.
       if (beepGain && audioCtx) {
         if (shouldBeep && audioCtx.state === 'suspended') {
           audioCtx.resume().catch(() => {});
         }
-        beepGain.gain.value = shouldBeep ? 0.18 : 0;
+        const playing = !video.paused && !video.ended;
+        beepGain.gain.value = (shouldBeep && playing) ? 0.18 : 0;
       }
     }
 

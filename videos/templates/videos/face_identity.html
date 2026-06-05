@@ -578,7 +578,9 @@
       <button class="btn btn-ghost" onclick="openMerge()">Merge into…</button>
       {% endif %}
       <button class="btn btn-ghost" onclick="openExport()" title="Download all biometric data about this person">↓ Export data</button>
-      <button class="btn btn-ghost" style="border-color:#ef4444;color:#fca5a5;" onclick="openForget()" title="Permanently delete all biometric data (GDPR right to be forgotten)">🗑 Forget person</button>
+      {% if is_superadmin %}
+      <button class="btn btn-ghost" style="border-color:#ef4444;color:#fca5a5;" onclick="openForget()" title="Permanently delete all biometric data + redact in videos (GDPR — superadmin only)">🗑 Forget person</button>
+      {% endif %}
       {% if can_delete %}
       <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
       {% else %}
@@ -821,7 +823,7 @@
 
 <!-- ── Forget Person Modal ────────────────────────────────────────────────── -->
 <div class="modal-overlay" id="forgetModal">
-  <div class="modal" style="width:540px; max-width:90vw;">
+  <div class="modal" style="width:560px; max-width:90vw;">
     <h3 style="color:#fca5a5;">🗑 Forget this person</h3>
     <p style="color:var(--text-muted); font-size:13px; line-height:1.6; margin-bottom:10px;">
       This <strong style="color:#fca5a5;">permanently deletes ALL biometric data</strong> for
@@ -833,6 +835,24 @@
       <li>This identity record itself</li>
       <li>Any speaker rows linked to this identity (link cleared)</li>
     </ul>
+
+    <p style="font-size:12px; color:var(--text-muted); margin: 0 0 8px;">
+      Also, in <strong>every existing video</strong> where {{ identity.name }} appears, redact:
+    </p>
+    <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin-bottom:14px; display:flex; flex-direction:column; gap:8px;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; color:var(--text);">
+        <input type="checkbox" id="forget_blur_face" checked>
+        <span><strong>Blur their face</strong> in all videos (visual redaction)</span>
+      </label>
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; color:var(--text);">
+        <input type="checkbox" id="forget_mute_voice" checked>
+        <span><strong>Mute their voice</strong> in all videos (only applies if a linked speaker exists)</span>
+      </label>
+      <div style="font-size:11px; color:var(--text-muted); padding-top:4px; border-top:1px solid var(--border); margin-top:4px;">
+        Both options use <strong>true erasure</strong> — transcripts cannot be restored later.
+      </div>
+    </div>
+
     <p style="background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.25); padding:10px 14px; border-radius:6px; color:#fca5a5; font-size:12px; margin-bottom:14px;">
       <strong>Cannot be undone.</strong> Logged in the audit trail. Use this for GDPR / Right-to-be-Forgotten requests.
     </p>
@@ -1434,6 +1454,8 @@ document.getElementById('forgetConfirm')?.addEventListener('input', function() {
 async function submitForget() {
   const name = document.getElementById('forgetConfirm').value.trim();
   if (name !== EXPECTED_NAME.trim()) { showToast('Name does not match.', true); return; }
+  const redactFace  = document.getElementById('forget_blur_face').checked;
+  const redactVoice = document.getElementById('forget_mute_voice').checked;
   const btn = document.getElementById('forgetBtn');
   btn.disabled = true;
   btn.textContent = 'Deleting…';
@@ -1441,7 +1463,11 @@ async function submitForget() {
     const res = await fetch(`/api/faces/${IDENTITY_ID}/forget/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ confirm_name: name }),
+      body: JSON.stringify({
+        confirm_name: name,
+        redact_face:  redactFace,
+        redact_voice: redactVoice,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
@@ -1450,8 +1476,11 @@ async function submitForget() {
       return;
     }
     const data = await res.json();
-    showToast(`Forgotten — ${data.detected_faces_deleted} faces, ${data.crop_files_deleted} files removed.`);
-    setTimeout(() => { window.location.href = '/faces/'; }, 1500);
+    const bits = [`${data.detected_faces_deleted} faces`, `${data.crop_files_deleted} files removed`];
+    if (redactFace)  bits.push('videos re-rendered (face blurred)');
+    if (redactVoice) bits.push('voice muted where speaker linked');
+    showToast(`Forgotten — ${bits.join(' · ')}`);
+    setTimeout(() => { window.location.href = '/faces/'; }, 1800);
   } catch (e) {
     showToast('Network error: ' + e.message, true);
     btn.disabled = false; btn.textContent = 'Permanently delete';

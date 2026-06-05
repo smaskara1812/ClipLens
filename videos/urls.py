@@ -28,6 +28,7 @@ urlpatterns = [
     path('admin-panel/support/<int:ticket_id>/', views.org_support_detail, name='org_support_detail'),
     path('admin-panel/team-invites/',            views.org_team_invites,   name='org_team_invites'),
     path('admin-panel/users/<int:user_id>/lifecycle/', views.user_lifecycle, name='user_lifecycle'),
+    path('admin-panel/redaction-policies/',            views.org_redaction_policies, name='org_redaction_policies'),
 
     # Redactions
     path('video/<uuid:video_id>/redact/',          views.video_redact_editor,    name='video_redact_editor'),

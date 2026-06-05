@@ -349,16 +349,23 @@ def _segments_to_vtt_and_index(segments, video) -> str:
             text=text,
         ))
 
-    # Delete any old segments for this video then bulk-insert
-    logger.info(f'_segments_to_vtt_and_index: {len(seg_objects)} segment(s) for video {video.id}')
+    # Delete any old segments for this video then bulk-insert.
+    # Use the video instance's resolved DB (the one Django loaded it from) to
+    # avoid any router-routing weirdness for bulk_create across multi-tenant.
+    db_alias = video._state.db or 'default'
+    logger.info(f'_segments_to_vtt_and_index: {len(seg_objects)} segment(s) for video {video.id} (db={db_alias})')
     if seg_objects:
         try:
-            VideoSegment.objects.filter(video=video).delete()
-            VideoSegment.objects.bulk_create(seg_objects, batch_size=500)
-            logger.info(f'_segments_to_vtt_and_index: indexed {len(seg_objects)} segments for {video.id}')
+            del_count = VideoSegment.objects.using(db_alias).filter(video=video).delete()[0]
+            VideoSegment.objects.using(db_alias).bulk_create(seg_objects, batch_size=500)
+            # Sanity check: how many actually landed?
+            verify = VideoSegment.objects.using(db_alias).filter(video=video).count()
+            logger.info(
+                f'_segments_to_vtt_and_index: indexed {len(seg_objects)} segments '
+                f'(deleted {del_count}, verified {verify} in db={db_alias}) for {video.id}'
+            )
         except Exception as exc:
-            # Log but don't abort — subtitle is still useful even without the search index
-            logger.error(f'_segments_to_vtt_and_index: bulk_create failed for {video.id}: {exc}')
+            logger.exception(f'_segments_to_vtt_and_index: bulk_create FAILED for {video.id} db={db_alias}: {exc}')
 
     return '\n'.join(vtt_lines)
 
@@ -1367,6 +1374,18 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
             f'{n_identities} identities for {video_id}'
         )
 
+        # ── Phase 6: apply any active library-wide redaction policies ──
+        # Idempotent: skips if already applied.
+        try:
+            apply_active_policies_to_video_task.apply_async(
+                args=[str(video_id)],
+                kwargs={'tenant_slug': _tenant_slug},
+                queue='processing',
+                countdown=2,
+            )
+        except Exception:
+            logger.exception('analyze_video_frames_task: could not queue policy apply')
+
     except Exception as exc:
         logger.error(f'analyze_video_frames_task failed for {video_id}: {exc}')
         raise self.retry(exc=exc)
@@ -1458,15 +1477,17 @@ def reindex_segments_task(subtitle_id: int, **kwargs):
         for seg in segments
     ]
 
+    db_alias = video._state.db or 'default'
     try:
-        VideoSegment.objects.filter(video=video).delete()
-        VideoSegment.objects.bulk_create(seg_objects, batch_size=500)
+        VideoSegment.objects.using(db_alias).filter(video=video).delete()
+        VideoSegment.objects.using(db_alias).bulk_create(seg_objects, batch_size=500)
+        verify = VideoSegment.objects.using(db_alias).filter(video=video).count()
         logger.info(
             f'reindex_segments_task: indexed {len(seg_objects)} segments '
-            f'for video {video.id} from subtitle {subtitle_id}'
+            f'(verified {verify} in db={db_alias}) for video {video.id} from subtitle {subtitle_id}'
         )
     except Exception as exc:
-        logger.error(f'reindex_segments_task: bulk_create failed for video {video.id}: {exc}')
+        logger.exception(f'reindex_segments_task: bulk_create failed for video {video.id} db={db_alias}: {exc}')
         raise
 
 
@@ -2934,6 +2955,19 @@ def run_diarization_task(self, video_id: str, **kwargs):
     except Exception as sugg_exc:
         logger.warning(f'run_diarization_task: suggestion generation skipped — {sugg_exc}')
 
+    # ── Phase 6: apply any active library-wide redaction policies ──
+    # (Voice policies need this; face policies already triggered from frames task.)
+    try:
+        _slug2 = kwargs.get('tenant_slug', '')
+        apply_active_policies_to_video_task.apply_async(
+            args=[str(video.id)],
+            kwargs={'tenant_slug': _slug2},
+            queue='processing',
+            countdown=2,
+        )
+    except Exception:
+        logger.exception('run_diarization_task: could not queue policy apply')
+
     # ── Kick off non-speech audio event detection (applause/laughter/music…) ──
     # Runs on its own queue so heavy PANNs inference doesn't block the caller.
     # Guarded so any failure here never breaks the diarization result payload.
@@ -4005,3 +4039,166 @@ def render_redacted_video_task(self, render_id, *, tenant_slug='', **kwargs):
             logger.exception('render_redacted_video_task: storage logging failed')
 
     return {'ok': True, 'file_size': file_size, 'redactions': len(redactions)}
+
+
+# ── Post-redaction subtitle regeneration (Phase 5+) ──────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.regenerate_subtitles_after_redaction_task',
+    queue='captions',
+    max_retries=1,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def regenerate_subtitles_after_redaction_task(self, video_id, *, tenant_slug='', **kwargs):
+    """
+    After a redaction Save & Render, regenerate every existing Subtitle file
+    for this video from the current VideoSegment state.
+
+    - Primary-language subtitle: VTT rebuilt directly from segments (segments
+      already contain `[redacted]` for redacted parts).
+    - Translated subtitles: re-translate each non-redacted cue via NLLB, keep
+      `[redacted]` as-is. If translation infra is missing we just write the
+      English text for redacted cues (still tagged) and re-queue translation.
+    """
+    from .models import Video, Subtitle, VideoSegment
+    from django.core.files.base import ContentFile
+    import os as _os
+
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            logger.exception('regenerate_subtitles_after_redaction_task: tenant ctx failed')
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        return {'ok': False, 'error': 'video not found'}
+
+    db_alias = video._state.db or 'default'
+    subs = list(Subtitle.objects.using(db_alias).filter(video=video))
+    if not subs:
+        return {'ok': True, 'message': 'no subtitles to regenerate'}
+
+    segs = list(
+        VideoSegment.objects.using(db_alias)
+        .filter(video=video)
+        .order_by('start_seconds')
+    )
+    if not segs:
+        return {'ok': False, 'error': 'no segments — run captions first'}
+
+    # Determine primary language: the auto-generated, non-translation subtitle.
+    primary = next(
+        (s for s in subs if s.is_auto_generated and not s.is_translation),
+        subs[0]
+    )
+    primary_lang = primary.language
+
+    # Build a primary VTT from current segments. SKIP redacted cues entirely
+    # — the viewer should see no caption at all during muted/beeped ranges,
+    # not the literal "[redacted]" token. The token stays in the DB so search
+    # auto-filters and a future policy revoke can restore originals.
+    primary_lines = ['WEBVTT', '']
+    out_idx = 0
+    for seg in segs:
+        text = (seg.text or '').strip()
+        if not text or text == '[redacted]':
+            continue
+        out_idx += 1
+        primary_lines += [
+            f'{out_idx}',
+            f'{_seconds_to_vtt_time(seg.start_seconds)} --> {_seconds_to_vtt_time(seg.end_seconds)}',
+            text,
+            '',
+        ]
+    primary_vtt = '\n'.join(primary_lines)
+
+    # Re-save the primary VTT file in place
+    try:
+        # Write the new content keeping the same DB record
+        primary.file.save(primary.file.name.split('/')[-1],
+                          ContentFile(primary_vtt.encode('utf-8')),
+                          save=True)
+        logger.info('regenerate_subtitles: primary VTT rebuilt for %s (lang=%s)',
+                    video.pk, primary_lang)
+    except Exception:
+        logger.exception('regenerate_subtitles: primary VTT save failed for %s', video.pk)
+
+    # Translated subtitles → re-queue translation from the new primary VTT
+    other_langs = [s.language for s in subs
+                   if s.language != primary_lang and s.is_translation]
+    if other_langs:
+        try:
+            from .tasks import translate_subtitles_task
+            translate_subtitles_task.apply_async(
+                args=[str(video.id), other_langs],
+                kwargs={'source_subtitle_id': primary.id, 'tenant_slug': tenant_slug},
+                queue='translation',
+            )
+            logger.info('regenerate_subtitles: queued translation for %s langs=%s',
+                        video.pk, other_langs)
+        except Exception:
+            logger.exception('regenerate_subtitles: queue translation failed for %s', video.pk)
+
+    return {
+        'ok': True,
+        'primary_lang':  primary_lang,
+        'segments':      len(segs),
+        'translations_queued': other_langs,
+    }
+
+
+# ── Phase 6: apply active policies to a new video ────────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.apply_active_policies_to_video_task',
+    queue='processing',
+    max_retries=1,
+    default_retry_delay=60,
+)
+def apply_active_policies_to_video_task(self, video_id, *, tenant_slug='', **kwargs):
+    """
+    Fires after face analysis / diarization finishes on a new video.
+    Checks every active RedactionPolicy with apply_to_future=True and applies
+    any that match this video.
+    """
+    from .models import Video, RedactionPolicy
+    from .redaction_policy import apply_policy_to_video
+
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            pass
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        return {'ok': False, 'error': 'video not found'}
+    db_alias = video._state.db or 'default'
+
+    policies = list(
+        RedactionPolicy.objects.using(db_alias)
+        .filter(active=True, apply_to_future=True)
+    )
+    total = 0
+    affected = 0
+    for p in policies:
+        try:
+            res = apply_policy_to_video(p, video, tenant_slug=tenant_slug)
+            if res.get('created'):
+                total += res['created']
+                affected += 1
+        except Exception:
+            logger.exception('apply policy %s to video %s failed', p.pk, video.pk)
+
+    if affected:
+        logger.info('apply_active_policies: video %s — %d policies created %d redactions',
+                    video.pk, affected, total)
+    return {'ok': True, 'policies_matched': affected, 'redactions_created': total}

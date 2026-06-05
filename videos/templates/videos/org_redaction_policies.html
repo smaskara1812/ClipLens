@@ -1,0 +1,206 @@
+{% extends 'videos/base.html' %}
+{% block title %}Redaction Policies — ClipLens Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  .pol-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 12px; }
+  .pol-card.revoked { opacity: .55; }
+  .pol-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .pol-head h3 { margin:0; font-size:15px; }
+  .pol-meta { color: var(--text-muted); font-size:12px; display:flex; gap:14px; flex-wrap:wrap; }
+  .pill { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .pill-active   { background: rgba(74,222,128,.15); color:#4ade80; }
+  .pill-revoked  { background: var(--bg); color: var(--text-muted); }
+  .pill-future   { background: rgba(88,166,255,.15); color:#58a6ff; }
+  .pill-erasure  { background: rgba(239,68,68,.15); color:#fca5a5; }
+  .pill-face     { background: rgba(168,85,247,.15); color:#c084fc; }
+  .pill-voice    { background: rgba(245,158,11,.15); color:#fbbf24; }
+  .pol-actions { display:flex; gap:6px; margin-left:auto; }
+
+  .new-card { background: var(--surface); border: 1px dashed var(--accent); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; }
+  .new-card h3 { margin: 0 0 12px; font-size: 14px; color: var(--accent); }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .form-grid .full { grid-column: 1 / -1; }
+  .form-grid label { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 4px; }
+  .form-grid input[type=text], .form-grid select, .form-grid textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 10px; border-radius: 4px; font-size: 13px; font-family: inherit;
+  }
+  .form-grid textarea { min-height: 60px; resize: vertical; }
+  .check-row { display: flex; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 6px; }
+  .check-row input[type=checkbox] { width: auto; }
+
+  .stats { color: var(--text-muted); font-size: 11px; padding: 6px 10px; background: var(--bg); border-radius: 4px; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+  {% include 'videos/_admin_nav.html' with admin_current='org_redaction_policies' %}
+
+  <div class="admin-hero">
+    <h1 class="admin-hero-title">Redaction Policies</h1>
+    <p class="admin-hero-sub">
+      Library-wide rules that auto-redact people across every video — existing and future uploads.
+      Useful for GDPR right-to-be-forgotten, NDA-bound footage, witnesses in legal cases.
+    </p>
+  </div>
+
+  {% if messages %}
+  <ul style="list-style:none; padding:0;">
+    {% for m in messages %}
+    <li style="padding:10px 14px; border-radius:5px; margin-bottom:8px; font-size:13px;
+               background:rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.1);
+               border:1px solid rgba({% if m.tags == 'error' %}239,68,68{% else %}63,185,80{% endif %},.3);
+               color:{% if m.tags == 'error' %}#fca5a5{% else %}#4ade80{% endif %};">{{ m }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {# ── Create new ──────────────────────────────────────────────────────── #}
+  <details class="new-card">
+    <summary style="cursor:pointer; font-weight:600; color:var(--accent); list-style:none;">+ New redaction policy</summary>
+    <form method="post" class="form-grid" style="margin-top:14px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+
+      <div class="full">
+        <label>Policy name</label>
+        <input type="text" name="name" maxlength="140" required placeholder="e.g. Blur Riya — HR request 2026-06-04">
+      </div>
+
+      <div>
+        <label>Target type</label>
+        <select name="target_type" id="target_type_select" onchange="updateTargetIdSelect()" required>
+          <option value="face">Face identity (visual)</option>
+          <option value="voice">Voice / speaker identity (audio)</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Target identity</label>
+        <select name="target_id" id="target_id_select" required>
+          {% for f in face_identities %}
+          <option value="{{ f.id }}" data-type="face">
+            {% if f.is_auto_named %}<em>{{ f.name }} (unnamed)</em>{% else %}{{ f.name }}{% endif %}
+          </option>
+          {% endfor %}
+          {% for s in speaker_identities %}
+          <option value="{{ s.id }}" data-type="voice" style="display:none;">{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label>Audio method (optional)</label>
+        <select name="audio_method">
+          <option value="">— None (visual only)</option>
+          <option value="mute">Mute audio</option>
+          <option value="beep">Beep audio</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Visual method</label>
+        <select disabled><option>Black box</option></select>
+      </div>
+
+      <div class="full">
+        <div class="check-row"><label style="display:flex; align-items:center; gap:8px; text-transform:none; font-weight:500; font-size:13px;"><input type="checkbox" name="apply_to_existing" checked> Apply to existing videos now</label></div>
+        <div class="check-row"><label style="display:flex; align-items:center; gap:8px; text-transform:none; font-weight:500; font-size:13px;"><input type="checkbox" name="apply_to_future" checked> Auto-apply to future uploads</label></div>
+        <div class="check-row"><label style="display:flex; align-items:center; gap:8px; text-transform:none; font-weight:500; font-size:13px;"><input type="checkbox" name="redact_transcripts"> Also redact transcripts (face-targeted policies — voice automatically scrubs)</label></div>
+        <div class="check-row"><label style="display:flex; align-items:center; gap:8px; text-transform:none; font-weight:500; font-size:13px; color:#fca5a5;"><input type="checkbox" name="true_erasure"> True erasure — do NOT keep originals (irreversible, GDPR-grade)</label></div>
+      </div>
+
+      <div class="full">
+        <label>Description (optional)</label>
+        <textarea name="description" maxlength="2000" placeholder="Why this policy exists, who requested it, ticket reference…"></textarea>
+      </div>
+
+      <div class="full">
+        <button type="submit" class="btn btn-primary">Create policy</button>
+      </div>
+    </form>
+  </details>
+
+  {# ── Existing policies ──────────────────────────────────────────────── #}
+  <h3 style="font-size:13px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; margin:18px 0 10px;">
+    All policies ({{ policies|length }})
+  </h3>
+
+  {% if policies %}
+  {% for p in policies %}
+  <div class="pol-card {% if not p.active %}revoked{% endif %}">
+    <div class="pol-head">
+      <h3>{{ p.name }}</h3>
+      <span class="pill pill-{{ p.target_type }}">{{ p.get_target_type_display }}</span>
+      <span class="pill {% if p.active %}pill-active{% else %}pill-revoked{% endif %}">
+        {% if p.active %}● Active{% else %}● Revoked{% endif %}
+      </span>
+      {% if p.apply_to_future and p.active %}<span class="pill pill-future">future-on</span>{% endif %}
+      {% if p.true_erasure %}<span class="pill pill-erasure">⚠ True erasure</span>{% endif %}
+
+      <div class="pol-actions">
+        {% if p.active %}
+        <form method="post" style="display:inline;" onsubmit="return confirm('Re-apply this policy to all existing videos now?')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="apply_again">
+          <input type="hidden" name="policy_id" value="{{ p.pk }}">
+          <button class="btn btn-sm btn-secondary" type="submit">Re-apply</button>
+        </form>
+        <form method="post" style="display:inline;"
+              onsubmit="return confirm('Revoke this policy?\n\n• {{ p.auto_created_redactions }} auto-created redactions will be deleted\n• Affected videos will be re-rendered{% if not p.true_erasure %}\n• Transcripts will be restored{% else %}\n• Transcripts CANNOT be restored (true erasure was set){% endif %}')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="revoke">
+          <input type="hidden" name="policy_id" value="{{ p.pk }}">
+          <button class="btn btn-sm btn-danger" type="submit">Revoke</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="pol-meta">
+      <span>Target: <strong>{{ p.target_label }}</strong></span>
+      <span>Audio: {{ p.audio_method|default:'—' }}</span>
+      <span>Created {{ p.created_at|timesince }} ago by {{ p.created_by_username|default:'—' }}</span>
+      {% if p.revoked_at %}<span>Revoked {{ p.revoked_at|timesince }} ago{% if p.revoked_by_username %} by {{ p.revoked_by_username }}{% endif %}</span>{% endif %}
+    </div>
+
+    {% if p.description %}
+    <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">{{ p.description }}</div>
+    {% endif %}
+
+    <div style="margin-top:8px;">
+      <span class="stats">
+        {{ p.affected_videos_count }} video(s) affected ·
+        {{ p.auto_created_redactions }} redactions created
+        {% if p.last_applied_at %} · last applied {{ p.last_applied_at|timesince }} ago{% endif %}
+      </span>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p style="color:var(--text-muted); padding:24px; text-align:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);">
+    No policies yet. Use the form above to create the first one.
+  </p>
+  {% endif %}
+</div>
+
+<script>
+function updateTargetIdSelect() {
+  const type = document.getElementById('target_type_select').value;
+  const opts = document.getElementById('target_id_select').options;
+  for (let i = 0; i < opts.length; i++) {
+    opts[i].style.display = (opts[i].dataset.type === type) ? '' : 'none';
+  }
+  // Auto-select the first visible
+  for (let i = 0; i < opts.length; i++) {
+    if (opts[i].style.display !== 'none') {
+      opts[i].selected = true;
+      break;
+    }
+  }
+}
+updateTargetIdSelect();
+</script>
+{% endblock %}

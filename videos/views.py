@@ -2909,6 +2909,126 @@ def video_redact_speaker_identity(request, video_id):
     })
 
 
+# ── Phase 6: Library-wide redaction policies ────────────────────────────────
+
+@superuser_required
+def org_redaction_policies(request):
+    """List, create, revoke library-wide redaction policies for this tenant."""
+    from .models import RedactionPolicy, FaceIdentity, SpeakerIdentity
+    from .redaction_policy import apply_policy_to_existing, revoke_policy
+
+    tenant = getattr(request, 'tenant', None)
+    slug = _tenant_slug(request)
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'create')
+
+        if action == 'create':
+            name        = (request.POST.get('name') or '').strip()[:140]
+            target_type = request.POST.get('target_type', '')
+            tgt_id      = request.POST.get('target_id', '')
+            audio_method = (request.POST.get('audio_method') or '').strip()
+            apply_existing = bool(request.POST.get('apply_to_existing'))
+            apply_future   = bool(request.POST.get('apply_to_future'))
+            true_erasure   = bool(request.POST.get('true_erasure'))
+            description    = (request.POST.get('description') or '').strip()
+
+            if not name:
+                messages.error(request, 'Name is required.')
+                return redirect('org_redaction_policies')
+            if target_type not in ('face', 'voice'):
+                messages.error(request, 'Pick a valid target type.')
+                return redirect('org_redaction_policies')
+
+            policy = RedactionPolicy(
+                name=name,
+                description=description,
+                target_type=target_type,
+                visual_method='black_box',
+                visual_severity='heavy',
+                audio_method=audio_method if audio_method in ('mute', 'beep') else '',
+                redact_transcripts=(target_type == 'voice') or bool(request.POST.get('redact_transcripts')),
+                true_erasure=true_erasure,
+                apply_to_existing=apply_existing,
+                apply_to_future=apply_future,
+                created_by_username=request.user.username,
+            )
+            try:
+                if target_type == 'face':
+                    policy.target_face_identity = FaceIdentity.objects.get(pk=int(tgt_id))
+                else:
+                    policy.target_speaker_identity = SpeakerIdentity.objects.get(pk=int(tgt_id))
+            except (FaceIdentity.DoesNotExist, SpeakerIdentity.DoesNotExist, ValueError, TypeError):
+                messages.error(request, 'Target identity not found.')
+                return redirect('org_redaction_policies')
+
+            policy.save()
+            messages.success(request, f'Policy "{policy.name}" created.')
+
+            if apply_existing:
+                try:
+                    stats = apply_policy_to_existing(policy, tenant_slug=slug)
+                    messages.success(request,
+                        f'Applied to existing: {stats["videos_affected"]} video(s) '
+                        f'affected, {stats["redactions_created"]} redactions created.')
+                except Exception as exc:
+                    logger.exception('apply_policy_to_existing failed')
+                    messages.error(request, f'Apply failed: {exc}')
+
+            return redirect('org_redaction_policies')
+
+        if action == 'revoke':
+            try:
+                p = RedactionPolicy.objects.get(pk=int(request.POST.get('policy_id', 0)))
+            except (RedactionPolicy.DoesNotExist, ValueError):
+                messages.error(request, 'Policy not found.')
+                return redirect('org_redaction_policies')
+            if not p.active:
+                messages.info(request, 'Policy is already revoked.')
+                return redirect('org_redaction_policies')
+            try:
+                stats = revoke_policy(p, performed_by_username=request.user.username, tenant_slug=slug)
+                messages.success(request,
+                    f'Revoked "{p.name}". {stats["redactions_deleted"]} redactions deleted, '
+                    f'{stats["segments_restored"]} transcript segments restored, '
+                    f'{stats["re_rendered"]} videos re-processed.')
+            except Exception as exc:
+                logger.exception('revoke_policy failed')
+                messages.error(request, f'Revoke failed: {exc}')
+            return redirect('org_redaction_policies')
+
+        if action == 'apply_again' and request.POST.get('policy_id'):
+            try:
+                p = RedactionPolicy.objects.get(pk=int(request.POST['policy_id']))
+            except (RedactionPolicy.DoesNotExist, ValueError):
+                messages.error(request, 'Policy not found.')
+                return redirect('org_redaction_policies')
+            if not p.active:
+                messages.error(request, 'Cannot re-apply a revoked policy.')
+                return redirect('org_redaction_policies')
+            try:
+                stats = apply_policy_to_existing(p, tenant_slug=slug)
+                messages.success(request,
+                    f'Re-applied "{p.name}": {stats["videos_affected"]} video(s) affected, '
+                    f'{stats["redactions_created"]} new redactions.')
+            except Exception as exc:
+                logger.exception('re-apply failed')
+                messages.error(request, f'Apply failed: {exc}')
+            return redirect('org_redaction_policies')
+
+    # GET — render the list + create form
+    policies = list(RedactionPolicy.objects.all()
+                    .select_related('target_face_identity', 'target_speaker_identity'))
+    face_identities    = list(FaceIdentity.objects.exclude(is_auto_named=True).order_by('name')) \
+                         + list(FaceIdentity.objects.filter(is_auto_named=True).order_by('name'))
+    speaker_identities = list(SpeakerIdentity.objects.order_by('name'))
+    return render(request, 'videos/org_redaction_policies.html', {
+        'policies':           policies,
+        'face_identities':    face_identities,
+        'speaker_identities': speaker_identities,
+    })
+
+
 # ── Save & render (commit drafts) ───────────────────────────────────────────
 
 @login_required
@@ -2936,11 +3056,26 @@ def video_save_redactions(request, video_id):
     if total_redactions == 0:
         return JsonResponse({'ok': False, 'error': 'No redactions to save.'}, status=400)
 
+    # Capture drafts BEFORE flipping their state, so we can scrub by them
+    drafts_qs = Redaction.objects.filter(video=video, is_saved=False)
+    drafts_list = list(drafts_qs.select_related('target_face_identity', 'target_speaker_identity'))
+    drafts_count = len(drafts_list)
+
     # ── 1. Flip drafts → saved ─────────────────────────────────────────
     now = timezone.now()
-    drafts_count = Redaction.objects.filter(video=video, is_saved=False).update(
-        is_saved=True, saved_at=now,
-    )
+    if drafts_count:
+        drafts_qs.update(is_saved=True, saved_at=now)
+
+    # ── 1b. Phase 5: surgical metadata scrub for each just-saved draft ─
+    # Deletes DetectedFace rows for face redactions, edits VideoSegment.text
+    # for voice redactions + regens VTT files, and applies spatial/temporal
+    # overlap heuristics for manual region/audio_range redactions.
+    scrub_stats = {}
+    try:
+        from .redaction_scrub import scrub_for_redactions
+        scrub_stats = scrub_for_redactions(video, drafts_list)
+    except Exception:
+        logger.exception('scrub_for_redactions failed (non-fatal)')
 
     # ── 2. Delete prior renders' FILES + ROWS (keep history clean) ─────
     prior = list(RedactionRender.objects.filter(video=video))
@@ -2982,12 +3117,26 @@ def video_save_redactions(request, video_id):
         render.save(update_fields=['status', 'error_message'])
         return JsonResponse({'ok': False, 'error': str(exc)}, status=500)
 
+    # ── 4. Regenerate subtitles (primary VTT + queue re-translation) ───
+    # Fires regardless of scrub stats — even a face-only save should refresh
+    # captions if any voice/audio redactions exist on the video.
+    try:
+        from .tasks import regenerate_subtitles_after_redaction_task
+        regenerate_subtitles_after_redaction_task.apply_async(
+            args=[str(video.id)],
+            kwargs={'tenant_slug': slug or ''},
+            queue='captions',
+        )
+    except Exception:
+        logger.exception('regenerate_subtitles_after_redaction_task queue failed')
+
     return JsonResponse({
         'ok': True,
         'render_id': render.id,
         'drafts_committed': drafts_count,
         'prior_renders_deleted': len(prior),
         'total_redactions': total_redactions,
+        'scrub': scrub_stats,
     })
 
 
@@ -8002,8 +8151,9 @@ def face_identity_forget(request, identity_id):
 
     identity = get_object_or_404(FaceIdentity, id=identity_id)
 
-    if not _is_editor(request.user):
-        return Response({'error': 'Forbidden'}, status=403)
+    # GDPR right-to-be-forgotten is destructive — superadmin only.
+    if not _is_superadmin(request.user):
+        return Response({'error': 'Forbidden — superadmin only.'}, status=403)
 
     # Typed-name confirmation guard
     typed = (request.data.get('confirm_name') or '').strip()
@@ -8013,8 +8163,71 @@ def face_identity_forget(request, identity_id):
             'expected': identity.name,
         }, status=400)
 
+    # Caller chooses which channels to redact across existing/future videos.
+    # Defaults: blur face = True, mute voice = True (matches old behaviour).
+    redact_face_videos  = request.data.get('redact_face',  True)
+    redact_voice_videos = request.data.get('redact_voice', True)
+    # Coerce truthy values (form posts send "true"/"false" strings)
+    if isinstance(redact_face_videos, str):
+        redact_face_videos = redact_face_videos.lower() in ('1', 'true', 'on', 'yes')
+    if isinstance(redact_voice_videos, str):
+        redact_voice_videos = redact_voice_videos.lower() in ('1', 'true', 'on', 'yes')
+
     name_snapshot = identity.name
     nicknames = list(identity.nicknames.values_list('nickname', flat=True)) if hasattr(identity, 'nicknames') else []
+
+    # ── Phase 6: auto-create tenant-wide TRUE-ERASURE policies ─────────────
+    # Caller chose face / voice / both via the redact_* flags. True erasure
+    # means transcripts are NOT preserved for restore.
+    # Done BEFORE deleting the identity so the policy can reference it and
+    # the matching DetectedFace / VideoSegment rows still exist.
+    try:
+        from .models import RedactionPolicy, SpeakerFaceSuggestion as _SFS, SpeakerIdentity as _SI
+        from .redaction_policy import apply_policy_to_existing as _apply_existing
+
+        if redact_face_videos:
+            face_policy = RedactionPolicy.objects.create(
+                name=f'GDPR forget — {name_snapshot}',
+                description=f'Auto-created by face_identity_forget for "{name_snapshot}"',
+                target_type='face',
+                target_face_identity=identity,
+                visual_method='black_box',
+                visual_severity='heavy',
+                audio_method='',
+                redact_transcripts=False,
+                true_erasure=True,
+                apply_to_existing=True,
+                apply_to_future=False,   # identity will be deleted — nothing to future-match
+                created_by_username=request.user.username,
+            )
+            _apply_existing(face_policy, tenant_slug=_tenant_slug(request))
+
+        if redact_voice_videos:
+            # If a linked SpeakerIdentity exists, create a voice mute policy
+            linked_speaker_id = (
+                _SFS.objects.filter(face_identity=identity, status='confirmed')
+                .values_list('speaker_identity_id', flat=True).first()
+            )
+            if linked_speaker_id:
+                try:
+                    speaker = _SI.objects.get(pk=linked_speaker_id)
+                    voice_policy = RedactionPolicy.objects.create(
+                        name=f'GDPR forget (voice) — {name_snapshot}',
+                        description=f'Auto-created by face_identity_forget for "{name_snapshot}" — voice channel',
+                        target_type='voice',
+                        target_speaker_identity=speaker,
+                        audio_method='mute',
+                        redact_transcripts=True,
+                        true_erasure=True,
+                        apply_to_existing=True,
+                        apply_to_future=False,
+                        created_by_username=request.user.username,
+                    )
+                    _apply_existing(voice_policy, tenant_slug=_tenant_slug(request))
+                except _SI.DoesNotExist:
+                    pass
+    except Exception:
+        logger.exception('face_identity_forget: failed to create GDPR redaction policies')
 
     # ── 1. Collect crop file paths BEFORE deleting the rows ──────────────────
     crops_to_delete = list(

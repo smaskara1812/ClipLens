@@ -762,7 +762,10 @@ function applyAudioForFrame() {
   }
   if (beepGain && audioCtx) {
     if (beepActive && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
-    beepGain.gain.value = beepActive ? 0.18 : 0;
+    // Silence the beep while the video is paused / ended — otherwise the
+    // oscillator keeps tooting forever because currentTime is frozen in-range.
+    const shouldBeep = beepActive && !video.paused && !video.ended;
+    beepGain.gain.value = shouldBeep ? 0.18 : 0;
   }
 }
 
@@ -1203,7 +1206,14 @@ document.getElementById('saveConfirmBtn').addEventListener('click', async () => 
     });
     const data = await r.json();
     if (!data.ok) { toast('✗ ' + (data.error || 'Save failed'), 'error'); return; }
-    toast(`✓ Committed ${data.drafts_committed} draft(s) · rendering…`);
+    // Build a status sentence including the scrub stats
+    const sc = data.scrub || {};
+    const bits = [];
+    if (sc.detected_faces_deleted) bits.push(`${sc.detected_faces_deleted} face detections removed`);
+    if (sc.segments_redacted)      bits.push(`${sc.segments_redacted} transcript segments redacted`);
+    if (sc.vtts_rewritten)         bits.push(`${sc.vtts_rewritten} caption files updated`);
+    const scrubSuffix = bits.length ? ' · ' + bits.join(' · ') : '';
+    toast(`✓ Committed ${data.drafts_committed} draft(s) · rendering…${scrubSuffix}`);
     closeSaveModal();
     clearUndo();
     await loadRedactions();

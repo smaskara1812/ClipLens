@@ -467,6 +467,89 @@ class Redaction(models.Model):
         return self.target_type in (self.TARGET_VOICE, self.TARGET_AUDIO_RANGE)
 
 
+class RedactionPolicy(models.Model):
+    """
+    Library-wide redaction rule (Phase 6).
+
+    Says e.g. "blur Riya in every video, including future uploads".
+    When created with apply_to_existing=True, the apply task walks every
+    video, finds matching detections, and creates saved Redactions linked
+    to this policy via Redaction.applied_by_policy_id.
+
+    When apply_to_future=True, a post-save Video signal applies the policy
+    to each new upload as it finishes processing.
+
+    Revoking deletes the auto-created Redactions and, unless true_erasure
+    is set, restores the original transcripts and re-renders the videos
+    so things look like the policy never existed.
+    """
+    TARGET_FACE  = 'face'
+    TARGET_VOICE = 'voice'
+    TARGET_CHOICES = [
+        (TARGET_FACE,  'Face identity'),
+        (TARGET_VOICE, 'Voice / speaker identity'),
+    ]
+
+    name        = models.CharField(max_length=140, help_text='Human label, e.g. "Blur Riya — HR request 2026-06"')
+    description = models.TextField(blank=True)
+
+    target_type = models.CharField(max_length=20, choices=TARGET_CHOICES)
+    target_face_identity = models.ForeignKey(
+        'FaceIdentity', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='redaction_policies',
+    )
+    target_speaker_identity = models.ForeignKey(
+        'SpeakerIdentity', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='redaction_policies',
+    )
+
+    # How to redact
+    visual_method   = models.CharField(max_length=20, default='black_box',
+                                       help_text='black_box for now (the only reliable option)')
+    visual_severity = models.CharField(max_length=10, default='heavy')
+    audio_method    = models.CharField(max_length=20, blank=True, default='',
+                                       help_text='mute | beep | <empty> = no audio redaction')
+
+    # Behaviour flags
+    redact_transcripts = models.BooleanField(default=True,
+                          help_text='Also rewrite VideoSegment.text for matched ranges')
+    true_erasure       = models.BooleanField(default=False,
+                          help_text='Do NOT keep originals (no reversibility). GDPR mode.')
+    apply_to_existing  = models.BooleanField(default=True)
+    apply_to_future    = models.BooleanField(default=True)
+
+    # Lifecycle
+    active     = models.BooleanField(default=True, db_index=True)
+    created_by_username = models.CharField(max_length=150, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_username = models.CharField(max_length=150, blank=True)
+
+    # Application stats (last apply / total applied)
+    last_applied_at         = models.DateTimeField(null=True, blank=True)
+    affected_videos_count   = models.PositiveIntegerField(default=0)
+    auto_created_redactions = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['active', '-created_at']),
+            models.Index(fields=['target_face_identity']),
+            models.Index(fields=['target_speaker_identity']),
+        ]
+
+    def __str__(self):
+        return f'{self.name} ({self.target_type})' + ('' if self.active else ' [revoked]')
+
+    @property
+    def target_label(self) -> str:
+        if self.target_face_identity_id and self.target_face_identity:
+            return self.target_face_identity.name
+        if self.target_speaker_identity_id and self.target_speaker_identity:
+            return self.target_speaker_identity.name
+        return '—'
+
+
 class RedactionRender(models.Model):
     """
     A rendered MP4 derivative of a Video with all visual/audio Redactions
@@ -825,6 +908,10 @@ class VideoSegment(models.Model):
     start_seconds = models.FloatField()
     end_seconds   = models.FloatField()
     text          = models.TextField()
+    # When this segment has been redacted (Phase 5), text is replaced with
+    # "[redacted]" and the original is preserved here so a future policy
+    # revocation can restore it. Empty when the segment has never been redacted.
+    redacted_original_text = models.TextField(blank=True, default='')
     speaker_label    = models.CharField(max_length=50, blank=True,
                                         help_text='Raw pyannote speaker label, e.g. SPEAKER_02')
     speaker_identity = models.ForeignKey(
