@@ -264,9 +264,10 @@ def _convert_single(video_id: str, source_path: str,
                 f'[{video_id}] Duration OK: output={out_duration:.1f}s / source={source_duration:.1f}s'
             )
 
-    # Return path relative to global MEDIA_ROOT so /media/<path> resolves correctly
+    # Return storage-form path (tenants/<slug>/...) so /media/<path> resolves correctly
+    from tenants.storage import to_storage_path as _tsp_h
     hls_dir = _media_root() / 'hls' / str(video_id)
-    return str((hls_dir / 'playlist.m3u8').relative_to(settings.MEDIA_ROOT)), []
+    return _tsp_h(hls_dir / 'playlist.m3u8'), []
 
 
 # ── Multi-quality HLS ────────────────────────────────────────────────────────
@@ -393,9 +394,10 @@ def _write_master_playlist(video_id: str, encoded: list,
 
     master.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     logger.info(f'[{video_id}] Master playlist written with {len(encoded)} rendition(s)')
-    # Return path relative to global MEDIA_ROOT so /media/<path> resolves correctly
+    # Return storage-form path (tenants/<slug>/...) so /media/<path> resolves correctly
+    from tenants.storage import to_storage_path as _tsp_m
     hls_dir = _media_root() / 'hls' / str(video_id)
-    return str((hls_dir / 'master.m3u8').relative_to(settings.MEDIA_ROOT))
+    return _tsp_m(hls_dir / 'master.m3u8')
 
 
 def _convert_multi(video_id: str, source_path: str,

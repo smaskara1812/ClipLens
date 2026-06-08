@@ -42,6 +42,7 @@ def protected_media(request, path):
             raise Http404
 
         file_slug = parts[1]
+        rest_path = parts[2] if len(parts) > 2 else ''
         request_tenant = getattr(request, 'tenant', None)
 
         # Block if:
@@ -53,6 +54,15 @@ def protected_media(request, path):
                 "<p>You do not have permission to access this file.</p>",
                 content_type='text/html',
             )
+
+        # Custom media path support: if this tenant has media_root_absolute
+        # set, serve files from THAT directory instead of MEDIA_ROOT/tenants/<slug>/.
+        custom_root = (getattr(request_tenant, 'media_root_absolute', '') or '').strip()
+        if custom_root:
+            # Pre-flight: refuse if the custom root doesn't exist (e.g. NFS unmounted)
+            if not os.path.isdir(custom_root):
+                raise Http404("Tenant custom media root is not accessible")
+            return serve(request, rest_path, document_root=custom_root)
 
     # Path is allowed — serve it normally via Django's static serve
     return serve(request, path, document_root=settings.MEDIA_ROOT)

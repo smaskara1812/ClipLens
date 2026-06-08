@@ -144,7 +144,9 @@ class Command(BaseCommand):
             known_ids = _collect_known_ids_for_tenant(tenant.db_name)
             self.stdout.write(f'  Known media IDs in DB: {len(known_ids)}')
 
-            tenant_root = media_root / tenant.media_folder
+            # Honour per-tenant custom media path if set
+            custom = (getattr(tenant, 'media_root_absolute', '') or '').strip()
+            tenant_root = Path(custom) if custom else (media_root / tenant.media_folder)
             if not tenant_root.exists():
                 self.stdout.write('  (no tenant media dir on disk)')
                 continue

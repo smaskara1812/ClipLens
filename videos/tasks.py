@@ -251,9 +251,10 @@ def generate_seek_thumbnails_task(self, video_id: str, **kwargs):
         logger.error(f'[seek_thumbnails] FFmpeg failed for {video_id}: {err}')
         raise self.retry(exc=Exception(f'FFmpeg exit {result.returncode}'))
 
-    # Store path relative to global MEDIA_ROOT so /media/<path> resolves correctly
-    from pathlib import Path as _Path2
-    relative_path = str(_Path2(sprite_file).relative_to(settings.MEDIA_ROOT))
+    # Store as `tenants/<slug>/<rest>` (URL-form) so /media/<path> resolves
+    # correctly, including for tenants on a custom media_root_absolute.
+    from tenants.storage import to_storage_path as _tsp
+    relative_path = _tsp(sprite_file)
     Video.objects.filter(id=video_id).update(seek_sprite=relative_path)
     logger.info(f'[seek_thumbnails] sprite saved → {relative_path}')
 
@@ -1306,7 +1307,8 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
                         if crop.size > 0:
                             crop_name = f'face_{rf["frame_idx"]:05d}_{face_idx:03d}.jpg'
                             cv2.imwrite(str(faces_dir / crop_name), crop)
-                            crop_rel = str((faces_dir / crop_name).relative_to(settings.MEDIA_ROOT))
+                            from tenants.storage import to_storage_path as _tsp
+                            crop_rel = _tsp(faces_dir / crop_name)
                             saved_crop_paths[face_idx] = crop_rel
                 except Exception as exc:
                     logger.debug(f'analyze_video_frames_task: crop error face {face_idx}: {exc}')
@@ -1826,7 +1828,8 @@ def extract_audio_tracks_task(self, video_id: str, **kwargs):
             logger.error(f'extract_audio_tracks_task: ffmpeg failed for track {idx}: {res.stderr[-500:]}')
             continue
 
-        rel_path = str((out_dir / 'playlist.m3u8').relative_to(settings.MEDIA_ROOT))
+        from tenants.storage import to_storage_path as _tsp_at
+        rel_path = _tsp_at(out_dir / 'playlist.m3u8')
         AudioTrack.objects.create(
             video=video,
             label=label,
@@ -2296,7 +2299,8 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
                     if crop.size > 0:
                         crop_name = f'face_{idx:03d}.jpg'
                         cv2.imwrite(str(faces_dir / crop_name), crop)
-                        crop_rel = str((faces_dir / crop_name).relative_to(settings.MEDIA_ROOT))
+                        from tenants.storage import to_storage_path as _tsp_p
+                        crop_rel = _tsp_p(faces_dir / crop_name)
                 except Exception as exc:
                     logger.debug(f'analyze_photo_task: crop error for {photo_id} face {idx}: {exc}')
 
@@ -3629,9 +3633,12 @@ def build_face_identity_export_task(self, identity_id: int, export_id: str, opts
 
     from .models import FaceIdentity, DetectedFace, Video, ActivityLog
 
+    # Use the tenant-aware media root so custom media_root_absolute is honoured.
+    # When _tenant_slug is set, setup_tenant_context above wired in the right root.
     media_root = Path(settings.MEDIA_ROOT)
     if _tenant_slug:
-        export_dir = media_root / f'tenants/{_tenant_slug}/exports'
+        from tenants.storage import get_media_root as _gmr_e
+        export_dir = Path(_gmr_e()) / 'exports'
     else:
         export_dir = media_root / 'exports'
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -3740,13 +3747,15 @@ def build_face_identity_export_task(self, identity_id: int, export_id: str, opts
                 for f in faces:
                     if not f.crop_path:
                         continue
-                    src = media_root / f.crop_path
+                    from tenants.storage import from_storage_path as _fsp_e
+                    src = _fsp_e(f.crop_path)
                     if src.exists():
                         zf.write(src, f'crops/{Path(f.crop_path).name}')
                         crops_added += 1
                 # Identity thumbnail too
                 if identity.thumbnail:
-                    thumb_src = media_root / identity.thumbnail
+                    from tenants.storage import from_storage_path as _fsp_e2
+                    thumb_src = _fsp_e2(identity.thumbnail)
                     if thumb_src.exists():
                         zf.write(thumb_src, f'crops/_identity_thumbnail{Path(identity.thumbnail).suffix}')
 
@@ -3788,7 +3797,8 @@ def build_face_identity_export_task(self, identity_id: int, export_id: str, opts
             try:
                 from django.core.mail import send_mail
                 from django.conf import settings as dj_settings
-                rel = zip_path.relative_to(media_root)
+                from tenants.storage import to_storage_path as _tsp_e
+                rel = _tsp_e(zip_path)   # tenants/<slug>/exports/<id>.zip
                 base_url = getattr(dj_settings, 'SITE_URL', 'http://localhost:8000').rstrip('/')
                 send_mail(
                     subject=f'[ClipLens] Your biometric data export for "{identity.name}" is ready',

@@ -2090,7 +2090,7 @@ def org_usage_page(request):
 
     # Live disk usage (accurate — includes HLS, thumbnails, everything)
     from tenants.views import _disk_usage_bytes
-    storage_bytes = _disk_usage_bytes(tenant.media_folder)
+    storage_bytes = _disk_usage_bytes(tenant)   # tenant-aware (honours media_root_absolute)
     storage_gb    = round(storage_bytes / 1024**3, 3)
 
     # Effective limits include addons
@@ -4487,8 +4487,10 @@ def storage_dashboard_page(request):
         # Thumbnail image
         s['thumbnail'] = _path_size(v.thumbnail.path) if (v.thumbnail and v.thumbnail.name) else 0
 
-        # Seek sprite — stored as MEDIA_ROOT-relative CharField, resolve via settings
-        s['sprite'] = _path_size(Path(settings.MEDIA_ROOT) / v.seek_sprite) if v.seek_sprite else 0
+        # Seek sprite — CharField stored as "tenants/<slug>/sprites/...";
+        # resolve via tenant-aware helper so custom media roots work.
+        from tenants.storage import from_storage_path as _fsp
+        s['sprite'] = _path_size(_fsp(v.seek_sprite)) if v.seek_sprite else 0
 
         # Face crop images
         s['faces'] = _path_size(tenant_media / 'faces' / str(v.id))
@@ -5527,13 +5529,15 @@ def video_download(request, video_id):
     # Use the stored hls_path which already resolves correctly, OR the tenant
     # storage's path() if we have the original_file's storage backend.
     storage = video.original_file.storage if video.original_file else None
+    from tenants.storage import get_media_root as _gmr
+    _tenant_media = Path(_gmr())
     if storage:
         try:
             hls_playlist = Path(storage.path(f'hls/{video.id}/{quality}/playlist.m3u8'))
         except Exception:
-            hls_playlist = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id) / quality / 'playlist.m3u8'
+            hls_playlist = _tenant_media / 'hls' / str(video.id) / quality / 'playlist.m3u8'
     else:
-        hls_playlist = Path(settings.MEDIA_ROOT) / 'hls' / str(video.id) / quality / 'playlist.m3u8'
+        hls_playlist = _tenant_media / 'hls' / str(video.id) / quality / 'playlist.m3u8'
     if not hls_playlist.exists():
         return Response({'error': 'Rendition playlist not found on disk.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -5674,7 +5678,8 @@ def video_upscale_presets(request, video_id):
             'presets': [{**p, 'available': False} for p in UPSCALE_PRESETS],
         })
 
-    src = Path(settings.MEDIA_ROOT) / video.original_file.name
+    # video.original_file.path is tenant-storage aware
+    src = Path(video.original_file.path)
     meta = get_video_metadata(src)
     w, h = meta.get('width', 0), meta.get('height', 0)
     if w <= 0 or h <= 0:
@@ -5711,7 +5716,8 @@ def video_upscale_start(request, video_id):
     if not video.original_file or not video.original_file.name:
         return Response({'error': 'No original file to upscale.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    src = Path(settings.MEDIA_ROOT) / video.original_file.name
+    # video.original_file.path is tenant-storage aware
+    src = Path(video.original_file.path)
     meta = get_video_metadata(src)
     w, h = meta.get('width', 0), meta.get('height', 0)
     if w <= 0 or h <= 0:
@@ -5752,7 +5758,7 @@ def photo_upscale_presets(request, photo_id):
 
     w, h = photo.width, photo.height
     if not w or not h:
-        pth = Path(settings.MEDIA_ROOT) / photo.file.name
+        pth = Path(photo.file.path)   # tenant-storage aware
         from PIL import Image as _PILImage
 
         with _PILImage.open(pth) as im:
@@ -5785,7 +5791,7 @@ def photo_upscale_start(request, photo_id):
     if not photo.file or not photo.file.name:
         return Response({'error': 'No file to upscale.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    pth = Path(settings.MEDIA_ROOT) / photo.file.name
+    pth = Path(photo.file.path)   # tenant-storage aware
     w, h = photo.width, photo.height
     if not w or not h:
         from PIL import Image as _PILImage
@@ -5826,7 +5832,8 @@ def stream_playlist(request, video_id):
     if not video.hls_path or video.status != Video.STATUS_READY:
         return Response({'error': 'Stream not ready'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-    playlist_path = Path(settings.MEDIA_ROOT) / video.hls_path
+    from tenants.storage import from_storage_path as _fsp
+    playlist_path = _fsp(video.hls_path)   # honours custom media_root_absolute
     if not playlist_path.exists():
         raise Http404
 
@@ -8248,12 +8255,12 @@ def face_identity_forget(request, identity_id):
 
     # ── 3. Delete crop files from disk ───────────────────────────────────────
     files_removed = 0
-    media_root = Path(dj_settings.MEDIA_ROOT)
+    from tenants.storage import from_storage_path as _fsp
     for rel_path in crops_to_delete + ([thumb_path] if thumb_path else []):
         if not rel_path:
             continue
         try:
-            full = media_root / rel_path
+            full = _fsp(rel_path)   # honours custom media_root_absolute
             if full.exists() and full.is_file():
                 os.unlink(full)
                 files_removed += 1
@@ -8346,13 +8353,14 @@ def face_identity_export_status(request, identity_id, export_id):
     Returns { state: queued|running|done|failed, download_url, size_bytes, error }
     """
     from pathlib import Path
-    media_root = Path(settings.MEDIA_ROOT)
+    from tenants.storage import get_media_root as _gmr
     tenant_slug = _tenant_slug(request)
 
+    # Tenant-aware: exports live under the active tenant's storage root
     if tenant_slug:
-        export_dir = media_root / f'tenants/{tenant_slug}/exports'
+        export_dir = Path(_gmr()) / 'exports'
     else:
-        export_dir = media_root / 'exports'
+        export_dir = Path(settings.MEDIA_ROOT) / 'exports'
 
     zip_path   = export_dir / f'{export_id}.zip'
     status_path = export_dir / f'{export_id}.status'

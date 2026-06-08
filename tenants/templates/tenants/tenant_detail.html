@@ -148,6 +148,199 @@ function copyInviteLink(btn) {
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Media storage location (Phase 7: per-tenant custom path + relocation)   -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-title" style="display:flex; align-items:center; justify-content:space-between;">
+    <span>Media Storage Location</span>
+    {% if tenant.media_relocating %}
+      <span style="background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600;">
+        ⚠ Relocation in progress — tenant access blocked
+      </span>
+    {% endif %}
+  </div>
+
+  <div style="display:grid; grid-template-columns: 140px 1fr; gap:8px 16px; font-size:13px; margin-bottom:14px;">
+    <div style="color:#8b949e;">Current path:</div>
+    <code style="color:#58a6ff; word-break:break-all;">{{ current_media_path }}</code>
+    <div style="color:#8b949e;">Mode:</div>
+    <div>
+      {% if tenant.media_root_absolute %}
+        <span style="background:#1f6feb22; color:#79c0ff; padding:2px 8px; border-radius:4px; font-size:11px;">Custom absolute path</span>
+      {% else %}
+        <span style="background:#1f293722; color:#8b949e; padding:2px 8px; border-radius:4px; font-size:11px;">Default (under MEDIA_ROOT)</span>
+      {% endif %}
+    </div>
+    <div style="color:#8b949e;">On-disk size:</div>
+    <div>{{ usage.storage_gb }} GB</div>
+  </div>
+
+  {% if active_relocation %}
+    <!-- ── Active relocation: progress bar + cancel buttons ─────────────── -->
+    <div id="relocation-status" data-rel-id="{{ active_relocation.pk }}"
+         style="border:1px solid #30363d; border-radius:6px; padding:12px; background:#0d1117;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:12px;">
+        <span><strong>Status:</strong> <span id="rel-status">{{ active_relocation.status }}</span></span>
+        <span id="rel-pct">{{ active_relocation.progress_pct }}%</span>
+      </div>
+      <div style="background:#21262d; height:8px; border-radius:4px; overflow:hidden; margin-bottom:8px;">
+        <div id="rel-bar" style="background:#58a6ff; height:100%; width:{{ active_relocation.progress_pct }}%; transition:width .5s;"></div>
+      </div>
+      <div style="font-size:11px; color:#8b949e; margin-bottom:10px;">
+        <span id="rel-files">{{ active_relocation.files_copied }}</span> /
+        <span>{{ active_relocation.total_files }}</span> files,
+        <span id="rel-bytes">{{ active_relocation.bytes_copied }}</span> /
+        <span>{{ active_relocation.total_bytes }}</span> bytes
+      </div>
+      <div style="font-size:11px; color:#8b949e; margin-bottom:10px;">
+        <strong>From:</strong> <code>{{ active_relocation.source_path }}</code><br>
+        <strong>To:</strong> <code>{{ active_relocation.target_path }}</code>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button id="rel-cancel-btn" class="btn btn-secondary btn-sm">Cancel (graceful)</button>
+        <button id="rel-force-btn" class="btn btn-danger btn-sm">Force cancel</button>
+      </div>
+      <small style="display:block; margin-top:8px; color:#8b949e;">
+        Graceful cancel waits until the next file boundary, then deletes partial copies.
+        Force cancel kills the Celery task immediately — target dir may be left in a partial state.
+      </small>
+    </div>
+  {% else %}
+    <!-- ── No active relocation: show "Change location" form ────────────── -->
+    <details style="border:1px solid #30363d; border-radius:6px; padding:0; background:#0d1117;">
+      <summary style="padding:10px 14px; cursor:pointer; font-size:13px; color:#58a6ff;">
+        ↪ Move media to a different absolute path
+      </summary>
+      <div style="padding:14px; border-top:1px solid #30363d;">
+        <form id="relocate-form" method="post"
+              action="{% url 'tenants:tenant_media_relocate_queue' tenant.pk %}">
+          {% csrf_token %}
+          <label style="display:block; font-size:12px; color:#8b949e; margin-bottom:4px;">
+            New absolute path (must be an empty or non-existent directory, already mounted, writable)
+          </label>
+          <input type="text" name="target" placeholder="/mnt/nas/cliplens/{{ tenant.slug }}"
+                 style="width:100%; padding:8px; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; border-radius:4px; font-family:ui-monospace,monospace; font-size:12px;" required>
+          <small style="display:block; margin-top:6px; color:#8b949e;">
+            Pre-flight verifies path is accessible, writable, empty, and has ≥10% headroom over current size.
+            Remote filesystems (NFS, SMB) must already be mounted at the OS level — credentials are not stored.
+          </small>
+          <button type="submit" class="btn btn-primary btn-sm" style="margin-top:10px;">
+            Pre-flight & start move
+          </button>
+        </form>
+        <div id="relocate-error" style="display:none; margin-top:10px; padding:10px; background:#3d1d1d; color:#f0b8b8; border-radius:4px; font-size:12px;"></div>
+      </div>
+    </details>
+
+    {% if last_relocation and last_relocation.status == 'succeeded' and not last_relocation.purged_at and last_relocation.old_path_soft_deleted %}
+      <div style="margin-top:10px; padding:10px; background:#1f293730; border:1px solid #30363d; border-radius:4px; font-size:12px;">
+        <strong style="color:#79c0ff;">Old data still on disk:</strong>
+        <code style="color:#8b949e;">{{ last_relocation.old_path_soft_deleted }}</code>
+        <br>
+        <small style="color:#8b949e;">
+          Auto-purges {{ last_relocation.grace_period_until|date:"M j, Y g:i a" }} (grace period).
+        </small>
+        <form method="post" action="{% url 'tenants:tenant_media_relocate_purge' tenant.pk last_relocation.pk %}" style="display:inline-block; margin-left:10px;"
+              onsubmit="return confirm('Permanently delete the old media directory now? This cannot be undone.');">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger btn-sm">Purge now</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if recent_relocations %}
+    <details style="margin-top:14px;">
+      <summary style="cursor:pointer; font-size:12px; color:#8b949e;">Recent relocation history ({{ recent_relocations|length }})</summary>
+      <table style="width:100%; margin-top:8px; font-size:11px;">
+        <thead>
+          <tr><th style="text-align:left;">When</th><th style="text-align:left;">Status</th><th style="text-align:left;">From → To</th><th style="text-align:left;">By</th></tr>
+        </thead>
+        <tbody>
+        {% for r in recent_relocations %}
+          <tr>
+            <td>{{ r.queued_at|date:"M j H:i" }}</td>
+            <td>{{ r.status }}</td>
+            <td><code style="color:#8b949e;">{{ r.source_path }}</code><br><code style="color:#8b949e;">→ {{ r.target_path }}</code></td>
+            <td>{{ r.initiated_by_username|default:"—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  {% endif %}
+</div>
+
+<script>
+(function() {
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+
+  // ── Submit pre-flight + start ─────────────────────────────────────────────
+  const form = document.getElementById('relocate-form');
+  const errBox = document.getElementById('relocate-error');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errBox.style.display = 'none';
+      const fd = new FormData(form);
+      const res = await fetch(form.action, { method:'POST', body: fd,
+                                              headers: { 'X-CSRFToken': csrf } });
+      const j = await res.json().catch(() => ({ok:false, error:'Bad response'}));
+      if (!j.ok) {
+        errBox.textContent = j.error || 'Unknown error';
+        errBox.style.display = 'block';
+        return;
+      }
+      // Reload so the active-relocation UI appears
+      window.location.reload();
+    });
+  }
+
+  // ── Poll status + handle cancel buttons ───────────────────────────────────
+  const statusBox = document.getElementById('relocation-status');
+  if (!statusBox) return;
+  const relId = statusBox.dataset.relId;
+  const tenantPk = {{ tenant.pk }};
+
+  async function poll() {
+    try {
+      const res = await fetch(`/tenants/${tenantPk}/media/relocate/${relId}/status/`);
+      const j = await res.json();
+      if (!j.ok) return;
+      document.getElementById('rel-status').textContent = j.status + (j.cancel_requested ? ' (cancelling…)' : '');
+      document.getElementById('rel-pct').textContent = j.progress_pct + '%';
+      document.getElementById('rel-bar').style.width = j.progress_pct + '%';
+      document.getElementById('rel-files').textContent = j.files_copied;
+      document.getElementById('rel-bytes').textContent = j.bytes_copied;
+      if (!j.tenant_relocating) {
+        // Done — reload to refresh the whole card
+        setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
+    } catch (e) { /* keep polling */ }
+    setTimeout(poll, 2000);
+  }
+  poll();
+
+  document.getElementById('rel-cancel-btn')?.addEventListener('click', async () => {
+    if (!confirm('Request graceful cancel? Partial copies at the target will be deleted.')) return;
+    await fetch(`/tenants/${tenantPk}/media/relocate/${relId}/cancel/`, {
+      method: 'POST', headers: { 'X-CSRFToken': csrf },
+    });
+  });
+  document.getElementById('rel-force-btn')?.addEventListener('click', async () => {
+    if (!confirm('FORCE-CANCEL: kills the Celery task immediately. Target directory may be left in a partial state — you will need to clean it up manually. Proceed?')) return;
+    const r = await fetch(`/tenants/${tenantPk}/media/relocate/${relId}/force-cancel/`, {
+      method: 'POST', headers: { 'X-CSRFToken': csrf },
+    });
+    const j = await r.json();
+    alert(j.message || (j.ok ? 'Force-cancelled.' : (j.error || 'Failed')));
+    window.location.reload();
+  });
+})();
+</script>
+
 <!-- Active subscriptions & credit packs -->
 {% if active_storage_addons or active_credit_packs %}
 <div class="card" style="margin-bottom:16px;">

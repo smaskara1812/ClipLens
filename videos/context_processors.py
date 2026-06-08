@@ -101,7 +101,7 @@ def tenant_usage_warning(request):
             return {'usage_warning': None, 'usage_warning_detail': None}
 
         # Live disk usage — matches admin platform + org usage page
-        storage_gb = _disk_usage_bytes(tenant.media_folder) / 1024**3
+        storage_gb = _disk_usage_bytes(tenant) / 1024**3  # tenant-aware (honours media_root_absolute)
 
         # Check both resources; surface the most severe
         ai_level      = usage_warning_level(usage['ai_minutes'], plan.ai_minutes_limit)

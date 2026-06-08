@@ -19,3 +19,17 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Auto-discover tasks in all INSTALLED_APPS
 app.autodiscover_tasks()
+
+
+# ── Beat schedule ────────────────────────────────────────────────────────────
+# Run only if a celery-beat process is started (e.g. `celery -A cliplens beat`).
+from celery.schedules import crontab   # noqa: E402
+
+app.conf.beat_schedule = {
+    # Phase 7: purge soft-deleted media dirs once their grace period expires.
+    # Runs daily at 03:17 UTC (off-peak).
+    'purge-expired-media-relocations': {
+        'task':     'tenants.purge_expired_media_relocations',
+        'schedule': crontab(hour=3, minute=17),
+    },
+}

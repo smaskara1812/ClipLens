@@ -1434,38 +1434,39 @@ def _cleanup_video_files_on_delete(sender, instance, **kwargs):
     command.  The view-level cleanup is kept for symmetry but this is the safety net.
     """
     import shutil as _shutil
-    from django.conf import settings as _settings
     from pathlib import Path as _Path
+    # Tenant-aware: honours per-tenant custom media_root_absolute
+    from tenants.storage import get_media_root as _gmr, from_storage_path as _fsp
 
-    media = _Path(_settings.MEDIA_ROOT)
+    tenant_media = _Path(_gmr())
 
     # 1. HLS segments directory
     if instance.hls_path:
-        hls_dir = media / 'hls' / str(instance.id)
+        hls_dir = tenant_media / 'hls' / str(instance.id)
         if hls_dir.exists():
             try:
                 _shutil.rmtree(hls_dir)
             except Exception:
                 pass
 
-    # 2. Original uploaded file
+    # 2. Original uploaded file (FileField — use .path which is storage-aware)
     if instance.original_file:
         try:
-            orig = media / instance.original_file.name
+            orig = _Path(instance.original_file.path)
             if orig.exists():
                 orig.unlink()
         except Exception:
             pass
 
-    # 3. Upscaled MP4 files (media/upscaled/<video_id>/)
-    upscale_dir = media / 'upscaled' / str(instance.id)
+    # 3. Upscaled MP4 files (<tenant_root>/upscaled/<video_id>/)
+    upscale_dir = tenant_media / 'upscaled' / str(instance.id)
     if upscale_dir.exists():
         try:
             _shutil.rmtree(upscale_dir)
         except Exception:
             pass
 
-    # 4. Thumbnail
+    # 4. Thumbnail (ImageField — .path is storage-aware)
     if instance.thumbnail:
         try:
             thumb = _Path(instance.thumbnail.path)
@@ -1474,9 +1475,9 @@ def _cleanup_video_files_on_delete(sender, instance, **kwargs):
         except Exception:
             pass
 
-    # 5. Seek sprite
+    # 5. Seek sprite (CharField in storage-form "tenants/<slug>/...")
     if instance.seek_sprite:
-        seek_path = media / instance.seek_sprite
+        seek_path = _fsp(instance.seek_sprite)
         if seek_path.exists():
             try:
                 seek_path.unlink()

@@ -49,16 +49,27 @@ def platform_owner_required(view_func):
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
-def _disk_usage_bytes(media_folder: str) -> int:
+def _disk_usage_bytes(media_folder_or_tenant) -> int:
     """
     Walk the tenant's media directory and return actual bytes on disk.
     This is more accurate than summing storage_delta events because it
     includes HLS segments, thumbnails, face crops, captions, etc. that
     Celery generates after the original upload.
+
+    Accepts either a Tenant instance (preferred — honours media_root_absolute)
+    or a raw media_folder string (legacy callers).
     """
     from pathlib import Path
     from django.conf import settings
-    path = Path(settings.MEDIA_ROOT) / media_folder
+
+    # Resolve to an absolute path
+    if hasattr(media_folder_or_tenant, 'media_folder'):
+        tenant = media_folder_or_tenant
+        custom = (getattr(tenant, 'media_root_absolute', '') or '').strip()
+        path = Path(custom) if custom else Path(settings.MEDIA_ROOT) / tenant.media_folder
+    else:
+        path = Path(settings.MEDIA_ROOT) / media_folder_or_tenant
+
     if not path.exists():
         return 0
     try:
@@ -123,7 +134,7 @@ def dashboard(request):
             event_type=UsageEvent.TYPE_STORAGE_DELTA
         ).aggregate(total=Sum('value'))['total'] or 0
 
-        storage_bytes = _disk_usage_bytes(t.media_folder)
+        storage_bytes = _disk_usage_bytes(t)
 
         counts = _tenant_content_counts(t.db_name)
         total_users  += counts['user_count']
@@ -212,7 +223,7 @@ def tenant_detail(request, tenant_id):
         'ai_minutes': round(events_this_month.exclude(
             event_type=UsageEvent.TYPE_STORAGE_DELTA
         ).aggregate(total=Sum('value'))['total'] or 0, 1),
-        'storage_gb':              round(_disk_usage_bytes(tenant.media_folder) / 1024**3, 2),
+        'storage_gb':              round(_disk_usage_bytes(tenant) / 1024**3, 2),
         'credit_minutes':          round(credits_minutes, 1),
         'addon_storage_gb':        addon_storage,
         'ai_minutes_effective':    (tenant.plan.ai_minutes_limit if tenant.plan else 0) + credits_minutes,
@@ -260,6 +271,23 @@ def tenant_detail(request, tenant_id):
 
     plans = Plan.objects.using('control').all()
 
+    # ── Media relocation status (Phase 7) ─────────────────────────────────────
+    from .models import MediaRelocation as _MR
+    from .media_relocate import _current_media_path as _cmp
+    current_media_path = _cmp(tenant)
+    active_relocation = (
+        _MR.objects.using('control')
+        .filter(tenant=tenant,
+                status__in=[_MR.STATUS_QUEUED, _MR.STATUS_RUNNING, _MR.STATUS_VERIFYING])
+        .order_by('-queued_at').first()
+    )
+    last_relocation = (
+        _MR.objects.using('control').filter(tenant=tenant).order_by('-queued_at').first()
+    )
+    recent_relocations = list(
+        _MR.objects.using('control').filter(tenant=tenant).order_by('-queued_at')[:5]
+    )
+
     # Pending invite (if onboarding not yet completed)
     invite = OnboardingInvite.objects.using('control').filter(
         tenant=tenant, consumed_at__isnull=True
@@ -277,6 +305,10 @@ def tenant_detail(request, tenant_id):
         'onboard_url':           onboard_url,
         'active_storage_addons': active_storage_addons,
         'active_credit_packs':   active_credit_packs,
+        'current_media_path':    current_media_path,
+        'active_relocation':     active_relocation,
+        'last_relocation':       last_relocation,
+        'recent_relocations':    recent_relocations,
         **counts,
     })
 
@@ -293,10 +325,33 @@ def create_tenant(request):
     name           = request.POST.get('name', '').strip()
     admin_email    = request.POST.get('admin_email', '').strip()
     admin_username = request.POST.get('admin_username', '').strip()
+    media_root_abs = request.POST.get('media_root_absolute', '').strip()
 
     if not all([slug, name, admin_email, admin_username]):
         messages.error(request, "All fields are required.")
         return redirect('tenants:create_tenant')
+
+    # ── Validate custom media path (if provided) before provisioning ──────
+    if media_root_abs:
+        import os as _os
+        from .media_relocate import _path_writable as _pw
+        if not _os.path.isabs(media_root_abs):
+            messages.error(request, f"Custom media path must be absolute: {media_root_abs}")
+            return redirect('tenants:create_tenant')
+        parent = _os.path.dirname(media_root_abs)
+        if not _os.path.isdir(parent):
+            messages.error(request, f"Parent directory does not exist: {parent}")
+            return redirect('tenants:create_tenant')
+        if _os.path.exists(media_root_abs) and not _os.path.isdir(media_root_abs):
+            messages.error(request, f"Path exists but is not a directory: {media_root_abs}")
+            return redirect('tenants:create_tenant')
+        if _os.path.isdir(media_root_abs) and any(_os.scandir(media_root_abs)):
+            messages.error(request, f"Target directory is not empty: {media_root_abs}")
+            return redirect('tenants:create_tenant')
+        if not _pw(media_root_abs):
+            messages.error(request,
+                f"Custom media path is not writable by the running user: {media_root_abs}")
+            return redirect('tenants:create_tenant')
 
     result = provision_tenant_with_invite(
         slug=slug,
@@ -304,6 +359,12 @@ def create_tenant(request):
         admin_email=admin_email,
         admin_username=admin_username,
     )
+
+    # If provisioning succeeded and a custom path was set, write it on the tenant
+    if result.get('success') and media_root_abs:
+        Tenant.objects.using('control').filter(pk=result['tenant_id']).update(
+            media_root_absolute=media_root_abs
+        )
 
     if result['success']:
         # Build the onboarding URL the admin will use
@@ -1481,3 +1542,182 @@ def api_usage(request, tenant_id):
     )
 
     return JsonResponse({'usage': list(daily), 'tenant': tenant.name})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Per-tenant media relocation (Phase 7)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from .models import MediaRelocation
+from .media_relocate import preflight, RelocateError, _current_media_path, purge_soft_deleted
+from .tasks import relocate_tenant_media
+
+
+@platform_owner_required
+@require_POST
+def tenant_media_relocate_queue(request, tenant_id):
+    """
+    Pre-flight + enqueue a relocation. Returns JSON {ok, relocation_id?, error?}.
+    Sets tenant.media_relocating=True before dispatch so the maintenance page
+    kicks in immediately.
+    """
+    tenant = get_object_or_404(Tenant.objects.using('control'), pk=tenant_id)
+
+    if tenant.media_relocating:
+        return JsonResponse({'ok': False, 'error': 'A relocation is already in progress.'}, status=409)
+
+    target = (request.POST.get('target') or '').strip()
+    try:
+        stats = preflight(tenant, target)
+    except RelocateError as exc:
+        return JsonResponse({'ok': False, 'error': str(exc)}, status=400)
+
+    # Create audit-log row
+    rel = MediaRelocation.objects.using('control').create(
+        tenant=tenant,
+        source_path=stats['source'],
+        target_path=stats['target'],
+        status=MediaRelocation.STATUS_QUEUED,
+        total_bytes=stats['source_size'],
+        total_files=stats['source_files'],
+        initiated_by_username=request.user.username,
+    )
+
+    # Flip tenant flag BEFORE dispatch so the maintenance page is active immediately
+    from django.utils import timezone
+    Tenant.objects.using('control').filter(pk=tenant.pk).update(
+        media_relocating=True,
+        media_relocation_started_at=timezone.now(),
+        media_relocation_cancel_requested=False,
+    )
+
+    # Dispatch the Celery task
+    try:
+        async_result = relocate_tenant_media.apply_async(args=[rel.pk], queue='default')
+        rel.celery_task_id = async_result.id or ''
+        rel.save(using='control', update_fields=['celery_task_id'])
+        Tenant.objects.using('control').filter(pk=tenant.pk).update(
+            media_relocation_task_id=async_result.id or ''
+        )
+    except Exception as exc:
+        logger.exception('tenant_media_relocate_queue: dispatch failed')
+        # Roll back tenant flag
+        Tenant.objects.using('control').filter(pk=tenant.pk).update(
+            media_relocating=False,
+            media_relocation_started_at=None,
+        )
+        rel.status = MediaRelocation.STATUS_FAILED
+        rel.error_message = f'Dispatch failed: {exc}'
+        rel.save(using='control', update_fields=['status', 'error_message'])
+        return JsonResponse({'ok': False, 'error': f'Could not dispatch Celery task: {exc}'}, status=500)
+
+    return JsonResponse({
+        'ok':            True,
+        'relocation_id': rel.pk,
+        'total_bytes':   stats['source_size'],
+        'total_files':   stats['source_files'],
+    })
+
+
+@platform_owner_required
+def tenant_media_relocate_status(request, tenant_id, relocation_id):
+    """JSON polling endpoint for the UI progress bar."""
+    rel = get_object_or_404(
+        MediaRelocation.objects.using('control').select_related('tenant'),
+        pk=relocation_id, tenant_id=tenant_id,
+    )
+    return JsonResponse({
+        'ok':                True,
+        'status':            rel.status,
+        'progress_pct':      rel.progress_pct,
+        'bytes_copied':      rel.bytes_copied,
+        'total_bytes':       rel.total_bytes,
+        'files_copied':      rel.files_copied,
+        'total_files':       rel.total_files,
+        'error_message':     rel.error_message,
+        'queued_at':         rel.queued_at.isoformat() if rel.queued_at else None,
+        'started_at':        rel.started_at.isoformat() if rel.started_at else None,
+        'finished_at':       rel.finished_at.isoformat() if rel.finished_at else None,
+        'cancel_requested':  rel.tenant.media_relocation_cancel_requested,
+        'tenant_relocating': rel.tenant.media_relocating,
+        'grace_until':       rel.grace_period_until.isoformat() if rel.grace_period_until else None,
+        'soft_deleted_path': rel.old_path_soft_deleted,
+    })
+
+
+@platform_owner_required
+@require_POST
+def tenant_media_relocate_cancel(request, tenant_id, relocation_id):
+    """
+    Graceful cancel — sets tenant.media_relocation_cancel_requested=True.
+    The running Celery task will notice between files, abort, and clean up.
+    """
+    rel = get_object_or_404(
+        MediaRelocation.objects.using('control'),
+        pk=relocation_id, tenant_id=tenant_id,
+    )
+    if rel.status not in (MediaRelocation.STATUS_QUEUED,
+                          MediaRelocation.STATUS_RUNNING,
+                          MediaRelocation.STATUS_VERIFYING):
+        return JsonResponse({'ok': False,
+                             'error': f'Cannot cancel a {rel.status} relocation.'}, status=400)
+    Tenant.objects.using('control').filter(pk=tenant_id).update(
+        media_relocation_cancel_requested=True
+    )
+    return JsonResponse({'ok': True, 'message': 'Cancel requested. The task will stop shortly.'})
+
+
+@platform_owner_required
+@require_POST
+def tenant_media_relocate_force_cancel(request, tenant_id, relocation_id):
+    """
+    Override / force-cancel — clears the relocating flag immediately without
+    waiting for the worker. Use this if the Celery task is stuck or the worker
+    is unreachable. Also revokes the Celery task if we can.
+
+    WARNING: leaves the target directory in an indeterminate state. Admin must
+    inspect / clean up manually.
+    """
+    rel = get_object_or_404(
+        MediaRelocation.objects.using('control'),
+        pk=relocation_id, tenant_id=tenant_id,
+    )
+    # Best-effort revoke
+    if rel.celery_task_id:
+        try:
+            from cliplens.celery import app as celery_app
+            celery_app.control.revoke(rel.celery_task_id, terminate=True, signal='SIGKILL')
+        except Exception:
+            logger.exception('force_cancel: celery revoke failed')
+
+    from django.utils import timezone
+    rel.status = MediaRelocation.STATUS_CANCELLED
+    rel.error_message = (rel.error_message or '') + f'\n[force-cancelled by {request.user.username}]'
+    rel.finished_at = timezone.now()
+    rel.save(using='control', update_fields=['status', 'error_message', 'finished_at'])
+
+    Tenant.objects.using('control').filter(pk=tenant_id).update(
+        media_relocating=False,
+        media_relocation_started_at=None,
+        media_relocation_cancel_requested=False,
+        media_relocation_task_id='',
+    )
+    return JsonResponse({
+        'ok': True,
+        'message': 'Force-cancelled. Inspect target path for partial data — it was NOT auto-cleaned.',
+    })
+
+
+@platform_owner_required
+@require_POST
+def tenant_media_relocate_purge(request, tenant_id, relocation_id):
+    """Immediately purge the soft-deleted old data (skip grace period)."""
+    rel = get_object_or_404(
+        MediaRelocation.objects.using('control'),
+        pk=relocation_id, tenant_id=tenant_id,
+    )
+    if rel.status != MediaRelocation.STATUS_SUCCEEDED:
+        return JsonResponse({'ok': False,
+                             'error': 'Can only purge after a successful relocation.'}, status=400)
+    result = purge_soft_deleted(relocation_id)
+    return JsonResponse(result)

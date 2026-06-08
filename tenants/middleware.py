@@ -109,13 +109,50 @@ class TenantMiddleware:
                 content_type='text/html',
             )
 
+        # ── Per-tenant maintenance mode (media relocation in progress) ──────
+        # When the platform admin is moving this tenant's files, block every
+        # request to the tenant subdomain so nothing reads/writes during the
+        # copy. The control plane (admin subdomain) is unaffected because it
+        # never reaches this branch (subdomain == 'admin' returned earlier).
+        if getattr(tenant, 'media_relocating', False):
+            # Allow static + favicon through so the maintenance page renders
+            allowed_during_maintenance = ('/static/', '/favicon.ico')
+            if not any(request.path.startswith(p) for p in allowed_during_maintenance):
+                return HttpResponse(
+                    "<!doctype html><html><head><meta charset='utf-8'>"
+                    "<title>Maintenance — ClipLens</title>"
+                    "<meta http-equiv='refresh' content='30'>"
+                    "<style>body{font-family:system-ui,sans-serif;max-width:560px;"
+                    "margin:80px auto;padding:0 24px;color:#222;line-height:1.5}"
+                    "h1{font-size:24px;margin-bottom:8px}p{color:#555}"
+                    ".badge{display:inline-block;background:#fef3c7;color:#92400e;"
+                    "padding:4px 10px;border-radius:999px;font-size:12px;"
+                    "font-weight:600;margin-bottom:16px}</style></head>"
+                    f"<body><div class='badge'>Scheduled maintenance</div>"
+                    f"<h1>{tenant.name} is temporarily offline</h1>"
+                    "<p>Your platform administrator is migrating media storage "
+                    "to a new location. The application will be back online "
+                    "automatically once the move completes — no action needed.</p>"
+                    "<p style='color:#888;font-size:13px;margin-top:32px'>"
+                    "This page refreshes every 30 seconds.</p></body></html>",
+                    status=503,
+                    content_type='text/html',
+                )
+
         # ── Wire up the tenant DB + media root for this request ──────────────
         request.tenant = tenant
         set_db(tenant.db_name)
-        media_abs = str(
-            (settings.BASE_DIR / 'media' / tenant.media_folder).resolve()
-        )
-        set_media_root(media_abs)
+        # Honour per-tenant custom absolute path if set
+        if getattr(tenant, 'media_root_absolute', '').strip():
+            media_abs = tenant.media_root_absolute.strip()
+        else:
+            media_abs = str(
+                (settings.BASE_DIR / 'media' / tenant.media_folder).resolve()
+            )
+        # URL prefix is ALWAYS tenants/<slug> regardless of disk location —
+        # the prefix only describes how URLs map to this tenant's bucket.
+        url_prefix = (tenant.media_folder or '').strip('/') or f'tenants/{tenant.slug}'
+        set_media_root(media_abs, url_prefix=url_prefix)
 
         try:
             response = self.get_response(request)

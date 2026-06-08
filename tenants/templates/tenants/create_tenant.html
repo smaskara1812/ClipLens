@@ -41,6 +41,21 @@
       <input type="email" name="admin_email" id="admin_email" placeholder="admin@acmecorp.com" required>
     </div>
 
+    <div class="form-group">
+      <label for="media_root_absolute">
+        Custom media storage path
+        <span style="color:#8b949e; font-weight:normal; font-size:11px;">(optional)</span>
+      </label>
+      <input type="text" name="media_root_absolute" id="media_root_absolute"
+             placeholder="/mnt/nas/cliplens/acme  (leave blank for default)">
+      <small style="display:block; margin-top:4px; color:#8b949e; font-size:11px;">
+        Absolute path where this org's videos/photos will live.
+        Must already exist (empty), be writable, and be mounted at the OS level.
+        Leave blank to store under <code>{{ "" }}MEDIA_ROOT/tenants/&lt;slug&gt;/</code> (default).
+        You can change this later from the tenant detail page — the system will migrate existing data.
+      </small>
+    </div>
+
     <div style="display:flex; gap:10px; margin-top:24px; align-items:center;">
       <button type="submit" class="btn btn-primary" id="submit-btn">
         Provision &amp; Generate Invite

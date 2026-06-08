@@ -132,3 +132,30 @@ def queue_email(
             trigger_source=trigger_source, triggered_by_username=triggered_by_username,
             template_key=template_key,
         )
+
+
+# ── Per-tenant media relocation (Phase 7) ────────────────────────────────────
+
+@shared_task(
+    name='tenants.relocate_tenant_media',
+    bind=True,
+    queue='default',
+    acks_late=True,
+    max_retries=0,    # never auto-retry — operator-initiated
+)
+def relocate_tenant_media(self, relocation_id):
+    """Run a single tenant-media relocation. See media_relocate.run_relocation."""
+    from .media_relocate import run_relocation
+    return run_relocation(relocation_id)
+
+
+@shared_task(
+    name='tenants.purge_expired_media_relocations',
+    queue='default',
+)
+def purge_expired_media_relocations():
+    """Daily cleanup — drops soft-deleted old paths past their grace period."""
+    from .media_relocate import purge_expired
+    n = purge_expired()
+    logger.info('purge_expired_media_relocations: purged %d', n)
+    return {'ok': True, 'purged': n}

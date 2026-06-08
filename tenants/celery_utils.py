@@ -78,8 +78,14 @@ def setup_tenant_context(tenant_slug: str) -> None:
         _register_db_alias(tenant.db_name)
         set_db(tenant.db_name)
 
-        media_abs = str((Path(settings.MEDIA_ROOT) / tenant.media_folder).resolve())
-        set_media_root(media_abs)
+        # Honour per-tenant custom absolute path if set
+        if getattr(tenant, 'media_root_absolute', '').strip():
+            media_abs = tenant.media_root_absolute.strip()
+        else:
+            media_abs = str((Path(settings.MEDIA_ROOT) / tenant.media_folder).resolve())
+        # URL prefix is ALWAYS tenants/<slug> regardless of disk location.
+        url_prefix = (tenant.media_folder or '').strip('/') or f'tenants/{tenant.slug}'
+        set_media_root(media_abs, url_prefix=url_prefix)
 
         logger.debug("Celery tenant context set: slug=%s db=%s", tenant_slug, tenant.db_name)
     except Exception:

@@ -56,6 +56,28 @@ class Tenant(models.Model):
     name = models.CharField(max_length=200)
     db_name = models.CharField(max_length=100, unique=True)
     media_folder = models.CharField(max_length=200)  # e.g. "tenants/orga/"
+
+    # ── Custom media storage (optional) ──────────────────────────────────
+    # When empty: this tenant's media lives at MEDIA_ROOT/<media_folder>/.
+    # When set: an absolute filesystem path on the host (must be mounted
+    # and writable by the running user). Allows per-tenant data placement
+    # on different volumes / NFS / S3-fuse / etc.
+    media_root_absolute = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text='Optional absolute path for this tenant\'s media. '
+                  'Must be already mounted and writable. Leave blank for default.',
+    )
+
+    # Lifecycle flags for media relocation
+    media_relocating = models.BooleanField(
+        default=False,
+        help_text='True while a media-relocation Celery task is running. '
+                  'Blocks tenant access via maintenance page.',
+    )
+    media_relocation_started_at = models.DateTimeField(null=True, blank=True)
+    media_relocation_cancel_requested = models.BooleanField(default=False)
+    media_relocation_task_id = models.CharField(max_length=64, blank=True, default='')
+
     plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name='tenants',
                              null=True, blank=True,
                              help_text="Chosen by org admin during onboarding")
@@ -718,3 +740,68 @@ class TeamMemberInvite(models.Model):
     def is_valid(self) -> bool:
         from django.utils import timezone
         return (self.consumed_at is None) and (self.expires_at > timezone.now())
+
+
+class MediaRelocation(models.Model):
+    """
+    Audit log of every per-tenant media relocation attempt.
+    One row per attempted move, tracking start/end timestamps + outcome.
+    """
+    STATUS_QUEUED      = 'queued'
+    STATUS_RUNNING     = 'running'
+    STATUS_VERIFYING   = 'verifying'
+    STATUS_SUCCEEDED   = 'succeeded'
+    STATUS_FAILED      = 'failed'
+    STATUS_CANCELLED   = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_QUEUED,    'Queued'),
+        (STATUS_RUNNING,   'Running'),
+        (STATUS_VERIFYING, 'Verifying'),
+        (STATUS_SUCCEEDED, 'Succeeded'),
+        (STATUS_FAILED,    'Failed'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    tenant         = models.ForeignKey(Tenant, on_delete=models.CASCADE,
+                                       related_name='media_relocations')
+    source_path    = models.CharField(max_length=600)
+    target_path    = models.CharField(max_length=600)
+    status         = models.CharField(max_length=20, choices=STATUS_CHOICES,
+                                      default=STATUS_QUEUED, db_index=True)
+
+    # Counters updated as the task progresses (UI polls these)
+    total_bytes        = models.BigIntegerField(default=0)
+    bytes_copied       = models.BigIntegerField(default=0)
+    total_files        = models.PositiveIntegerField(default=0)
+    files_copied       = models.PositiveIntegerField(default=0)
+
+    # When the soft-deleted "<old>.delete_after_<ts>" path will be auto-purged
+    old_path_soft_deleted = models.CharField(max_length=600, blank=True, default='',
+                              help_text='Where the old data is parked until grace period expires')
+    grace_period_until    = models.DateTimeField(null=True, blank=True)
+    purged_at             = models.DateTimeField(null=True, blank=True)
+
+    initiated_by_username = models.CharField(max_length=150, blank=True)
+    celery_task_id        = models.CharField(max_length=64, blank=True, default='')
+    error_message         = models.TextField(blank=True)
+
+    queued_at     = models.DateTimeField(auto_now_add=True)
+    started_at    = models.DateTimeField(null=True, blank=True)
+    finished_at   = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = 'tenants'
+        ordering = ['-queued_at']
+        indexes = [
+            models.Index(fields=['tenant', '-queued_at']),
+            models.Index(fields=['status', '-queued_at']),
+        ]
+
+    def __str__(self):
+        return f'#{self.pk} {self.tenant.slug}: {self.source_path} → {self.target_path} [{self.status}]'
+
+    @property
+    def progress_pct(self) -> float:
+        if self.total_bytes <= 0:
+            return 0.0
+        return min(100.0, round(self.bytes_copied * 100 / self.total_bytes, 1))
