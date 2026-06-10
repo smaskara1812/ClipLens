@@ -100,6 +100,65 @@ def drain_credit_packs(tenant, minutes_to_drain: float) -> float:
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
+def _check_and_fire_quota_warnings(tenant_slug: str) -> None:
+    """
+    Compute current usage vs effective plan limits (plan + addons + credits).
+    If a threshold (80% or 95%) was crossed by the most recent event, dispatch
+    a notification to org admins. Dedupe happens at the notification layer.
+
+    Designed to be called AFTER a UsageEvent is written — cheap, ~2 queries.
+    Failures are logged but never raised — metering must not break.
+    """
+    try:
+        usage = get_monthly_usage(tenant_slug)
+    except Exception:
+        logger.exception('quota check: get_monthly_usage failed for %s', tenant_slug)
+        return
+
+    plan = usage.get('plan')
+    if not plan:
+        return
+
+    # AI minutes
+    ai_used  = usage.get('ai_minutes', 0) or 0
+    ai_limit = (plan.ai_minutes_limit or 0) + (usage.get('credit_minutes', 0) or 0)
+    if ai_limit > 0:
+        pct = (ai_used / ai_limit) * 100
+        _maybe_notify_quota(tenant_slug, 'AI processing minutes',
+                            pct, ai_used, ai_limit, unit='min')
+
+    # Storage
+    st_used  = usage.get('storage_gb', 0) or 0
+    st_limit = (plan.storage_limit_gb or 0) + (usage.get('addon_storage_gb', 0) or 0)
+    if st_limit > 0:
+        pct = (st_used / st_limit) * 100
+        _maybe_notify_quota(tenant_slug, 'Storage',
+                            pct, st_used, st_limit, unit='GB')
+
+
+def _maybe_notify_quota(tenant_slug: str, resource: str,
+                        pct: float, used: float, limit: float, unit: str) -> None:
+    """Fire 95% notification if pct >= 95, else 80% if pct >= 80. Dedupe is in dispatch."""
+    if pct < 80:
+        return
+    try:
+        # Import inside the function — videos.notifications lives in the tenant
+        # app; calling out from metering needs the tenant DB context to be live,
+        # which it is when this is called from log_ai_minutes / log_storage_delta
+        # under the Celery task_postrun signal.
+        from videos.notifications import notify_quota_warning
+        notify_quota_warning(
+            tenant_slug=tenant_slug,
+            resource=resource,
+            pct=pct,
+            used=used,
+            limit=limit,
+            unit=unit,
+        )
+    except Exception:
+        logger.exception('quota notify failed for %s / %s', tenant_slug, resource)
+
+
 def log_ai_minutes(tenant_slug: str, minutes: float,
                    event_type: str = 'video_processing',
                    task_id: str = '') -> None:
@@ -158,6 +217,9 @@ def log_ai_minutes(tenant_slug: str, minutes: float,
                 "(overage=%.2f, drained=%.2f)", tenant_slug, new_drain, drained
             )
 
+    # Check 80% / 95% thresholds and notify org admins if crossed
+    _check_and_fire_quota_warnings(tenant_slug)
+
 
 def log_storage_delta(tenant_slug: str, bytes_delta: int) -> None:
     """Log storage change (positive = added, negative = freed) in bytes."""
@@ -170,6 +232,9 @@ def log_storage_delta(tenant_slug: str, bytes_delta: int) -> None:
         event_type=UsageEvent.TYPE_STORAGE_DELTA,
         value=float(bytes_delta),
     )
+    # Only fire on additions (no point alerting when storage is freed)
+    if bytes_delta > 0:
+        _check_and_fire_quota_warnings(tenant_slug)
 
 
 # ── Quota checking ─────────────────────────────────────────────────────────────

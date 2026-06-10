@@ -48,6 +48,12 @@ urlpatterns = [
     path('api/videos/<uuid:video_id>/download-redacted/<int:render_id>/', views.video_download_redacted, name='video_download_redacted'),
     path('api/redaction-renders/<int:render_id>/',                  views.video_redaction_render_detail, name='video_redaction_render_detail'),
     path('api/redactions/<int:redaction_id>/',                      views.video_redaction_detail,      name='video_redaction_detail'),
+    # Photo redactions (Phase 4)
+    path('api/photos/<uuid:photo_id>/redactions/',                  views.photo_redactions_api,          name='photo_redactions_api'),
+    path('api/photos/<uuid:photo_id>/redactions/render/',           views.photo_redaction_render,        name='photo_redaction_render'),
+    path('api/photos/<uuid:photo_id>/redactions/render/<int:render_id>/status/',
+         views.photo_redaction_render_status, name='photo_redaction_render_status'),
+    path('api/photo-redactions/<int:redaction_id>/',                views.photo_redaction_detail,        name='photo_redaction_detail'),
     path('admin-panel/encoding/',    views.org_encoding_settings,   name='org_encoding_settings'),
     path('api/videos/<uuid:video_id>/encode-quality/', views.video_encode_quality),
     path('api/videos/<uuid:video_id>/qualities/',      views.video_qualities_status),
@@ -206,8 +212,11 @@ urlpatterns = [
     path('api/playlists/<uuid:playlist_id>/videos/<uuid:video_id>/', views.playlist_video),
 
     # ── API: Notifications ──
-    path('api/notifications/',       views.notification_list),
-    path('api/notifications/read/',  views.mark_notifications_read),
+    path('api/notifications/',                       views.notification_list),
+    path('api/notifications/unread-count/',          views.notification_unread_count),
+    path('api/notifications/read/',                  views.mark_notifications_read),
+    path('api/notifications/<int:notif_id>/read/',   views.mark_notification_read),
+    path('api/notifications/preferences/',           views.notification_preferences_api),
 
     # ── API: Admin ──
     path('api/admin/users/',                          views.user_management_api),

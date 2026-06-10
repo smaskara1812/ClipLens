@@ -167,6 +167,134 @@ def _create_voice_redactions_for_video(policy, video):
 
 # ── Public: apply ────────────────────────────────────────────────────────────
 
+def _create_face_redactions_for_photo(policy, photo, padding_pct=0.20):
+    """
+    Photo equivalent of _create_face_redactions_for_video.
+    One Redaction per DetectedFace of the policy's identity in the photo.
+    Photos have no time dimension so we just store bbox.
+    """
+    from .models import Redaction, DetectedFace
+    import json as _json
+
+    if not policy.target_face_identity_id:
+        return []
+    db_alias = photo._state.db or 'default'
+    detections = list(
+        DetectedFace.objects.using(db_alias)
+        .filter(photo=photo, identity_id=policy.target_face_identity_id)
+        .values('bbox')
+    )
+    if not detections:
+        return []
+
+    pw, ph = max(1, photo.width or 0), max(1, photo.height or 0)
+    if pw <= 1 or ph <= 1:
+        # Fall back to whole-frame if we don't know dimensions yet
+        from PIL import Image as _PI
+        try:
+            with _PI.open(photo.file.path) as im:
+                pw, ph = im.size
+        except Exception:
+            pw, ph = 1, 1
+
+    to_create = []
+    now = timezone.now()
+    for d in detections:
+        try:
+            box = _json.loads(d['bbox']) if isinstance(d['bbox'], str) else d['bbox']
+            x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+        except Exception:
+            continue
+        w = max(0, x2 - x1)
+        h = max(0, y2 - y1)
+        pad_x, pad_y = w * padding_pct, h * padding_pct
+        x1 = max(0, x1 - pad_x); x2 = min(pw, x2 + pad_x)
+        y1 = max(0, y1 - pad_y); y2 = min(ph, y2 + pad_y)
+        bw = (x2 - x1) / pw
+        bh = (y2 - y1) / ph
+        if bw <= 0 or bh <= 0:
+            continue
+        to_create.append(Redaction(
+            photo=photo,
+            target_type=Redaction.TARGET_FACE,
+            target_face_identity_id=policy.target_face_identity_id,
+            method=policy.visual_method or 'black_box',
+            severity=policy.visual_severity or 'heavy',
+            time_start_s=0, time_end_s=0,   # N/A for photos
+            spatial_mode=Redaction.SPATIAL_FIXED_BOX,
+            bbox_x=x1 / pw, bbox_y=y1 / ph, bbox_w=bw, bbox_h=bh,
+            source=Redaction.SOURCE_POLICY,
+            label=f'{policy.target_label} (policy)',
+            applied_by_policy_id=policy.pk,
+            is_saved=True,
+            saved_at=now,
+            created_by_username=policy.created_by_username or '',
+        ))
+    if to_create:
+        created = Redaction.objects.using(db_alias).bulk_create(to_create)
+        logger.info('policy %s: created %d face redactions on photo %s',
+                    policy.pk, len(created), photo.pk)
+        return list(Redaction.objects.using(db_alias).filter(
+            applied_by_policy_id=policy.pk, photo=photo))
+    return []
+
+
+def apply_policy_to_photo(policy, photo, *, tenant_slug=''):
+    """
+    Apply one policy to one photo. Photos only support face-target redaction
+    (no audio/transcript dimension). Idempotent — re-applying is a no-op.
+    """
+    from .models import Redaction
+    db_alias = photo._state.db or 'default'
+
+    if policy.target_type != 'face':
+        return {'skipped': True, 'reason': 'photo_supports_face_only'}
+
+    existing = Redaction.objects.using(db_alias).filter(
+        photo=photo, applied_by_policy_id=policy.pk).exists()
+    if existing:
+        return {'skipped': True, 'reason': 'already_applied'}
+
+    rdx = _create_face_redactions_for_photo(policy, photo)
+    return {
+        'created': len(rdx),
+        'reason': 'no_matches' if not rdx else 'applied',
+    }
+
+
+def apply_active_policies_to_photo(photo, *, tenant_slug=''):
+    """
+    Called after analyze_photo_task finishes. Apply every active face policy
+    whose target identity appears in this photo.
+    """
+    from .models import RedactionPolicy, DetectedFace
+    db_alias = photo._state.db or 'default'
+
+    identity_ids = set(
+        DetectedFace.objects.using(db_alias)
+        .filter(photo=photo, identity__isnull=False)
+        .values_list('identity_id', flat=True)
+    )
+    if not identity_ids:
+        return {'applied': 0}
+
+    policies = RedactionPolicy.objects.using(db_alias).filter(
+        active=True,
+        apply_to_future=True,
+        target_type='face',
+        target_face_identity_id__in=identity_ids,
+    )
+    total = 0
+    for p in policies:
+        try:
+            res = apply_policy_to_photo(p, photo, tenant_slug=tenant_slug)
+            if res.get('created'):
+                total += res['created']
+        except Exception:
+            logger.exception('apply_active_policies_to_photo: policy %s failed', p.pk)
+    return {'applied': total, 'policies_considered': policies.count()}
+
+
 def apply_policy_to_video(policy, video, *, tenant_slug=''):
     """
     Apply one policy to one video. Creates saved Redactions, runs scrub,
@@ -244,44 +372,59 @@ def apply_policy_to_video(policy, video, *, tenant_slug=''):
 
 def apply_policy_to_existing(policy, *, tenant_slug=''):
     """
-    Walk every video in this tenant and apply the policy where matches exist.
-    Updates policy stats. Returns aggregate summary.
+    Walk every video AND photo in this tenant and apply the policy where
+    matches exist. Updates policy stats. Returns aggregate summary.
     """
-    from .models import Video, DetectedFace, VideoSegment
-    # Figure out which DB we're in via the policy itself (loaded from tenant DB)
+    from .models import Video, Photo, DetectedFace, VideoSegment
     db_alias = policy._state.db or 'default'
 
     # Find candidate videos
     if policy.target_type == 'face' and policy.target_face_identity_id:
         video_ids = list(DetectedFace.objects.using(db_alias)
-                         .filter(identity_id=policy.target_face_identity_id)
+                         .filter(identity_id=policy.target_face_identity_id,
+                                 video__isnull=False)
                          .values_list('video_id', flat=True).distinct())
+        photo_ids = list(DetectedFace.objects.using(db_alias)
+                         .filter(identity_id=policy.target_face_identity_id,
+                                 photo__isnull=False)
+                         .values_list('photo_id', flat=True).distinct())
     elif policy.target_type == 'voice' and policy.target_speaker_identity_id:
         video_ids = list(VideoSegment.objects.using(db_alias)
                          .filter(speaker_identity_id=policy.target_speaker_identity_id)
                          .values_list('video_id', flat=True).distinct())
+        photo_ids = []   # voice policies don't apply to photos
     else:
         video_ids = []
+        photo_ids = []
 
     videos = list(Video.objects.using(db_alias).filter(id__in=video_ids))
+    photos = list(Photo.objects.using(db_alias).filter(id__in=photo_ids))
     total_created = 0
-    affected = 0
+    affected_videos = 0
+    affected_photos = 0
     for v in videos:
         res = apply_policy_to_video(policy, v, tenant_slug=tenant_slug)
         if res.get('created'):
             total_created += res['created']
-            affected += 1
+            affected_videos += 1
+    for p in photos:
+        res = apply_policy_to_photo(policy, p, tenant_slug=tenant_slug)
+        if res.get('created'):
+            total_created += res['created']
+            affected_photos += 1
 
     policy.last_applied_at = timezone.now()
-    policy.affected_videos_count = (policy.affected_videos_count or 0) + affected
+    policy.affected_videos_count = (policy.affected_videos_count or 0) + affected_videos + affected_photos
     policy.auto_created_redactions = (policy.auto_created_redactions or 0) + total_created
     policy.save(using=db_alias, update_fields=[
         'last_applied_at', 'affected_videos_count', 'auto_created_redactions',
     ])
     return {
-        'videos_affected': affected,
+        'videos_affected': affected_videos,
+        'photos_affected': affected_photos,
         'redactions_created': total_created,
         'candidate_videos': len(videos),
+        'candidate_photos': len(photos),
     }
 
 

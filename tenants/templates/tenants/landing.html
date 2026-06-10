@@ -1264,12 +1264,12 @@
     <div class="redact-grid">
       <div class="redact-copy">
         <div class="eyebrow">Privacy + compliance</div>
-        <h2>Redact faces, voices, and transcripts — without re-encoding</h2>
+        <h2>Redact faces, voices, and transcripts — easily</h2>
         <p>
           Mark a person, a clip, or a phrase and ClipLens applies the redaction
-          live in the player. Visual blur, audio mute, and transcript scrubbing
+          live in the player. Visual block, audio mute, and transcript scrubbing
           happen at playback time — your originals stay untouched until you
-          choose to bake a permanent copy.
+          choose to bake redactions into a permanent copy.
         </p>
         <p>
           Library-wide <strong>redaction policies</strong> auto-apply to every new
@@ -1279,8 +1279,8 @@
         <ul class="redact-list">
           <li>Per-face, per-segment, or whole-video scope</li>
           <li>Reversible redactions for internal staff, baked-in renders for external shares</li>
-          <li>One-click GDPR forget-person: nukes embeddings, crops, and transcript mentions</li>
-          <li>Every redaction action lands in the tenant's audit log</li>
+          <li>One-click GDPR forget-person: Nukes data from the database, faces stored, and transcript mentions</li>
+          <li>Every redaction action lands in the tenant's audit log for compliance</li>
         </ul>
       </div>
       <div class="redact-visual">
@@ -1289,12 +1289,12 @@
         </div>
         <div class="redact-row">
           <span class="badge">FACE</span>
-          <span class="label">Blur · "Witness A"</span>
+          <span class="label">Block · "Witness A"</span>
           <span class="time">all videos</span>
         </div>
         <div class="redact-row">
           <span class="badge">VOICE</span>
-          <span class="label">Mute · "Witness A"</span>
+          <span class="label">Mute/beep · "Witness A"</span>
           <span class="time">all videos</span>
         </div>
         <div class="redact-row">
@@ -1318,11 +1318,11 @@
   <section id="storage" class="storage-section">
     <div class="storage-head">
       <div class="eyebrow">Storage</div>
-      <h2>Pick where your media lives — change your mind later</h2>
+      <h2>Pick where your media physically resides — change your mind later</h2>
       <p>
         Every tenant gets its own storage root. Start on local disk, move to a
         NAS or a cloud bucket whenever you outgrow it. ClipLens migrates the
-        files with verification, a 24-hour rollback window, and an audit log.
+        files with verification and backups, a 24-hour rollback window, and an audit log.
       </p>
     </div>
     <div class="storage-grid">
@@ -1396,16 +1396,16 @@
       <div class="founder-avatar">SM</div>
       <div class="founder-content">
         <div class="founder-eyebrow">From the founder</div>
-        <h2>Built by someone who needed it.</h2>
+        <h2>Built by</h2>
         <div class="founder-title">Soham Maskara · Founder &amp; Engineer</div>
         <p>
           ClipLens started as an internal tool — I kept watching teams sit on terabytes of valuable
           footage they couldn't actually use, because nobody had time to label or transcribe it.
           Existing media-asset platforms were either built for the broadcast industry of 1998
-          or charged like enterprise databases.
+          or were too expensive for a small team.
         </p>
         <p>
-          So I built a stack that takes the best of open AI research — Whisper, CLIP, InsightFace,
+          So I built a stack that takes the best of open sourced AI research — Whisper, CLIP, InsightFace,
           NLLB — and stitches it into something a small team can deploy in a day. Per-org isolation
           and self-hosting are first-class concerns, because your archive is too sensitive to live
           in someone else's general-purpose vector database.
@@ -1515,7 +1515,7 @@
         <details class="faq-item">
           <summary>I'm worried about GDPR / BIPA — can we disable biometric processing?</summary>
           <div class="faq-body">
-            Yes. Each organisation administrator has a control panel at <code>/admin-panel/ai-features/</code>
+            Yes. Each organisation administrator has a control panel at <code>/ai-features/</code>
             where they can disable face recognition, speaker diarization, or any individual AI feature with a
             single toggle. Disabling stops new processing immediately — existing data is preserved unless you
             explicitly erase it. You can also disable features that aren't biometric (translation, scene

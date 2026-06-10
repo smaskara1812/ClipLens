@@ -225,3 +225,103 @@ def new_render_filename(video_id) -> str:
     ts = int(time.time())
     short = uuid.uuid4().hex[:8]
     return f'redacted/{video_id}__{ts}_{short}.mp4'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Photo redaction (Phase 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _photo_blur_radius(severity: str, max_dim: int) -> int:
+    """Pick a Gaussian blur radius scaled to the image's size + severity."""
+    # Heavier severity = bigger kernel relative to image
+    pct = {'light': 0.015, 'medium': 0.03, 'heavy': 0.06}.get(severity, 0.03)
+    return max(4, int(max_dim * pct))
+
+
+def render_redacted_photo(
+    src_path: str,
+    dst_path: str,
+    redactions,
+    photo_w: int = 0,
+    photo_h: int = 0,
+) -> tuple[bool, str]:
+    """
+    Open a photo with PIL, apply each visual redaction (blur / pixelate /
+    black box), and save to dst_path. Returns (ok, message).
+
+    Photos have no time dimension, so we only honour visual redactions —
+    audio/voice/audio_range targets are silently skipped.
+
+    Bounding boxes are stored as 0-1 percentages; if a redaction has
+    spatial_mode='whole_frame' (or all zero bbox), the entire image is
+    redacted.
+    """
+    from PIL import Image, ImageFilter, ImageDraw
+
+    try:
+        img = Image.open(src_path).convert('RGB')
+    except Exception as exc:
+        return False, f'PIL open failed: {exc}'
+
+    W, H = img.size
+    # Save the format chosen by the destination filename (jpg default).
+    out_ext = (os.path.splitext(dst_path)[1] or '.jpg').lower().lstrip('.')
+    save_format = 'JPEG' if out_ext in ('jpg', 'jpeg') else out_ext.upper()
+
+    drawn = 0
+    visual_redactions = [r for r in redactions if getattr(r, 'is_visual', False)]
+
+    for r in visual_redactions:
+        # Resolve bbox in pixel space
+        if getattr(r, 'spatial_mode', '') == 'whole_frame' or (
+            r.bbox_w == 0 and r.bbox_h == 0
+        ):
+            x1, y1, x2, y2 = 0, 0, W, H
+        else:
+            x1 = max(0, int(r.bbox_x * W))
+            y1 = max(0, int(r.bbox_y * H))
+            x2 = min(W, int((r.bbox_x + r.bbox_w) * W))
+            y2 = min(H, int((r.bbox_y + r.bbox_h) * H))
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        method = getattr(r, 'method', 'blur') or 'blur'
+        severity = getattr(r, 'severity', 'medium') or 'medium'
+
+        if method == 'black_box':
+            ImageDraw.Draw(img).rectangle([x1, y1, x2, y2], fill='black')
+        elif method == 'pixelate':
+            crop = img.crop((x1, y1, x2, y2))
+            # Pixelate by downscale + nearest upscale
+            block = max(8, _photo_blur_radius(severity, max(crop.size)))
+            small = crop.resize((max(1, crop.size[0] // block),
+                                 max(1, crop.size[1] // block)),
+                                Image.NEAREST)
+            crop = small.resize(crop.size, Image.NEAREST)
+            img.paste(crop, (x1, y1))
+        else:  # blur (default)
+            crop = img.crop((x1, y1, x2, y2))
+            radius = _photo_blur_radius(severity, max(crop.size))
+            crop = crop.filter(ImageFilter.GaussianBlur(radius=radius))
+            img.paste(crop, (x1, y1))
+        drawn += 1
+
+    if drawn == 0:
+        return False, 'No visual redactions to apply (only audio/text targets present?)'
+
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    try:
+        save_kwargs = {'quality': 92, 'optimize': True} if save_format == 'JPEG' else {}
+        img.save(dst_path, format=save_format, **save_kwargs)
+    except Exception as exc:
+        return False, f'PIL save failed: {exc}'
+
+    return True, f'Rendered {drawn} redaction(s) into {dst_path}'
+
+
+def new_photo_render_filename(photo_id, src_ext: str = 'jpg') -> str:
+    """Generate a unique filename for a rendered photo. Keeps source ext."""
+    ts = int(time.time())
+    short = uuid.uuid4().hex[:8]
+    ext = (src_ext or 'jpg').lstrip('.').lower() or 'jpg'
+    return f'redacted/{photo_id}__{ts}_{short}.{ext}'

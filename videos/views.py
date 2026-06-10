@@ -3314,6 +3314,222 @@ def video_redact_editor(request, video_id):
     })
 
 
+# ── Photo redactions (Phase 4) ────────────────────────────────────────────────
+
+def _can_edit_photo_redactions(user, photo) -> bool:
+    """Editors + superadmins, plus the uploader."""
+    if not user.is_authenticated:
+        return False
+    if _is_editor(user):
+        return True
+    return _is_photo_owner(user, photo)
+
+
+def _serialize_photo_redaction(r) -> dict:
+    """Photo-specific Redaction serialiser (no time fields)."""
+    fi = r.target_face_identity
+    return {
+        'id':           r.pk,
+        'target_type':  r.target_type,
+        'method':       r.method,
+        'severity':     r.severity,
+        'spatial_mode': r.spatial_mode,
+        'bbox':         {'x': r.bbox_x, 'y': r.bbox_y, 'w': r.bbox_w, 'h': r.bbox_h},
+        'source':       r.source,
+        'label':        r.label,
+        'is_saved':     r.is_saved,
+        'face_identity': (
+            {'id': fi.id, 'name': fi.name} if fi else None
+        ),
+        'applied_by_policy_id': r.applied_by_policy_id,
+        'created_at':    r.created_at.isoformat() if r.created_at else None,
+        'created_by':    r.created_by_username,
+    }
+
+
+@login_required
+def photo_redactions_api(request, photo_id):
+    """
+    GET  /api/photos/<id>/redactions/  — list
+    POST /api/photos/<id>/redactions/  — create
+    """
+    from .models import Photo, Redaction
+    photo = get_object_or_404(Photo, id=photo_id)
+
+    if request.method == 'GET':
+        rows = list(Redaction.objects.filter(photo=photo).order_by('-created_at'))
+        return JsonResponse({
+            'ok': True,
+            'count': len(rows),
+            'redactions': [_serialize_photo_redaction(r) for r in rows],
+            'photo': {
+                'id': str(photo.id),
+                'width':  photo.width or 0,
+                'height': photo.height or 0,
+            },
+            'can_edit': _can_edit_photo_redactions(request.user, photo),
+        })
+
+    if request.method == 'POST':
+        if not _can_edit_photo_redactions(request.user, photo):
+            return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+        try:
+            payload = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+
+        # Photos only support visual redactions
+        target_type = payload.get('target_type', Redaction.TARGET_FACE)
+        if target_type not in (Redaction.TARGET_FACE,
+                               Redaction.TARGET_REGION,
+                               Redaction.TARGET_TEXT):
+            return JsonResponse({
+                'ok': False,
+                'error': 'Photos only support face / region / text redactions.',
+            }, status=400)
+
+        valid_methods = {Redaction.METHOD_BLUR, Redaction.METHOD_PIXELATE,
+                         Redaction.METHOD_BLACK_BOX}
+        method = payload.get('method', Redaction.METHOD_BLUR)
+        if method not in valid_methods:
+            return JsonResponse({
+                'ok': False,
+                'error': 'Method must be blur, pixelate, or black_box for photos.',
+            }, status=400)
+
+        bbox = payload.get('bbox') or {}
+        face_identity_id = payload.get('face_identity_id') or None
+
+        r = Redaction.objects.create(
+            photo=photo,
+            target_type=target_type,
+            target_face_identity_id=face_identity_id,
+            method=method,
+            severity=payload.get('severity', Redaction.SEVERITY_MEDIUM),
+            time_start_s=0, time_end_s=0,
+            spatial_mode=payload.get(
+                'spatial_mode',
+                Redaction.SPATIAL_WHOLE_FRAME if not bbox else Redaction.SPATIAL_FIXED_BOX,
+            ),
+            bbox_x=float(bbox.get('x', 0) or 0),
+            bbox_y=float(bbox.get('y', 0) or 0),
+            bbox_w=float(bbox.get('w', 0) or 0),
+            bbox_h=float(bbox.get('h', 0) or 0),
+            source=Redaction.SOURCE_MANUAL,
+            label=(payload.get('label') or '')[:120],
+            is_saved=True,   # photo redactions save immediately (no draft state)
+            saved_at=timezone.now(),
+            created_by_username=request.user.username,
+        )
+        return JsonResponse({'ok': True, 'redaction': _serialize_photo_redaction(r)}, status=201)
+
+    return JsonResponse({'ok': False, 'error': 'Method not allowed'}, status=405)
+
+
+@login_required
+@require_http_methods(['PATCH', 'DELETE'])
+def photo_redaction_detail(request, redaction_id):
+    """PATCH or DELETE a single photo redaction."""
+    from .models import Redaction
+    r = get_object_or_404(Redaction, id=redaction_id, photo__isnull=False)
+    if not _can_edit_photo_redactions(request.user, r.photo):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    if request.method == 'DELETE':
+        r.delete()
+        return JsonResponse({'ok': True})
+
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+    if 'label' in payload:
+        r.label = (payload['label'] or '')[:120]
+        r.save(update_fields=['label', 'updated_at'])
+    return JsonResponse({'ok': True, 'redaction': _serialize_photo_redaction(r)})
+
+
+@login_required
+@require_POST
+def photo_redaction_render(request, photo_id):
+    """
+    POST /api/photos/<id>/redactions/render/  — bake redactions into a JPEG.
+    Queues render_redacted_photo_task. Returns the new render row's id.
+    """
+    from .models import Photo, Redaction, RedactionRender
+    from .redaction_render import new_photo_render_filename
+    import os as _os
+
+    photo = get_object_or_404(Photo, id=photo_id)
+    if not _can_edit_photo_redactions(request.user, photo):
+        return JsonResponse({'ok': False, 'error': 'Forbidden'}, status=403)
+
+    visual = Redaction.objects.filter(photo=photo).count()
+    if visual == 0:
+        return JsonResponse({
+            'ok': False,
+            'error': 'No redactions on this photo to bake.',
+        }, status=400)
+
+    # Drop prior renders (we only keep the latest)
+    prior = list(RedactionRender.objects.filter(photo=photo))
+    storage = photo.file.storage if photo.file else None
+    for p in prior:
+        if storage and p.file_path:
+            try:
+                ap = storage.path(p.file_path)
+                if _os.path.exists(ap):
+                    _os.remove(ap)
+            except Exception:
+                pass
+        p.delete()
+
+    src_ext = _os.path.splitext(photo.file.name)[1].lstrip('.') or 'jpg'
+    rel_path = new_photo_render_filename(photo.id, src_ext)
+    render = RedactionRender.objects.create(
+        photo=photo,
+        status=RedactionRender.STATUS_QUEUED,
+        file_path=rel_path,
+        rendered_by_username=request.user.username,
+    )
+    try:
+        from .tasks import render_redacted_photo_task
+        render_redacted_photo_task.apply_async(
+            args=[render.id],
+            kwargs={'tenant_slug': _tenant_slug(request)},
+            queue='default',
+        )
+    except Exception as exc:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = f'Dispatch failed: {exc}'
+        render.save(update_fields=['status', 'error_message'])
+        return JsonResponse({'ok': False, 'error': str(exc)}, status=500)
+
+    return JsonResponse({'ok': True, 'render_id': render.id, 'status': render.status})
+
+
+@login_required
+def photo_redaction_render_status(request, photo_id, render_id):
+    """JSON poll for a photo render's progress."""
+    from .models import RedactionRender
+    r = get_object_or_404(
+        RedactionRender, pk=render_id, photo_id=photo_id,
+    )
+    download_url = f'/media/{r.file_path}' if r.status == r.STATUS_READY and r.file_path else None
+    return JsonResponse({
+        'ok': True,
+        'status': r.status,
+        'error_message': r.error_message,
+        'file_size_bytes': r.file_size_bytes,
+        'redaction_count': r.redaction_count,
+        'download_url': download_url,
+        'queued_at':   r.queued_at.isoformat() if r.queued_at else None,
+        'started_at':  r.started_at.isoformat() if r.started_at else None,
+        'finished_at': r.finished_at.isoformat() if r.finished_at else None,
+    })
+
+
 # ── User lifecycle: suspend → reassign → delete ──────────────────────────────
 
 def _user_dependencies(user):
@@ -8188,6 +8404,10 @@ def face_identity_forget(request, identity_id):
     # means transcripts are NOT preserved for restore.
     # Done BEFORE deleting the identity so the policy can reference it and
     # the matching DetectedFace / VideoSegment rows still exist.
+    #
+    # Phase 4 (photo support): apply_policy_to_existing walks BOTH videos
+    # and photos for face-type policies, so photo redactions are enrolled
+    # automatically as part of the same pass.
     try:
         from .models import RedactionPolicy, SpeakerFaceSuggestion as _SFS, SpeakerIdentity as _SI
         from .redaction_policy import apply_policy_to_existing as _apply_existing
@@ -8577,12 +8797,40 @@ def end_screen_detail(request, video_id, end_screen_id):
 @api_view(['GET'])
 @api_login_required
 def notification_list(request):
-    """GET /api/notifications/ — list unread notifications"""
-    notifications = Notification.objects.filter(
-        recipient=request.user
-    ).select_related('sender').order_by('-created_at')[:50]
-    cache.delete(f'unread_{request.user.pk}')
-    return Response(NotificationSerializer(notifications, many=True).data)
+    """
+    GET /api/notifications/ — list recent notifications.
+    Query params:
+      ?unread=1    → only unread
+      ?limit=N     → up to 50, default 20
+    Response: {ok, count, unread_count, notifications: [...]}.
+    """
+    qs = Notification.objects.filter(recipient=request.user).select_related('sender')
+    if request.GET.get('unread') in ('1', 'true'):
+        qs = qs.filter(is_read=False)
+    try:
+        limit = max(1, min(50, int(request.GET.get('limit', 20))))
+    except (ValueError, TypeError):
+        limit = 20
+    rows = list(qs.order_by('-created_at')[:limit])
+    unread_count = Notification.objects.filter(
+        recipient=request.user, is_read=False).count()
+    return Response({
+        'ok': True,
+        'count': len(rows),
+        'unread_count': unread_count,
+        'notifications': NotificationSerializer(rows, many=True).data,
+    })
+
+
+@api_view(['GET'])
+@api_login_required
+def notification_unread_count(request):
+    """
+    GET /api/notifications/unread-count/ — cheap poll for the bell badge.
+    Returns just {ok, unread_count}.
+    """
+    n = Notification.objects.filter(recipient=request.user, is_read=False).count()
+    return Response({'ok': True, 'unread_count': n})
 
 
 @api_view(['POST'])
@@ -8592,6 +8840,60 @@ def mark_notifications_read(request):
     Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
     cache.delete(f'unread_{request.user.pk}')
     return Response({'ok': True})
+
+
+@api_view(['POST'])
+@api_login_required
+def mark_notification_read(request, notif_id):
+    """POST /api/notifications/<id>/read/ — mark a single notification read"""
+    n = get_object_or_404(Notification, pk=notif_id, recipient=request.user)
+    if not n.is_read:
+        n.is_read = True
+        n.save(update_fields=['is_read'])
+    cache.delete(f'unread_{request.user.pk}')
+    return Response({'ok': True})
+
+
+# ─── Notification preferences ────────────────────────────────────────────────
+
+@api_view(['GET', 'PATCH'])
+@api_login_required
+def notification_preferences_api(request):
+    """
+    GET   — return the current user's NotificationPreference (auto-create with defaults).
+    PATCH — update any subset of boolean fields.
+    """
+    from .models import NotificationPreference
+
+    db_alias = getattr(request.user, '_state').db or 'default'
+    prefs = NotificationPreference.for_user(request.user, db_alias=db_alias)
+
+    bool_fields = [
+        'inapp_upload_complete', 'inapp_upload_failed',
+        'inapp_photo_complete',  'inapp_photo_failed',
+        'inapp_quota_warnings',
+        'email_upload_complete', 'email_upload_failed',
+        'email_photo_complete',  'email_photo_failed',
+        'email_quota_warnings',
+    ]
+
+    if request.method == 'PATCH':
+        try:
+            payload = request.data if hasattr(request, 'data') else json.loads(request.body)
+        except Exception:
+            payload = {}
+        changed = []
+        for f in bool_fields:
+            if f in payload:
+                setattr(prefs, f, bool(payload[f]))
+                changed.append(f)
+        if changed:
+            prefs.save(update_fields=changed + ['updated_at'])
+
+    return Response({
+        'ok': True,
+        'preferences': {f: getattr(prefs, f) for f in bool_fields},
+    })
 
 
 # ─── User Management API (superuser only) ────────────────────────────────────
@@ -9189,12 +9491,28 @@ def photo_detail_page(request, photo_id):
 
     all_named_places = list(NamedPlace.objects.values('id', 'name', 'slug', 'latitude', 'longitude').order_by('name'))
 
+    # ── Phase 4: photo redactions ────────────────────────────────────────────
+    from .models import Redaction, RedactionRender
+    photo_redactions = list(
+        Redaction.objects.filter(photo=photo)
+        .select_related('target_face_identity')
+        .order_by('-created_at')
+    )
+    latest_render = (
+        RedactionRender.objects.filter(photo=photo)
+        .order_by('-queued_at').first()
+    )
+
     return render(request, 'videos/photo_detail.html', {
         'photo': photo,
         'photo_tags': photo_tags,
         'is_photo_owner': is_photo_owner,
         'can_edit_location': can_edit_location,
         'all_named_places': all_named_places,
+        'photo_redactions':       photo_redactions,
+        'has_photo_redactions':   bool(photo_redactions),
+        'latest_photo_render':    latest_render,
+        'can_redact_photo':       _is_editor(request.user),
     })
 
 

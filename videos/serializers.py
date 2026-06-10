@@ -427,10 +427,17 @@ class FaceIdentitySerializer(serializers.ModelSerializer):
 
 class NotificationSerializer(serializers.ModelSerializer):
     sender_username = serializers.CharField(source='sender.username', read_only=True)
+    display_title   = serializers.CharField(read_only=True)
+    is_system       = serializers.SerializerMethodField()
 
     class Meta:
         model = Notification
         fields = [
             'id', 'sender_username', 'notification_type',
-            'message', 'link', 'is_read', 'created_at',
+            'title', 'display_title',
+            'message', 'link', 'is_read', 'is_system',
+            'created_at',
         ]
+
+    def get_is_system(self, obj) -> bool:
+        return obj.notification_type in Notification.SYSTEM_TYPES

@@ -235,7 +235,15 @@
     <div class="photo-viewer" id="photoViewer">
       {% if photo.file %}
         {% if photo.status == 'ready' or photo.status == 'processing' %}
-          <img src="{{ photo.file.url }}" alt="{{ photo.title }}" id="photoImg" />
+          <div class="photo-canvas" style="position:relative; display:inline-block;">
+            <img src="{{ photo.file.url }}" alt="{{ photo.title }}" id="photoImg" style="display:block; max-width:100%;" />
+            {% if has_photo_redactions %}
+            <div id="photoRedactionLayer"
+                 style="position:absolute; inset:0; pointer-events:none;">
+              <!-- Filled in by JS once image dimensions are known -->
+            </div>
+            {% endif %}
+          </div>
         {% else %}
           <div class="photo-viewer-ph">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -341,6 +349,47 @@
     <div class="info-section">
       <div class="info-label">Description</div>
       <div class="info-text">{{ photo.description }}</div>
+    </div>
+    {% endif %}
+
+    {# ── Photo redactions (Phase 4) ────────────────────────────────────── #}
+    {% if has_photo_redactions or can_redact_photo %}
+    <div class="info-section" id="photoRedactionsSection">
+      <div class="info-label" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>Redactions</span>
+        {% if can_redact_photo %}
+          <button id="addPhotoRedactionBtn" class="btn btn-ghost btn-sm" style="padding:2px 8px; font-size:11px;">+ Add</button>
+        {% endif %}
+      </div>
+      <div id="photoRedactionList" style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
+        {% for r in photo_redactions %}
+          <div class="rdx-row" data-rdx-id="{{ r.id }}" style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:#1f2937; border-radius:4px; font-size:12px;">
+            <span style="background:#ff8a6533; color:#ff8a65; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:600;">{{ r.get_target_type_display }}</span>
+            <span style="flex:1; color:#c9d1d9;">
+              {% if r.target_face_identity %}{{ r.target_face_identity.name }}{% else %}{{ r.label|default:r.get_method_display }}{% endif %}
+            </span>
+            <span style="color:#8b949e; font-size:10px;">{{ r.get_method_display }}</span>
+            {% if can_redact_photo and r.source != 'policy' %}
+              <button class="rdx-delete" data-rdx-id="{{ r.id }}" title="Delete redaction"
+                      style="background:none; border:none; color:#8b949e; cursor:pointer; padding:0; font-size:14px;">×</button>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      {% if can_redact_photo and has_photo_redactions %}
+        <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">
+          <button id="bakePhotoBtn" class="btn btn-sm" style="font-size:11px; background:#1f6feb; color:white; border:none; padding:5px 10px; border-radius:4px;">
+            Render baked copy
+          </button>
+          {% if latest_photo_render and latest_photo_render.status == 'ready' %}
+            <a href="/media/{{ latest_photo_render.file_path }}" download
+               class="btn btn-ghost btn-sm" style="font-size:11px;">
+              Download baked
+            </a>
+          {% endif %}
+        </div>
+        <div id="photoBakeStatus" style="margin-top:6px; font-size:11px; color:#8b949e;"></div>
+      {% endif %}
     </div>
     {% endif %}
 
@@ -1109,6 +1158,197 @@ function openMap(ev) {
       })
       .catch(() => clearInterval(poll));
   }, 4000);
+})();
+</script>
+{% endif %}
+
+{# ── Photo redaction overlay + controls (Phase 4) ───────────────────────── #}
+{% if has_photo_redactions or can_redact_photo %}
+<script>
+(function() {
+  const PHOTO_ID  = '{{ photo.id }}';
+  const CAN_EDIT  = {{ can_redact_photo|yesno:"true,false" }};
+  const csrf      = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+
+  const photoImg  = document.getElementById('photoImg');
+  const overlay   = document.getElementById('photoRedactionLayer');
+  const list      = document.getElementById('photoRedactionList');
+  const addBtn    = document.getElementById('addPhotoRedactionBtn');
+  const bakeBtn   = document.getElementById('bakePhotoBtn');
+  const statusEl  = document.getElementById('photoBakeStatus');
+
+  // ── Live overlay: render each redaction as a positioned div ──────────────
+  function renderOverlay(redactions) {
+    if (!overlay || !photoImg) return;
+    overlay.innerHTML = '';
+    redactions.forEach(r => {
+      const div = document.createElement('div');
+      const bbox = r.bbox || {x:0,y:0,w:1,h:1};
+      const x = (bbox.w === 0 && bbox.h === 0) ? 0 : bbox.x;
+      const y = (bbox.w === 0 && bbox.h === 0) ? 0 : bbox.y;
+      const w = (bbox.w === 0 && bbox.h === 0) ? 1 : bbox.w;
+      const h = (bbox.w === 0 && bbox.h === 0) ? 1 : bbox.h;
+      div.style.position = 'absolute';
+      div.style.left   = (x * 100) + '%';
+      div.style.top    = (y * 100) + '%';
+      div.style.width  = (w * 100) + '%';
+      div.style.height = (h * 100) + '%';
+      div.style.pointerEvents = 'none';
+      if (r.method === 'black_box') {
+        div.style.background = 'black';
+      } else if (r.method === 'pixelate') {
+        div.style.backdropFilter = 'blur(20px) contrast(0.3)';
+        div.style.background = 'rgba(0,0,0,0.15)';
+      } else {  // blur (default)
+        const rad = ({light:8, medium:16, heavy:28})[r.severity] || 16;
+        div.style.backdropFilter = `blur(${rad}px)`;
+        div.style.WebkitBackdropFilter = `blur(${rad}px)`;
+        div.style.background = 'rgba(255,138,101,0.05)';
+      }
+      div.title = r.label || (r.face_identity?.name || r.target_type);
+      overlay.appendChild(div);
+    });
+  }
+
+  async function loadRedactions() {
+    const r = await fetch(`/api/photos/${PHOTO_ID}/redactions/`);
+    const j = await r.json();
+    if (j.ok) renderOverlay(j.redactions);
+    return j;
+  }
+  loadRedactions();
+
+  // ── Delete handler ───────────────────────────────────────────────────────
+  if (CAN_EDIT && list) {
+    list.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.rdx-delete');
+      if (!btn) return;
+      if (!confirm('Delete this redaction?')) return;
+      const id = btn.dataset.rdxId;
+      const r = await fetch(`/api/photo-redactions/${id}/`, {
+        method: 'DELETE',
+        headers: {'X-CSRFToken': csrf},
+      });
+      if (r.ok) {
+        btn.closest('.rdx-row')?.remove();
+        loadRedactions();
+      }
+    });
+  }
+
+  // ── Add new redaction — drag a box on the photo ──────────────────────────
+  let drawing = null;
+  if (CAN_EDIT && addBtn && photoImg) {
+    addBtn.addEventListener('click', () => {
+      const canvas = photoImg.parentElement;
+      canvas.style.cursor = 'crosshair';
+      statusEl && (statusEl.textContent = 'Drag a rectangle on the photo to redact that area.');
+
+      const onDown = (e) => {
+        const rect = photoImg.getBoundingClientRect();
+        const sx = (e.clientX - rect.left) / rect.width;
+        const sy = (e.clientY - rect.top)  / rect.height;
+        drawing = {sx, sy, ex: sx, ey: sy, el: null};
+        drawing.el = document.createElement('div');
+        Object.assign(drawing.el.style, {
+          position: 'absolute', border: '2px dashed #ff8a65',
+          background: 'rgba(255,138,101,0.15)', pointerEvents: 'none',
+        });
+        (overlay || canvas).appendChild(drawing.el);
+      };
+      const onMove = (e) => {
+        if (!drawing) return;
+        const rect = photoImg.getBoundingClientRect();
+        drawing.ex = (e.clientX - rect.left) / rect.width;
+        drawing.ey = (e.clientY - rect.top)  / rect.height;
+        const x = Math.min(drawing.sx, drawing.ex);
+        const y = Math.min(drawing.sy, drawing.ey);
+        const w = Math.abs(drawing.ex - drawing.sx);
+        const h = Math.abs(drawing.ey - drawing.sy);
+        Object.assign(drawing.el.style, {
+          left: (x*100)+'%', top: (y*100)+'%',
+          width: (w*100)+'%', height: (h*100)+'%',
+        });
+      };
+      const onUp = async () => {
+        if (!drawing) return;
+        const x = Math.min(drawing.sx, drawing.ex);
+        const y = Math.min(drawing.sy, drawing.ey);
+        const w = Math.abs(drawing.ex - drawing.sx);
+        const h = Math.abs(drawing.ey - drawing.sy);
+        drawing.el?.remove();
+        canvas.style.cursor = '';
+        photoImg.removeEventListener('mousedown', onDown);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+
+        if (w < 0.01 || h < 0.01) {
+          statusEl && (statusEl.textContent = 'Box too small. Try again.');
+          drawing = null;
+          return;
+        }
+        const method = prompt('Method: blur, pixelate, or black_box', 'blur');
+        if (!method) { drawing = null; return; }
+
+        const resp = await fetch(`/api/photos/${PHOTO_ID}/redactions/`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json','X-CSRFToken': csrf},
+          body: JSON.stringify({
+            target_type: 'region', method,
+            severity: 'medium',
+            spatial_mode: 'fixed_box',
+            bbox: {x, y, w, h},
+            label: 'Manual region',
+          }),
+        });
+        const j = await resp.json();
+        if (j.ok) {
+          statusEl && (statusEl.textContent = 'Redaction added. Reloading…');
+          window.location.reload();
+        } else {
+          alert(j.error || 'Failed to add redaction.');
+        }
+        drawing = null;
+      };
+      photoImg.addEventListener('mousedown', onDown);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+  }
+
+  // ── Bake render ──────────────────────────────────────────────────────────
+  async function pollBake(renderId) {
+    const r = await fetch(`/api/photos/${PHOTO_ID}/redactions/render/${renderId}/status/`);
+    const j = await r.json();
+    if (!j.ok) return;
+    if (j.status === 'ready') {
+      statusEl && (statusEl.innerHTML = `Done — <a href="${j.download_url}" download style="color:#58a6ff;">Download</a>`);
+      setTimeout(() => window.location.reload(), 1500);
+      return;
+    }
+    if (j.status === 'failed') {
+      statusEl && (statusEl.textContent = 'Render failed: ' + (j.error_message || 'unknown'));
+      return;
+    }
+    statusEl && (statusEl.textContent = 'Status: ' + j.status + '…');
+    setTimeout(() => pollBake(renderId), 1500);
+  }
+  if (CAN_EDIT && bakeBtn) {
+    bakeBtn.addEventListener('click', async () => {
+      bakeBtn.disabled = true;
+      statusEl && (statusEl.textContent = 'Queuing render…');
+      const r = await fetch(`/api/photos/${PHOTO_ID}/redactions/render/`, {
+        method: 'POST', headers: {'X-CSRFToken': csrf},
+      });
+      const j = await r.json();
+      if (!j.ok) {
+        statusEl && (statusEl.textContent = j.error || 'Render failed to start.');
+        bakeBtn.disabled = false;
+        return;
+      }
+      pollBake(j.render_id);
+    });
+  }
 })();
 </script>
 {% endif %}

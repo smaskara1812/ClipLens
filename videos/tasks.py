@@ -127,6 +127,17 @@ def process_video_task(self, video_id: str, skip_ai: bool = False, **kwargs):
     try:
         process_video(video_id)
 
+        # ── Notify uploader: video is watchable now ──────────────────────────
+        # Fire as soon as HLS + thumbnail are ready, regardless of AI status —
+        # users care about "can I watch it?" first.
+        try:
+            from .notifications import notify_video_processed
+            v = Video.objects.filter(id=video_id).first()
+            if v:
+                notify_video_processed(v, tenant_slug=tenant_slug)
+        except Exception:
+            logger.exception('process_video_task: notify hook failed for %s', video_id)
+
         if not skip_ai:
             from tenants.feature_flags import is_feature_enabled
             # Trigger caption generation if enabled (global + tenant)
@@ -160,6 +171,21 @@ def process_video_task(self, video_id: str, skip_ai: bool = False, **kwargs):
 
     except Exception as exc:
         logger.error(f'process_video_task failed for {video_id}: {exc}')
+        # Notify on the final retry — Celery will give up after this
+        is_final = (self.request.retries or 0) >= (self.max_retries or 0)
+        if is_final:
+            try:
+                from .notifications import notify_video_failed
+                v = Video.objects.filter(id=video_id).first()
+                if v:
+                    notify_video_failed(v, error_message=str(exc),
+                                        tenant_slug=tenant_slug)
+                    # Also set the video status to FAILED for the UI
+                    Video.objects.filter(id=video_id).update(
+                        status=Video.STATUS_FAILED,
+                    )
+            except Exception:
+                logger.exception('process_video_task: failure-notify hook failed for %s', video_id)
         raise self.retry(exc=exc)
 
 
@@ -2453,6 +2479,30 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
             f'desc="{scene_description[:60]}"'
         )
 
+        # ── Apply active redaction policies (Phase 4 — photo support) ────────
+        # If any face policy targets an identity in this photo, auto-create
+        # the corresponding Redaction rows. Runs after the photo is READY
+        # so face detection results are committed.
+        try:
+            from .redaction_policy import apply_active_policies_to_photo
+            applied = apply_active_policies_to_photo(
+                photo, tenant_slug=kwargs.get('tenant_slug', ''),
+            )
+            if applied.get('applied'):
+                logger.info(
+                    'analyze_photo_task: %d policy redactions auto-created on %s',
+                    applied['applied'], photo_id,
+                )
+        except Exception:
+            logger.exception('analyze_photo_task: policy applicator failed for %s', photo_id)
+
+        # ── Notify uploader: photo is ready ──────────────────────────────────
+        try:
+            from .notifications import notify_photo_processed
+            notify_photo_processed(photo, tenant_slug=kwargs.get('tenant_slug', ''))
+        except Exception:
+            logger.exception('analyze_photo_task: notify hook failed for %s', photo_id)
+
     except Exception as exc:
         logger.error(f'analyze_photo_task: unexpected error for {photo_id}: {exc}', exc_info=True)
         try:
@@ -2461,6 +2511,15 @@ def analyze_photo_task(self, photo_id: str, **kwargs):
             photo.save(update_fields=['status', 'processing_error'])
         except Exception:
             pass
+        # Notify on final retry
+        is_final = (self.request.retries or 0) >= (self.max_retries or 0)
+        if is_final:
+            try:
+                from .notifications import notify_photo_failed
+                notify_photo_failed(photo, error_message=str(exc),
+                                    tenant_slug=kwargs.get('tenant_slug', ''))
+            except Exception:
+                logger.exception('analyze_photo_task: failure-notify hook failed for %s', photo_id)
         raise self.retry(exc=exc)
 
 
@@ -4049,6 +4108,109 @@ def render_redacted_video_task(self, render_id, *, tenant_slug='', **kwargs):
             logger.exception('render_redacted_video_task: storage logging failed')
 
     return {'ok': True, 'file_size': file_size, 'redactions': len(redactions)}
+
+
+# ── Photo redaction render (Phase 4 — photo support) ─────────────────────────
+
+@shared_task(
+    bind=True,
+    name='videos.tasks.render_redacted_photo_task',
+    queue='default',     # PIL ops are CPU-cheap; default queue is fine
+    max_retries=1,
+    acks_late=True,
+)
+def render_redacted_photo_task(self, render_id, *, tenant_slug='', **kwargs):
+    """
+    Bake every visual Redaction on a Photo into a derivative image file.
+    Mirrors render_redacted_video_task but uses PIL instead of FFmpeg.
+    """
+    from .models import RedactionRender, Redaction
+    from django.utils import timezone
+    import os
+
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            logger.exception('render_redacted_photo_task: tenant ctx failed')
+
+    try:
+        render = RedactionRender.objects.select_related('photo').get(pk=render_id)
+    except RedactionRender.DoesNotExist:
+        return {'ok': False, 'error': 'render row not found'}
+
+    render.status = RedactionRender.STATUS_RENDERING
+    render.started_at = timezone.now()
+    render.celery_task_id = self.request.id or ''
+    render.save(update_fields=['status', 'started_at', 'celery_task_id'])
+
+    photo = render.photo
+    if not photo or not photo.file or not os.path.exists(photo.file.path):
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = 'Source photo file missing on disk'
+        render.finished_at = timezone.now()
+        render.save(update_fields=['status', 'error_message', 'finished_at'])
+        return {'ok': False, 'error': render.error_message}
+
+    redactions = list(Redaction.objects.filter(photo=photo))
+    visual = [r for r in redactions if r.is_visual]
+    if not visual:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = 'No visual redactions to bake in'
+        render.finished_at = timezone.now()
+        render.save(update_fields=['status', 'error_message', 'finished_at'])
+        return {'ok': False, 'error': render.error_message}
+
+    # Compute destination path inside the tenant's storage backend
+    rel_path = render.file_path
+    if not rel_path:
+        from .redaction_render import new_photo_render_filename
+        src_ext = os.path.splitext(photo.file.name)[1].lstrip('.') or 'jpg'
+        rel_path = new_photo_render_filename(photo.id, src_ext)
+        render.file_path = rel_path
+        render.save(update_fields=['file_path'])
+
+    storage = photo.file.storage
+    abs_path = storage.path(rel_path)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+
+    from .redaction_render import render_redacted_photo as _do
+    ok, message = _do(
+        src_path=photo.file.path,
+        dst_path=abs_path,
+        redactions=visual,
+        photo_w=photo.width or 0,
+        photo_h=photo.height or 0,
+    )
+
+    if not ok:
+        render.status = RedactionRender.STATUS_FAILED
+        render.error_message = message[:4000]
+        render.finished_at = timezone.now()
+        render.save(update_fields=['status', 'error_message', 'finished_at'])
+        return {'ok': False, 'error': message}
+
+    file_size = os.path.getsize(abs_path)
+    render.status = RedactionRender.STATUS_READY
+    render.file_size_bytes = file_size
+    render.redaction_count = len(visual)
+    render.included_redaction_ids = [r.pk for r in visual]
+    render.finished_at = timezone.now()
+    render.save(update_fields=[
+        'status', 'file_size_bytes',
+        'redaction_count', 'included_redaction_ids', 'finished_at',
+    ])
+
+    # Count against tenant storage quota
+    if tenant_slug:
+        try:
+            from tenants.metering import log_storage_delta
+            log_storage_delta(tenant_slug, file_size)
+        except Exception:
+            logger.exception('render_redacted_photo_task: storage logging failed')
+
+    return {'ok': True, 'file_size': file_size, 'redactions': len(visual)}
 
 
 # ── Post-redaction subtitle regeneration (Phase 5+) ──────────────────────────

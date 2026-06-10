@@ -399,7 +399,11 @@ class Redaction(models.Model):
         (SOURCE_TRANSCRIPT_WORD, 'Picked from transcript'),
     ]
 
-    video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name='redactions')
+    # Exactly one of video/photo is set — enforced by DB CheckConstraint below.
+    video = models.ForeignKey(Video, null=True, blank=True,
+                              on_delete=models.CASCADE, related_name='redactions')
+    photo = models.ForeignKey('Photo', null=True, blank=True,
+                              on_delete=models.CASCADE, related_name='redactions')
 
     target_type = models.CharField(max_length=20, choices=TARGET_CHOICES)
     # Optional identity FKs (populated when target is face / voice)
@@ -450,13 +454,32 @@ class Redaction(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['video', 'time_start_s']),
+            models.Index(fields=['photo']),
             models.Index(fields=['target_type']),
             models.Index(fields=['applied_by_policy_id']),
         ]
         ordering = ['video', 'time_start_s']
+        constraints = [
+            # Exactly one of video/photo must be set. Photos have no time
+            # dimension so time/audio targets are video-only.
+            models.CheckConstraint(
+                name='redaction_video_xor_photo',
+                check=(
+                    models.Q(video__isnull=False, photo__isnull=True) |
+                    models.Q(video__isnull=True,  photo__isnull=False)
+                ),
+            ),
+        ]
 
     def __str__(self):
+        if self.photo_id:
+            return f'{self.get_target_type_display()} {self.method} on photo {self.photo_id}'
         return f'{self.get_target_type_display()} {self.method} on {self.video_id} ({self.time_start_s:.1f}-{self.time_end_s:.1f}s)'
+
+    @property
+    def parent(self):
+        """Return the Video or Photo this redaction is attached to."""
+        return self.video or self.photo
 
     @property
     def is_visual(self) -> bool:
@@ -568,12 +591,17 @@ class RedactionRender(models.Model):
         (STATUS_FAILED,    'Failed'),
     ]
 
-    video           = models.ForeignKey(Video, on_delete=models.CASCADE,
+    # Exactly one of video/photo is set — enforced by DB CheckConstraint.
+    video           = models.ForeignKey(Video, null=True, blank=True,
+                                        on_delete=models.CASCADE,
+                                        related_name='redaction_renders')
+    photo           = models.ForeignKey('Photo', null=True, blank=True,
+                                        on_delete=models.CASCADE,
                                         related_name='redaction_renders')
     status          = models.CharField(max_length=15, choices=STATUS_CHOICES,
                                        default=STATUS_QUEUED, db_index=True)
     file_path       = models.CharField(max_length=600, blank=True,
-                                       help_text='Path under MEDIA_ROOT, e.g. "redacted/uuid__ts.mp4"')
+                                       help_text='Storage-form path (tenants/<slug>/redacted/<uuid>__<ts>.<ext>)')
     file_size_bytes = models.BigIntegerField(default=0)
     duration_s      = models.FloatField(default=0)
     redaction_count = models.PositiveIntegerField(default=0,
@@ -598,7 +626,17 @@ class RedactionRender(models.Model):
         ordering = ['-queued_at']
         indexes = [
             models.Index(fields=['video', '-queued_at']),
+            models.Index(fields=['photo', '-queued_at']),
             models.Index(fields=['status']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                name='redactionrender_video_xor_photo',
+                check=(
+                    models.Q(video__isnull=False, photo__isnull=True) |
+                    models.Q(video__isnull=True,  photo__isnull=False)
+                ),
+            ),
         ]
 
     def __str__(self):
@@ -1501,38 +1539,133 @@ def _clear_orphaned_duplicate_flags(sender, instance, **kwargs):
 # ── Notifications ─────────────────────────────────────────────────────────────
 
 class Notification(models.Model):
+    # Social (legacy)
     TYPE_MENTION   = 'mention'
     TYPE_COMMENT   = 'comment'
     TYPE_REPLY     = 'reply'
     TYPE_SUBSCRIBE = 'subscribe'
     TYPE_NEW_VIDEO = 'new_video'
+    # System / pipeline (added)
+    TYPE_UPLOAD_COMPLETE = 'upload_complete'
+    TYPE_UPLOAD_FAILED   = 'upload_failed'
+    TYPE_PHOTO_COMPLETE  = 'photo_complete'
+    TYPE_PHOTO_FAILED    = 'photo_failed'
+    TYPE_QUOTA_80        = 'quota_80'
+    TYPE_QUOTA_95        = 'quota_95'
 
     TYPES = [
-        (TYPE_MENTION,   'Mention'),
-        (TYPE_COMMENT,   'Comment on your video'),
-        (TYPE_REPLY,     'Reply to your comment'),
-        (TYPE_SUBSCRIBE, 'New subscriber'),
-        (TYPE_NEW_VIDEO, 'New video'),
+        (TYPE_MENTION,         'Mention'),
+        (TYPE_COMMENT,         'Comment on your video'),
+        (TYPE_REPLY,           'Reply to your comment'),
+        (TYPE_SUBSCRIBE,       'New subscriber'),
+        (TYPE_NEW_VIDEO,       'New video'),
+        (TYPE_UPLOAD_COMPLETE, 'Upload processed'),
+        (TYPE_UPLOAD_FAILED,   'Upload failed'),
+        (TYPE_PHOTO_COMPLETE,  'Photo processed'),
+        (TYPE_PHOTO_FAILED,    'Photo processing failed'),
+        (TYPE_QUOTA_80,        'Quota warning (80%)'),
+        (TYPE_QUOTA_95,        'Quota critical (95%)'),
     ]
+
+    # Coarse categories for filtering preferences in bulk
+    SOCIAL_TYPES = {TYPE_MENTION, TYPE_COMMENT, TYPE_REPLY, TYPE_SUBSCRIBE, TYPE_NEW_VIDEO}
+    SYSTEM_TYPES = {TYPE_UPLOAD_COMPLETE, TYPE_UPLOAD_FAILED,
+                    TYPE_PHOTO_COMPLETE, TYPE_PHOTO_FAILED,
+                    TYPE_QUOTA_80, TYPE_QUOTA_95}
 
     recipient         = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     sender            = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_notifications')
-    notification_type = models.CharField(max_length=20, choices=TYPES)
+    notification_type = models.CharField(max_length=20, choices=TYPES, db_index=True)
     video             = models.ForeignKey(Video, on_delete=models.SET_NULL, null=True, blank=True)
+    photo             = models.ForeignKey('Photo', on_delete=models.SET_NULL, null=True, blank=True)
     comment           = models.ForeignKey(Comment, on_delete=models.SET_NULL, null=True, blank=True)
-    message           = models.CharField(max_length=255)
-    link              = models.CharField(max_length=255)
+    title             = models.CharField(max_length=160, blank=True,
+                          help_text='Short bell-display title; falls back to message if empty')
+    message           = models.CharField(max_length=500)
+    link              = models.CharField(max_length=255, blank=True)
     is_read           = models.BooleanField(default=False)
+    # Track whether an email was dispatched (for debugging / dedup)
+    email_sent        = models.BooleanField(default=False)
     created_at        = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['recipient', 'is_read', 'created_at'], name='notif_recipient'),
+            models.Index(fields=['recipient', 'notification_type', '-created_at'],
+                         name='notif_recipient_type'),
         ]
 
     def __str__(self):
-        return f'→ {self.recipient.username}: {self.message}'
+        return f'→ {self.recipient.username}: {self.title or self.message}'
+
+    @property
+    def display_title(self) -> str:
+        return self.title or self.message
+
+
+class NotificationPreference(models.Model):
+    """
+    Per-user opt-in/out for system notifications. Created lazily — defaults
+    are sensible: in-app on for everything, email on for failures + quotas.
+    Social notifications stay on the existing legacy code path (no prefs yet).
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE,
+                                related_name='notification_preferences')
+
+    # In-app bell
+    inapp_upload_complete = models.BooleanField(default=True)
+    inapp_upload_failed   = models.BooleanField(default=True)
+    inapp_photo_complete  = models.BooleanField(default=True)
+    inapp_photo_failed    = models.BooleanField(default=True)
+    inapp_quota_warnings  = models.BooleanField(default=True)
+
+    # Email
+    email_upload_complete = models.BooleanField(default=False,
+                          help_text='Most users find one email per upload noisy — off by default.')
+    email_upload_failed   = models.BooleanField(default=True)
+    email_photo_complete  = models.BooleanField(default=False)
+    email_photo_failed    = models.BooleanField(default=True)
+    email_quota_warnings  = models.BooleanField(default=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = 'videos'
+
+    def __str__(self):
+        return f'NotificationPrefs for {self.user.username}'
+
+    @classmethod
+    def for_user(cls, user, db_alias='default'):
+        """Get-or-create preferences with defaults. Tenant-aware."""
+        obj, _ = cls.objects.using(db_alias).get_or_create(user=user)
+        return obj
+
+    def wants_inapp(self, notif_type: str) -> bool:
+        return getattr(self, _PREF_INAPP_MAP.get(notif_type, ''), True)
+
+    def wants_email(self, notif_type: str) -> bool:
+        return getattr(self, _PREF_EMAIL_MAP.get(notif_type, ''), False)
+
+
+# Compact lookup tables for preference fields
+_PREF_INAPP_MAP = {
+    Notification.TYPE_UPLOAD_COMPLETE: 'inapp_upload_complete',
+    Notification.TYPE_UPLOAD_FAILED:   'inapp_upload_failed',
+    Notification.TYPE_PHOTO_COMPLETE:  'inapp_photo_complete',
+    Notification.TYPE_PHOTO_FAILED:    'inapp_photo_failed',
+    Notification.TYPE_QUOTA_80:        'inapp_quota_warnings',
+    Notification.TYPE_QUOTA_95:        'inapp_quota_warnings',
+}
+_PREF_EMAIL_MAP = {
+    Notification.TYPE_UPLOAD_COMPLETE: 'email_upload_complete',
+    Notification.TYPE_UPLOAD_FAILED:   'email_upload_failed',
+    Notification.TYPE_PHOTO_COMPLETE:  'email_photo_complete',
+    Notification.TYPE_PHOTO_FAILED:    'email_photo_failed',
+    Notification.TYPE_QUOTA_80:        'email_quota_warnings',
+    Notification.TYPE_QUOTA_95:        'email_quota_warnings',
+}
 
 
 # ── Albums (Google Photos-style collections) ──────────────────────────────────
