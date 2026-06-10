@@ -805,3 +805,38 @@ class MediaRelocation(models.Model):
         if self.total_bytes <= 0:
             return 0.0
         return min(100.0, round(self.bytes_copied * 100 / self.total_bytes, 1))
+
+
+class FailedTask(models.Model):
+    """
+    Platform-wide log of every Celery task failure, across all tenants.
+    Written by the task_failure signal in celery_utils.py — visible only
+    to the platform owner at /tasks/failed/ on the admin subdomain.
+    """
+    task_name     = models.CharField(max_length=200, db_index=True)
+    task_id       = models.CharField(max_length=64, blank=True, default='')
+    tenant_slug   = models.CharField(max_length=100, blank=True, default='', db_index=True,
+                                     help_text='Empty for non-tenant (platform) tasks')
+    queue         = models.CharField(max_length=50, blank=True, default='')
+    args_snippet  = models.TextField(blank=True, default='',
+                                     help_text='Truncated repr of task args for debugging')
+    error_message = models.TextField(blank=True, default='')
+    traceback     = models.TextField(blank=True, default='',
+                                     help_text='Truncated to last 8000 chars')
+    failed_at     = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # Platform-owner triage
+    resolved              = models.BooleanField(default=False, db_index=True)
+    resolved_at           = models.DateTimeField(null=True, blank=True)
+    resolved_by_username  = models.CharField(max_length=150, blank=True, default='')
+
+    class Meta:
+        app_label = 'tenants'
+        ordering = ['-failed_at']
+        indexes = [
+            models.Index(fields=['resolved', '-failed_at']),
+            models.Index(fields=['tenant_slug', '-failed_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.task_name} [{self.tenant_slug or "platform"}] @ {self.failed_at:%Y-%m-%d %H:%M}'

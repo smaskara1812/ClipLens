@@ -13,6 +13,14 @@ DEBUG = os.getenv('DEBUG', 'True') == 'True'
 DEBUG_PROPAGATE_EXCEPTIONS = DEBUG  # surface full tracebacks in runserver during dev
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
+# Fail loudly if production is about to run with the known dev secret —
+# a forgeable SECRET_KEY means forgeable sessions and password-reset tokens.
+if not DEBUG and SECRET_KEY == 'freestream-dev-secret-key-2024':
+    raise ImproperlyConfigured(
+        'SECRET_KEY env var must be set when DEBUG=False. '
+        'Generate one: python -c "import secrets; print(secrets.token_urlsafe(50))"'
+    )
+
 def _origin_from_url(url: str) -> str | None:
     try:
         p = urlparse((url or "").strip())
@@ -251,6 +259,19 @@ LOGOUT_REDIRECT_URL = '/player/'
 SESSION_COOKIE_AGE    = 60 * 60 * 8   # 8 hours
 SESSION_COOKIE_SECURE = SITE_URL.startswith('https://')   # True only when actually on HTTPS
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# ── Hardening (active only when serving over HTTPS) ──────────────────────────
+_IS_HTTPS = SITE_URL.startswith('https://')
+CSRF_COOKIE_SECURE      = _IS_HTTPS
+SESSION_COOKIE_HTTPONLY = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+# HSTS: tell browsers to never downgrade to HTTP. Only meaningful behind TLS.
+if _IS_HTTPS:
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30   # 30 days; raise to 1yr once stable
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True     # covers all tenant subdomains
+# NOTE: X_FRAME_OPTIONS deliberately NOT set to DENY — the embed player
+# (stream_playlist iframe) requires frame embedding. Revisit with
+# frame-ancestors CSP per-view if embeds need tightening.
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},

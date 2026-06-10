@@ -159,3 +159,80 @@ def purge_expired_media_relocations():
     n = purge_expired()
     logger.info('purge_expired_media_relocations: purged %d', n)
     return {'ok': True, 'purged': n}
+
+
+# ── Automated system health sweep ────────────────────────────────────────────
+
+@shared_task(
+    name='tenants.run_system_health_checks',
+    queue='default',
+    soft_time_limit=240,
+    time_limit=300,
+)
+def run_system_health_checks():
+    """
+    Hourly automated health sweep (Celery beat). Runs the fast checks
+    (DBs, Redis, disk, workers, per-tenant roots, failure counts) and
+    emails the platform owner when anything is in 'error' state.
+
+    Alert throttle: at most one alert email per 6 hours (cache key), so a
+    persistent outage doesn't flood the inbox every hour.
+    """
+    from django.core.cache import cache
+    from .system_health import run_all_checks
+
+    results = list(run_all_checks(automated=True))
+    errors = [r for r in results if r.get('status') == 'error']
+    warns  = [r for r in results if r.get('status') == 'warn']
+
+    logger.info('health sweep: %d checks, %d errors, %d warnings',
+                len(results), len(errors), len(warns))
+
+    if not errors:
+        # All clear — drop the throttle so the NEXT failure alerts immediately
+        cache.delete('health_alert_sent')
+        return {'ok': True, 'errors': 0, 'warnings': len(warns)}
+
+    # Throttle: skip if we alerted within the last 6 hours
+    if cache.get('health_alert_sent'):
+        logger.info('health sweep: %d errors but alert throttled', len(errors))
+        return {'ok': False, 'errors': len(errors), 'alerted': False}
+
+    # Find platform owner email(s) from the default (control-plane) DB
+    try:
+        from django.contrib.auth.models import User
+        owners = list(
+            User.objects.using('default')
+            .filter(profile__is_platform_owner=True, is_active=True)
+            .exclude(email='')
+            .values_list('email', flat=True)
+        )
+    except Exception:
+        logger.exception('health sweep: could not resolve platform owner emails')
+        owners = []
+
+    if not owners:
+        logger.warning('health sweep: %d errors but no platform-owner email configured',
+                       len(errors))
+        return {'ok': False, 'errors': len(errors), 'alerted': False}
+
+    lines = [f'  ✗ {r["name"]}: {r["detail"]}' + (f'\n    Hint: {r["hint"]}' if r.get('hint') else '')
+             for r in errors]
+    warn_lines = [f'  ⚠ {r["name"]}: {r["detail"]}' for r in warns]
+    body = (
+        'ClipLens automated health sweep found problems:\n\n'
+        + '\n'.join(lines)
+        + (('\n\nWarnings:\n' + '\n'.join(warn_lines)) if warn_lines else '')
+        + '\n\nFull dashboard: /system/health/ on the admin subdomain.\n'
+        + 'Failed-task log: /tasks/failed/\n'
+    )
+    sent = queue_email(
+        scope='platform',
+        subject=f'[ClipLens ALERT] {len(errors)} health check(s) failing',
+        body=body,
+        recipients=owners,
+        trigger_source='health_sweep',
+    )
+    if sent:
+        cache.set('health_alert_sent', True, 6 * 60 * 60)   # 6h throttle
+    return {'ok': False, 'errors': len(errors), 'alerted': bool(sent)}

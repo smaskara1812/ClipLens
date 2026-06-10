@@ -8,7 +8,8 @@
 #   3. Celery audio worker         (queue: audio  — PANNs, silence detection)
 #   4. Celery translation worker   (queue: translation — NLLB-200)
 #   5. Celery live worker          (queue: live — FFmpeg live stream tasks)
-#   6. Flower task monitor         → http://localhost:5556
+#   6. Celery beat                 (periodic: health sweep, grace purges)
+#   7. Flower task monitor         → http://localhost:5556
 #
 # Prerequisites (must be running before ./start.sh):
 #   • PostgreSQL   — brew services start postgresql@15  (or your version)
@@ -138,8 +139,16 @@ celery -A cliplens worker -l info \
   --concurrency=2 &
 LIVE_CELERY_PID=$!
 
-# ── 6. Flower ─────────────────────────────────────────────────────────────────
-echo "  [6/6] Flower monitor          → http://localhost:5556"
+# ── 6. Celery beat ────────────────────────────────────────────────────────────
+#   Scheduler for periodic tasks: media-relocation grace purges (daily 03:17),
+#   automated health sweep (hourly :07). Without beat, none of these fire.
+echo "  [6/7] Celery beat             (scheduler)"
+celery -A cliplens beat -l info \
+  --schedule /tmp/cliplens-celerybeat-schedule &
+BEAT_PID=$!
+
+# ── 7. Flower ─────────────────────────────────────────────────────────────────
+echo "  [7/7] Flower monitor          → http://localhost:5556"
 celery -A cliplens flower \
   --port=5556 \
   --basic_auth="${FLOWER_BASIC_AUTH}" &
@@ -192,7 +201,7 @@ echo ""
 trap "
   echo ''
   echo 'Stopping all services...'
-  kill \$DJANGO_PID \$CELERY_PID \$AUDIO_CELERY_PID \$TRANSLATION_CELERY_PID \$LIVE_CELERY_PID \$FLOWER_PID \$STRIPE_PID 2>/dev/null
+  kill \$DJANGO_PID \$CELERY_PID \$AUDIO_CELERY_PID \$TRANSLATION_CELERY_PID \$LIVE_CELERY_PID \$BEAT_PID \$FLOWER_PID \$STRIPE_PID 2>/dev/null
   echo 'Done.'
   exit 0
 " INT TERM

@@ -146,13 +146,40 @@ def _on_task_postrun(task_id, task, args, kwargs, retval, state, **_):
     clear_tenant_context()
 
 
-def _on_task_failure(task_id, exception, args, kwargs, **_):
+def _on_task_failure(task_id, exception, args, kwargs, **extra):
     slug = (kwargs or {}).get('tenant_slug', '')
     timing = getattr(_task_timing, 'tasks', {}).pop(task_id, None)
     if timing and slug:
         start_ts, _ = timing
         # Still log partial usage on failure — AI compute was consumed
         _log_task_duration(task_id, '', slug, start_ts)
+
+    # ── Record the failure in the control-plane FailedTask log ──────────────
+    # Visible to the platform owner at /tasks/failed/. Must never raise —
+    # a broken log writer should not mask the original task failure.
+    try:
+        import traceback as _tb
+        from .models import FailedTask
+
+        sender = extra.get('sender')
+        task_name = getattr(sender, 'name', '') or extra.get('task', '') or ''
+        # Celery passes einfo with the formatted traceback when available
+        einfo = extra.get('einfo')
+        tb_text = str(einfo) if einfo else _tb.format_exc()
+
+        FailedTask.objects.using('control').create(
+            task_name=task_name[:200],
+            task_id=task_id or '',
+            tenant_slug=slug,
+            queue=getattr(getattr(sender, 'request', None), 'delivery_info', {}).get('routing_key', '')
+                  if sender else '',
+            args_snippet=repr(args)[:500],
+            error_message=f'{type(exception).__name__}: {exception}'[:2000],
+            traceback=tb_text[-8000:],
+        )
+    except Exception:
+        logger.exception('FailedTask log write failed for task %s', task_id)
+
     clear_tenant_context()
 
 

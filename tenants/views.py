@@ -1721,3 +1721,86 @@ def tenant_media_relocate_purge(request, tenant_id, relocation_id):
                              'error': 'Can only purge after a successful relocation.'}, status=400)
     result = purge_soft_deleted(relocation_id)
     return JsonResponse(result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Failed-task log (platform owner)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@platform_owner_required
+def failed_tasks_page(request):
+    """
+    Platform-wide list of Celery task failures across all tenants.
+    Filters: ?tenant=<slug>, ?show=all|unresolved (default unresolved),
+    ?task=<name-substring>. Paginated 50/page via ?page=N.
+    """
+    from django.core.paginator import Paginator
+    from .models import FailedTask
+
+    qs = FailedTask.objects.using('control').all()
+
+    show = request.GET.get('show', 'unresolved')
+    if show != 'all':
+        qs = qs.filter(resolved=False)
+
+    tenant_filter = (request.GET.get('tenant') or '').strip()
+    if tenant_filter:
+        qs = qs.filter(tenant_slug=tenant_filter)
+
+    task_filter = (request.GET.get('task') or '').strip()
+    if task_filter:
+        qs = qs.filter(task_name__icontains=task_filter)
+
+    paginator = Paginator(qs, 50)
+    page = paginator.get_page(request.GET.get('page', 1))
+
+    # Distinct tenant slugs + task names for the filter dropdowns
+    tenant_slugs = list(
+        FailedTask.objects.using('control')
+        .exclude(tenant_slug='').values_list('tenant_slug', flat=True).distinct()
+    )
+    unresolved_count = FailedTask.objects.using('control').filter(resolved=False).count()
+
+    return render(request, 'tenants/failed_tasks.html', {
+        'page':             page,
+        'show':             show,
+        'tenant_filter':    tenant_filter,
+        'task_filter':      task_filter,
+        'tenant_slugs':     sorted(tenant_slugs),
+        'unresolved_count': unresolved_count,
+    })
+
+
+@platform_owner_required
+@require_POST
+def failed_task_resolve(request, task_pk):
+    """Mark one failure resolved (or unresolved with ?undo=1)."""
+    from django.utils import timezone
+    from .models import FailedTask
+    ft = get_object_or_404(FailedTask.objects.using('control'), pk=task_pk)
+    if request.POST.get('undo'):
+        ft.resolved = False
+        ft.resolved_at = None
+        ft.resolved_by_username = ''
+    else:
+        ft.resolved = True
+        ft.resolved_at = timezone.now()
+        ft.resolved_by_username = request.user.username
+    ft.save(using='control', update_fields=['resolved', 'resolved_at', 'resolved_by_username'])
+    return redirect(request.META.get('HTTP_REFERER') or 'tenants:failed_tasks')
+
+
+@platform_owner_required
+@require_POST
+def failed_tasks_resolve_all(request):
+    """Bulk-resolve every unresolved failure (optionally scoped to ?tenant=)."""
+    from django.utils import timezone
+    from .models import FailedTask
+    qs = FailedTask.objects.using('control').filter(resolved=False)
+    tenant_filter = (request.POST.get('tenant') or '').strip()
+    if tenant_filter:
+        qs = qs.filter(tenant_slug=tenant_filter)
+    n = qs.update(resolved=True, resolved_at=timezone.now(),
+                  resolved_by_username=request.user.username)
+    messages.success(request, f'Marked {n} failure(s) as resolved.')
+    return redirect('tenants:failed_tasks')

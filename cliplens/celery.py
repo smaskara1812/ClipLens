@@ -32,4 +32,10 @@ app.conf.beat_schedule = {
         'task':     'tenants.purge_expired_media_relocations',
         'schedule': crontab(hour=3, minute=17),
     },
+    # Automated health sweep — fast checks only (skips model-cache scans);
+    # emails the platform owner on errors, throttled to one alert per 6h.
+    'system-health-sweep': {
+        'task':     'tenants.run_system_health_checks',
+        'schedule': crontab(minute=7),   # hourly at :07
+    },
 }

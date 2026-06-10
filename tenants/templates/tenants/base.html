@@ -115,6 +115,7 @@
       <a href="{% url 'tenants:manage_topups' %}" class="{% block nav_topups %}{% endblock %}">Top-ups</a>
       <a href="{% url 'tenants:manage_leads' %}" class="{% block nav_leads %}{% endblock %}">Leads</a>
       <a href="{% url 'tenants:system_health' %}" class="{% block nav_health %}{% endblock %}">Health</a>
+      <a href="{% url 'tenants:failed_tasks' %}" class="{% block nav_failed %}{% endblock %}">Failures</a>
       <a href="{% url 'tenants:create_tenant' %}" class="{% block nav_new %}{% endblock %}">+ New Org</a>
     </nav>
     <div class="topbar-user" style="display:flex;align-items:center;gap:16px;">
@@ -142,6 +143,7 @@
       <a href="{% url 'tenants:platform_support_list' %}">Support Inbox</a>
       <div class="sidebar-section">System</div>
       <a href="{% url 'tenants:system_health' %}">Health Check</a>
+      <a href="{% url 'tenants:failed_tasks' %}">Failed Tasks</a>
       <a href="{% url 'tenants:system_databases' %}">Databases</a>
       <a href="/admin/">Django Admin</a>
     </div>

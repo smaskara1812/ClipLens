@@ -1,0 +1,132 @@
+{% extends "tenants/base.html" %}
+{% block title %}Failed Tasks — ClipLens Control Plane{% endblock %}
+{% block nav_health %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+    <div>
+      <h1>Failed Tasks</h1>
+      <p style="margin-top:6px; color:#8b949e;">
+        Every Celery task failure across all tenants.
+        {% if unresolved_count %}
+          <span style="background:#da363322; color:#f85149; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600;">
+            {{ unresolved_count }} unresolved
+          </span>
+        {% else %}
+          <span style="background:#23863622; color:#3fb950; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600;">
+            All clear
+          </span>
+        {% endif %}
+      </p>
+    </div>
+    {% if unresolved_count %}
+    <form method="post" action="{% url 'tenants:failed_tasks_resolve_all' %}"
+          onsubmit="return confirm('Mark ALL unresolved failures as resolved?');">
+      {% csrf_token %}
+      {% if tenant_filter %}<input type="hidden" name="tenant" value="{{ tenant_filter }}">{% endif %}
+      <button type="submit" class="btn btn-secondary btn-sm">Resolve all{% if tenant_filter %} for {{ tenant_filter }}{% endif %}</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Filters -->
+<form method="get" style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+  <select name="show" style="font-size:12px; padding:6px 10px;" onchange="this.form.submit()">
+    <option value="unresolved" {% if show != 'all' %}selected{% endif %}>Unresolved only</option>
+    <option value="all" {% if show == 'all' %}selected{% endif %}>All failures</option>
+  </select>
+  <select name="tenant" style="font-size:12px; padding:6px 10px;" onchange="this.form.submit()">
+    <option value="">All tenants</option>
+    {% for s in tenant_slugs %}
+      <option value="{{ s }}" {% if s == tenant_filter %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="task" value="{{ task_filter }}" placeholder="Filter by task name…"
+         style="font-size:12px; padding:6px 10px; min-width:220px;">
+  <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+  {% if tenant_filter or task_filter or show == 'all' %}
+    <a href="{% url 'tenants:failed_tasks' %}" style="font-size:12px; color:#8b949e;">Clear</a>
+  {% endif %}
+</form>
+
+<div class="card">
+  <table style="width:100%; font-size:12.5px;">
+    <thead>
+      <tr>
+        <th style="text-align:left;">When</th>
+        <th style="text-align:left;">Task</th>
+        <th style="text-align:left;">Tenant</th>
+        <th style="text-align:left;">Error</th>
+        <th style="text-align:left;"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for f in page %}
+      <tr {% if f.resolved %}style="opacity:.45;"{% endif %}>
+        <td style="white-space:nowrap; color:#8b949e;">{{ f.failed_at|date:"M j H:i" }}</td>
+        <td>
+          <code style="color:#79c0ff; font-size:11px;">{{ f.task_name|cut:"videos.tasks."|cut:"tenants." }}</code>
+        </td>
+        <td>
+          {% if f.tenant_slug %}
+            <a href="?tenant={{ f.tenant_slug }}" style="color:#8b949e;">{{ f.tenant_slug }}</a>
+          {% else %}<span style="color:#484f58;">platform</span>{% endif %}
+        </td>
+        <td style="max-width:420px;">
+          <details>
+            <summary style="cursor:pointer; color:#f0b8b8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:400px;">
+              {{ f.error_message|truncatechars:110 }}
+            </summary>
+            <div style="margin-top:8px;">
+              {% if f.args_snippet %}
+                <div style="font-size:11px; color:#8b949e; margin-bottom:6px;">
+                  <strong>Args:</strong> <code>{{ f.args_snippet|truncatechars:200 }}</code>
+                </div>
+              {% endif %}
+              {% if f.task_id %}
+                <div style="font-size:11px; color:#8b949e; margin-bottom:6px;">
+                  <strong>Task ID:</strong> <code>{{ f.task_id }}</code>
+                </div>
+              {% endif %}
+              <pre style="background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:10px; font-size:10.5px; overflow-x:auto; max-height:300px; color:#c9d1d9;">{{ f.traceback }}</pre>
+            </div>
+          </details>
+        </td>
+        <td style="white-space:nowrap;">
+          <form method="post" action="{% url 'tenants:failed_task_resolve' f.pk %}" style="display:inline;">
+            {% csrf_token %}
+            {% if f.resolved %}
+              <input type="hidden" name="undo" value="1">
+              <button type="submit" class="btn btn-secondary btn-sm" style="font-size:10px;">Reopen</button>
+            {% else %}
+              <button type="submit" class="btn btn-secondary btn-sm" style="font-size:10px;">Resolve</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr>
+        <td colspan="5" style="text-align:center; color:#8b949e; padding:36px;">
+          {% if show == 'all' %}No task failures recorded — nothing has ever failed. 🎉
+          {% else %}No unresolved failures.{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if page.paginator.num_pages > 1 %}
+  <div style="display:flex; gap:8px; justify-content:center; margin-top:16px; font-size:12px;">
+    {% if page.has_previous %}
+      <a href="?page={{ page.previous_page_number }}&show={{ show }}&tenant={{ tenant_filter }}&task={{ task_filter }}" class="btn btn-secondary btn-sm">← Prev</a>
+    {% endif %}
+    <span style="color:#8b949e; align-self:center;">Page {{ page.number }} / {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}
+      <a href="?page={{ page.next_page_number }}&show={{ show }}&tenant={{ tenant_filter }}&task={{ task_filter }}" class="btn btn-secondary btn-sm">Next →</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

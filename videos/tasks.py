@@ -544,8 +544,32 @@ def generate_captions_task(self, video_id: str, language: str = 'en', **kwargs):
         subtitle.save()
         logger.info(f'generate_captions_task: saved captions for {video_id} [{detected_lang}]')
 
+        # Notify uploader: captions are live (reuses upload_complete prefs/type)
+        try:
+            from .notifications import dispatch as _notify
+            from django.contrib.auth.models import User as _U
+            db = video._state.db or 'default'
+            u = _U.objects.using(db).filter(username=video.uploaded_by).first()
+            if u:
+                _notify(
+                    recipient=u, notification_type='upload_complete',
+                    title=f'Captions ready for "{video.title[:70]}"',
+                    message=f'Speech in "{video.title}" is transcribed and searchable.',
+                    link=f'/watch/{video.id}/', video=video,
+                    tenant_slug=_tenant_slug, db_alias=db,
+                )
+        except Exception:
+            logger.exception('generate_captions_task: notify hook failed')
+
     except Exception as exc:
         logger.error(f'generate_captions_task failed for {video_id}: {exc}')
+        if (self.request.retries or 0) >= (self.max_retries or 0):
+            try:
+                from .notifications import notify_video_failed
+                notify_video_failed(video, error_message=f'Caption generation failed: {exc}',
+                                    tenant_slug=_tenant_slug)
+            except Exception:
+                logger.exception('generate_captions_task: failure-notify hook failed')
         raise self.retry(exc=exc)
     finally:
         # ── Step 5: clean up temp WAV ─────────────────────────────────────────
@@ -1414,8 +1438,33 @@ def analyze_video_frames_task(self, video_id: str, **kwargs):
         except Exception:
             logger.exception('analyze_video_frames_task: could not queue policy apply')
 
+        # Notify uploader: AI analysis done — faces/objects/scenes now searchable
+        try:
+            from .notifications import dispatch as _notify
+            from django.contrib.auth.models import User as _U
+            db = video._state.db or 'default'
+            u = _U.objects.using(db).filter(username=video.uploaded_by).first()
+            if u:
+                _notify(
+                    recipient=u, notification_type='upload_complete',
+                    title=f'AI analysis complete for "{video.title[:65]}"',
+                    message=(f'"{video.title}" is fully indexed — faces, objects, and '
+                             f'scenes are now searchable.'),
+                    link=f'/watch/{video.id}/', video=video,
+                    tenant_slug=_tenant_slug, db_alias=db,
+                )
+        except Exception:
+            logger.exception('analyze_video_frames_task: notify hook failed')
+
     except Exception as exc:
         logger.error(f'analyze_video_frames_task failed for {video_id}: {exc}')
+        if (self.request.retries or 0) >= (self.max_retries or 0):
+            try:
+                from .notifications import notify_video_failed
+                notify_video_failed(video, error_message=f'AI analysis failed: {exc}',
+                                    tenant_slug=_tenant_slug)
+            except Exception:
+                logger.exception('analyze_video_frames_task: failure-notify hook failed')
         raise self.retry(exc=exc)
     finally:
         if tmp_dir and os.path.exists(tmp_dir):

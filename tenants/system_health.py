@@ -396,6 +396,85 @@ def check_pyannote():
     return _ok('Pyannote (diarization)', f'{len(found)}/{len(needed)} models cached · {_fmt_bytes(size)}')
 
 
+# ── Per-tenant checks ─────────────────────────────────────────────────────────
+
+def check_tenant_dbs():
+    """Every active tenant's database must accept a connection + trivial query."""
+    from .models import Tenant
+    from .provisioning import _register_db_alias
+    from django.db import connections
+
+    tenants = list(Tenant.objects.using('control').filter(is_active=True))
+    if not tenants:
+        return _na('Tenant databases', 'No active tenants')
+
+    bad = []
+    for t in tenants:
+        try:
+            _register_db_alias(t.db_name)
+            with connections[t.db_name].cursor() as cur:
+                cur.execute('SELECT 1')
+        except Exception as exc:
+            bad.append(f'{t.slug} ({type(exc).__name__})')
+    if bad:
+        return _error('Tenant databases', f'{len(bad)}/{len(tenants)} unreachable: ' + ', '.join(bad),
+                      hint='Check PostgreSQL and that each DB exists')
+    return _ok('Tenant databases', f'All {len(tenants)} tenant DBs reachable')
+
+
+def check_tenant_media_roots():
+    """Every active tenant's media root must exist and be writable
+    (honours custom media_root_absolute paths — catches unmounted NAS/SSHFS)."""
+    import os as _os
+    from .models import Tenant
+
+    tenants = list(Tenant.objects.using('control').filter(is_active=True))
+    if not tenants:
+        return _na('Tenant media roots', 'No active tenants')
+
+    bad = []
+    for t in tenants:
+        custom = (getattr(t, 'media_root_absolute', '') or '').strip()
+        root = custom if custom else str(Path(settings.MEDIA_ROOT) / t.media_folder)
+        if not _os.path.isdir(root):
+            bad.append(f'{t.slug}: missing ({root})')
+            continue
+        test = _os.path.join(root, '.health_write_test')
+        try:
+            with open(test, 'wb') as fh:
+                fh.write(b'x')
+            _os.remove(test)
+        except OSError:
+            bad.append(f'{t.slug}: not writable')
+    if bad:
+        return _error('Tenant media roots', '; '.join(bad),
+                      hint='Custom paths must be mounted and writable — check NAS/SSHFS mounts')
+    return _ok('Tenant media roots', f'All {len(tenants)} roots writable')
+
+
+def check_recent_task_failures():
+    """Unresolved Celery failures in the last 24 h (from the FailedTask log)."""
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import FailedTask
+
+    cutoff = timezone.now() - timedelta(hours=24)
+    n = FailedTask.objects.using('control').filter(
+        resolved=False, failed_at__gte=cutoff).count()
+    total_unresolved = FailedTask.objects.using('control').filter(resolved=False).count()
+    if n == 0 and total_unresolved == 0:
+        return _ok('Task failures (24h)', 'No unresolved failures')
+    if n == 0:
+        return _warn('Task failures (24h)',
+                     f'None in last 24h, but {total_unresolved} older unresolved',
+                     hint='Review /tasks/failed/')
+    if n >= 10:
+        return _error('Task failures (24h)', f'{n} unresolved failures in last 24h',
+                      hint='Something is systematically broken — see /tasks/failed/')
+    return _warn('Task failures (24h)', f'{n} unresolved failure(s) in last 24h',
+                 hint='Review /tasks/failed/')
+
+
 # ── Master list ───────────────────────────────────────────────────────────────
 
 # Each entry: (stable_id, group_label, check_function).
@@ -408,6 +487,10 @@ ALL_CHECKS = [
     ('redis',            'Boot dependencies', check_redis),
     ('disk_space',       'Boot dependencies', check_disk_space),
     ('ffmpeg',           'Boot dependencies', check_ffmpeg),
+    # ── Per-tenant ───────────────────────────────────────────────────
+    ('tenant_dbs',         'Tenants', check_tenant_dbs),
+    ('tenant_media_roots', 'Tenants', check_tenant_media_roots),
+    ('task_failures',      'Tenants', check_recent_task_failures),
     # ── Celery workers ───────────────────────────────────────────────
     ('celery_main',      'Celery workers',    check_celery_main),
     ('celery_audio',     'Celery workers',    check_celery_audio),
@@ -444,6 +527,17 @@ def run_check_by_id(check_id: str) -> dict | None:
     return _timed(fn)
 
 
+# Checks that are slow or irrelevant for automated monitoring. Model-cache
+# checks scan GBs of disk and never regress on their own; GPU/integrations
+# are static config. The automated sweep cares about things that BREAK.
+AUTOMATED_SKIP_IDS = {
+    'whisper', 'clip', 'blip', 'nllb', 'yolo',
+    'insightface', 'panns', 'pyannote', 'gpu',
+}
+
+
+
+
 def get_check_manifest() -> list:
     """
     Return the list of check id/name/group tuples so the page can render
@@ -455,9 +549,24 @@ def get_check_manifest() -> list:
     ]
 
 
-def run_all_checks():
-    """Run every check synchronously. Used by /api/health/ and tests."""
-    return [_timed(fn) for (_cid, _group, fn) in ALL_CHECKS]
+def run_all_checks(automated: bool = False):
+    """
+    Run every check synchronously. Used by /api/health/, tests, and the
+    hourly beat sweep. Results are annotated with id + group.
+
+    automated=True skips the slow model-cache scans and static checks
+    (AUTOMATED_SKIP_IDS) — the sweep only cares about things that can
+    break at runtime.
+    """
+    results = []
+    for cid, group, fn in ALL_CHECKS:
+        if automated and cid in AUTOMATED_SKIP_IDS:
+            continue
+        res = _timed(fn)
+        res['id'] = cid
+        res['group'] = group
+        results.append(res)
+    return results
 
 
 def summarise(results):
