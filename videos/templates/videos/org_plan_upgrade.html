@@ -107,7 +107,7 @@
         <strong>{{ plan.storage_limit_gb }} GB</strong> storage<br>
         <strong>{{ plan.ai_minutes_limit }}</strong> AI minutes / month<br>
         <strong>{% if plan.max_users %}{{ plan.max_users }}{% else %}Unlimited{% endif %}</strong> users<br>
-        <strong>{% if plan.max_videos %}{{ plan.max_videos }}{% else %}Unlimited{% endif %}</strong> videos
+        <strong>Unlimited</strong> videos
       </div>
 
       {% if current_plan and current_plan.pk == plan.pk %}

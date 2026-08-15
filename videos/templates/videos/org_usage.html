@@ -114,12 +114,14 @@
       <div class="usage-card-label">AI Processing Minutes</div>
       <div class="usage-card-value">{{ ai_minutes }}</div>
       <div class="usage-card-sub">
-        {% if ai_minutes_limit %}
-          of <strong>{{ ai_minutes_limit }} min</strong> available
-          {% if ai_minutes_credits %}
-            (plan {{ ai_minutes_limit_plan }} + <span style="color:var(--accent)">+{{ ai_minutes_credits|floatformat:1 }} credits</span>)
-          {% endif %}
-        {% else %}Unlimited{% endif %}
+        min used this month
+        {% if ai_minutes_credits %}
+          &nbsp;·&nbsp;<strong style="color:var(--accent)">{{ ai_minutes_credits|floatformat:1 }} min remaining</strong>
+        {% elif ai_minutes_limit %}
+          &nbsp;·&nbsp;<strong>{{ ai_minutes_remaining }} min remaining</strong>
+        {% else %}
+          &nbsp;·&nbsp;Unlimited
+        {% endif %}
       </div>
       {% if ai_minutes_limit %}
       <div class="quota-bar-track">
@@ -127,12 +129,14 @@
              style="width:{{ ai_pct }}%"></div>
       </div>
       <div class="quota-bar-label">
-        <span>{{ ai_pct }}% used</span>
-        <span>{{ ai_minutes_limit|add:0 }} min remaining: {{ ai_minutes_limit }} − {{ ai_minutes }} = {% widthratio ai_minutes 1 1 %}</span>
+        <span>Plan: {{ ai_minutes_limit_plan }} min/month</span>
+        {% if ai_minutes_credits %}
+          <span style="color:var(--accent)">+{{ ai_minutes_credits|floatformat:1 }} credit min remaining</span>
+        {% endif %}
       </div>
       {% if ai_warn == 'critical' %}
         <p style="color:#ef4444;font-size:12px;margin-top:8px;font-weight:600">
-          ⚠ Critical — at 95%+ of your plan limit. Contact support to upgrade.
+          ⚠ Critical — nearly out of AI minutes. Top up or upgrade to continue processing.
         </p>
       {% elif ai_warn == 'warning' %}
         <p style="color:#f59e0b;font-size:12px;margin-top:8px;font-weight:600">

@@ -15,6 +15,10 @@ from tenants.views import (
     submit_lead as tenant_submit_lead,
     privacy_page as tenant_privacy_page,
     terms_page as tenant_terms_page,
+    public_signup,
+    public_signup_check_email,
+    public_signup_check_slug,
+    onboard_check_username,
 )
 
 urlpatterns = [
@@ -41,6 +45,12 @@ urlpatterns = [
     path('contact/', tenant_submit_lead, name='submit_lead'),
     path('privacy/', tenant_privacy_page, name='privacy'),
     path('terms/',   tenant_terms_page,   name='terms'),
+
+    # ── Self-service signup (public, no auth) ───────────────────────────────
+    path('signup/',             public_signup,             name='signup'),
+    path('signup/check-email/', public_signup_check_email, name='signup_check_email'),
+    path('api/signup/check-slug/',     public_signup_check_slug, name='signup_check_slug'),
+    path('api/onboard/check-username/', onboard_check_username,  name='onboard_check_username'),
 
     # ── Control plane (accessible at admin.cliplens.* or /platform/ locally) ──
     path('platform/', include('tenants.urls', namespace='tenants')),

@@ -802,6 +802,11 @@
     _toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
   }
 
+  // ── CSRF token helper (used by any template making POST fetch calls) ──
+  function getCsrfToken() {
+    return (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+  }
+
   // ── Copy to clipboard ──
   function copyText(text, label) {
     navigator.clipboard.writeText(text).then(() => {

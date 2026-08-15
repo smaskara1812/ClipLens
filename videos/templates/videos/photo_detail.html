@@ -733,16 +733,22 @@ async function toggleDetailArchive() {
       const card = document.createElement('div');
       card.className = 'face-card';
       card.dataset.id = f.id;
+      card.dataset.review = f.review_status || 'unreviewed';
+      applyReviewStyle(card, f.review_status);
 
       const thumb = f.thumbnail_url
         ? `<img class="face-thumb" src="${f.thumbnail_url}" alt="${f.name}" />`
         : `<div class="face-thumb-ph">👤</div>`;
 
       const nameClass = f.is_auto_named ? 'face-name auto' : 'face-name';
+      const reviewBadge = f.review_status === 'confirmed'
+        ? `<span id="fstatus-${f.id}" style="font-size:10px;color:#3fb950;">✓ confirmed</span>`
+        : `<span id="fstatus-${f.id}" style="font-size:10px;color:var(--text-muted);">unreviewed</span>`;
       card.innerHTML = `
         ${thumb}
         <div class="face-card-body">
           <div class="${nameClass}" id="fname-${f.id}">${f.name}</div>
+          ${reviewBadge}
           <div id="frename-${f.id}" style="display:none;" class="face-rename-row">
             <input type="text" id="finput-${f.id}" value="${f.name}" placeholder="Enter name…" />
             <button onclick="saveFaceName(${f.id})">Save</button>
@@ -750,21 +756,93 @@ async function toggleDetailArchive() {
           </div>
         </div>
         <div class="face-actions">
+          <button class="face-btn" id="fconfirm-${f.id}"
+                  onclick="setFaceReview(${f.id}, 'confirmed')"
+                  title="Confirm: this really is ${f.name}"
+                  style="${f.review_status === 'confirmed' ? 'color:#3fb950;' : ''}">✓</button>
+          <button class="face-btn" id="freject-${f.id}"
+                  onclick="setFaceReview(${f.id}, 'rejected')"
+                  title="Not ${f.name}? Separate into a new person you can name">⊘ Not them</button>
           <button class="face-btn" onclick="startRename(${f.id})" title="Rename">✏ Name</button>
           <a href="/faces/${f.id}/" class="face-btn" style="text-decoration:none;" title="View in People">→</a>
-          <button class="face-btn danger" onclick="removeFaceFromPhoto(${f.id}, this)" title="Remove from this photo">✕</button>
+          <button class="face-btn danger" onclick="removeFaceFromPhoto(${f.id}, this)" title="Permanently remove from this photo">🗑</button>
         </div>`;
       container.appendChild(card);
     });
   }
 
-  // Load faces
-  fetch(`/api/photos/${_photoId}/faces/`, { credentials: 'include' })
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(renderFaces)
-    .catch(() => {
-      container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Could not load faces.</div>';
+  function loadFaces() {
+    return fetch(`/api/photos/${_photoId}/faces/`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(renderFaces);
+  }
+
+  function applyReviewStyle(card, status) {
+    if (!card) return;
+    card.style.borderColor = '';
+    card.style.opacity = '';
+    if (status === 'confirmed') card.style.borderColor = 'rgba(63,185,80,.45)';
+    if (status === 'rejected')  { card.style.opacity = '0.45'; card.style.borderColor = 'rgba(248,81,73,.4)'; }
+  }
+
+  window.setFaceReview = async function(identityId, newStatus) {
+    // Confirm toggles back to unreviewed when clicked again (undo).
+    // "Not them" (rejected) is a SPLIT — no toggle; the card becomes a new person.
+    const card = container.querySelector(`.face-card[data-id="${identityId}"]`);
+    if (newStatus === 'confirmed' && card && card.dataset.review === 'confirmed') {
+      newStatus = 'unreviewed';
+    }
+    if (newStatus === 'rejected') {
+      const personName = document.getElementById(`fname-${identityId}`)?.textContent || 'this person';
+      if (!confirm(`Not ${personName}? The face will be separated into a new, unnamed person that you can rename. "${personName}" keeps their other photos.`)) {
+        return;
+      }
+    }
+    const res = await fetch(`/api/photos/${_photoId}/faces/${identityId}/status/`, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCsrfToken(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+      credentials: 'include',
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to update review status.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+
+    // ── Split: re-render the list, then open rename on the new identity ──
+    if (newStatus === 'rejected' && data.new_identity) {
+      await loadFaces();
+      if (window.fsTost) {
+        fsTost('success', 'Face separated',
+               `Now its own person ("${data.new_identity.name}") — give them a name.`);
+      }
+      // Drop straight into the rename input so the editor names them now
+      setTimeout(() => { try { startRename(data.new_identity.id); } catch (e) {} }, 100);
+      return;
+    }
+
+    // ── Confirm / unreviewed: update card visuals in place ──
+    if (card) card.dataset.review = newStatus;
+    applyReviewStyle(card, newStatus);
+    const badge = document.getElementById(`fstatus-${identityId}`);
+    const cBtn  = document.getElementById(`fconfirm-${identityId}`);
+    if (badge) {
+      badge.style.color = newStatus === 'confirmed' ? '#3fb950' : 'var(--text-muted)';
+      badge.textContent = newStatus === 'confirmed' ? '✓ confirmed' : 'unreviewed';
+    }
+    if (cBtn) cBtn.style.color = newStatus === 'confirmed' ? '#3fb950' : '';
+    if (window.fsTost) {
+      fsTost('success', 'Review updated',
+             newStatus === 'confirmed' ? 'Face confirmed' : 'Review reset');
+    }
+  };
+
+  // Load faces
+  loadFaces().catch(() => {
+    container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Could not load faces.</div>';
+  });
 
   window.startRename = function(id) {
     document.getElementById(`fname-${id}`).style.display = 'none';

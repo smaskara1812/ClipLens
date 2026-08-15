@@ -33,7 +33,9 @@ def dispatch(
     photo=None,
     tenant_slug: str = '',
     dedupe_key: str = '',
+    dedupe_window_hours: int = 24,
     db_alias: str = '',
+    email_scope_override: str = '',  # 'platform' or 'tenant' — overrides auto-detection
 ) -> 'Notification | None':
     """
     Create a Notification row (if user opted in) and queue an email (if user
@@ -56,11 +58,11 @@ def dispatch(
                      recipient.username, notification_type)
         return None
 
-    # Dedupe (quota warnings) — only fire if no matching row in last 24h
+    # Dedupe — only fire if no matching row within the window
     if dedupe_key:
         from django.utils import timezone
         from datetime import timedelta
-        cutoff = timezone.now() - timedelta(hours=24)
+        cutoff = timezone.now() - timedelta(hours=dedupe_window_hours)
         existing = Notification.objects.using(db).filter(
             recipient=recipient,
             notification_type=notification_type,
@@ -106,7 +108,7 @@ def dispatch(
                     body += f'View: {link}\n\n'
             body += '— ClipLens'
             queue_email(
-                scope='tenant' if tenant else 'platform',
+                scope=email_scope_override or ('tenant' if tenant else 'platform'),
                 subject=f'[ClipLens] {title}',
                 body=body,
                 recipients=[recipient.email],
@@ -245,8 +247,19 @@ def notify_quota_warning(tenant_slug: str, resource: str, pct: float,
         return
 
     db = tenant.db_name
-    threshold_type = 'quota_95' if pct >= 95 else 'quota_80'
-    severity = 'critical' if pct >= 95 else 'warning'
+
+    if pct >= 100:
+        threshold_type = 'quota_100'
+        severity = 'critical'
+    elif pct >= 95:
+        threshold_type = 'quota_95'
+        severity = 'critical'
+    elif pct >= 90:
+        threshold_type = 'quota_90'
+        severity = 'warning'
+    else:
+        threshold_type = 'quota_80'
+        severity = 'warning'
 
     # Find org admins
     admin_user_ids = list(
@@ -262,9 +275,9 @@ def notify_quota_warning(tenant_slug: str, resource: str, pct: float,
     message = (
         f'Your org has used {used:.1f} {unit} of {limit:.1f} {unit} '
         f'({pct:.0f}% of plan limit) of {resource.lower()}. '
-        f'{"Upload will be blocked at 100%." if severity == "critical" else "Consider topping up or upgrading."}'
+        f'{"Uploads are now blocked — top up or upgrade to continue." if pct >= 100 else "Upload will be blocked at 100%." if severity == "critical" else "Consider topping up or upgrading."}'
     )
-    # Dedupe key: same threshold + resource within 24h
+    # Dedupe key: same threshold + resource — window is 30 days (once per billing month)
     dedupe = f'{threshold_type}:{resource}'
     for u in admins:
         dispatch(
@@ -275,5 +288,7 @@ def notify_quota_warning(tenant_slug: str, resource: str, pct: float,
             link='/admin-panel/',
             tenant_slug=tenant_slug,
             db_alias=db,
+            email_scope_override='platform',  # quota/billing emails use platform SMTP
             dedupe_key=dedupe,
+            dedupe_window_hours=24 * 30,  # once per billing month per threshold
         )

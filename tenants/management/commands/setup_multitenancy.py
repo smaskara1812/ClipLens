@@ -108,9 +108,9 @@ class Command(BaseCommand):
             self.stdout.write("Seeding default plans...")
             from tenants.models import Plan
             defaults = [
-                {'name': 'Starter',    'storage_limit_gb': 50,   'ai_minutes_limit': 100, 'max_users': 2,  'max_videos': 20},
-                {'name': 'Pro',        'storage_limit_gb': 200,  'ai_minutes_limit': 500, 'max_users': 10, 'max_videos': 0},
-                {'name': 'Enterprise', 'storage_limit_gb': 1000, 'ai_minutes_limit': 0,   'max_users': 0,  'max_videos': 0},
+                {'name': 'Starter',    'storage_limit_gb': 50,   'ai_minutes_limit': 100, 'max_users': 2},
+                {'name': 'Pro',        'storage_limit_gb': 200,  'ai_minutes_limit': 500, 'max_users': 10},
+                {'name': 'Enterprise', 'storage_limit_gb': 1000, 'ai_minutes_limit': 0,   'max_users': 0},
             ]
             for plan_data in defaults:
                 _, created = Plan.objects.using('control').get_or_create(

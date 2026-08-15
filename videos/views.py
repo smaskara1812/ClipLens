@@ -2095,7 +2095,7 @@ def org_usage_page(request):
 
     # Effective limits include addons
     ai_minutes       = usage['ai_minutes']
-    ai_minutes_limit = usage['ai_minutes_effective']     # plan + credits
+    ai_minutes_limit = usage['ai_minutes_capacity']      # plan + credits purchased (for display)
     storage_limit    = usage['storage_limit_effective']  # plan + addons
 
     # Warning levels (computed against effective limits)
@@ -2142,8 +2142,9 @@ def org_usage_page(request):
         'ai_minutes':            round(ai_minutes, 1),
         'ai_minutes_limit':      ai_minutes_limit,
         'ai_minutes_limit_plan': usage['ai_minutes_limit_plan'],
-        'ai_minutes_credits':    usage['ai_minutes_credits'],
+        'ai_minutes_credits':    usage['ai_minutes_credits'],  # remaining in active packs
         'ai_pct':                min(100, round(ai_minutes / max(ai_minutes_limit, 1) * 100)) if ai_minutes_limit else 0,
+        'ai_minutes_remaining':  round(max(0, ai_minutes_limit - ai_minutes), 1),
         'ai_warn':               ai_warn,
         'storage_gb':            storage_gb,
         'storage_gb_display':    round(storage_gb * 1024, 1),  # in MB for small values
@@ -5544,6 +5545,255 @@ def video_upload(request):
     }, status=status.HTTP_201_CREATED)
 
 
+# ── YouTube import ──────────────────────────────────────────────────────────────
+
+import re as _re
+_YT_VIDEO_RE = _re.compile(
+    r'^https?://(www\.)?(youtube\.com/watch\?v=[\w-]{11}|youtu\.be/[\w-]{11})([&?].*)?$'
+)
+_YT_PLAYLIST_RE = _re.compile(
+    r'^https?://(www\.)?youtube\.com/playlist\?list=[\w-]+([&?].*)?$'
+)
+
+
+def _yt_url_type(url: str):
+    """Return 'video', 'playlist', or None.
+
+    watch?v=...&list=... URLs (Radio Mixes, auto-playlists) are treated as
+    'playlist' so the full list is offered to the user rather than silently
+    letting yt-dlp download every track in the background.
+    """
+    if _YT_PLAYLIST_RE.match(url):
+        return 'playlist'
+    if _YT_VIDEO_RE.match(url):
+        if 'list=' in url:
+            return 'playlist'  # watch?v=...&list=... — Radio Mix / auto-playlist
+        return 'video'
+    return None
+
+
+def _validate_youtube_url(url: str):
+    """Return error string or None."""
+    if not url:
+        return 'URL is required.'
+    if not _yt_url_type(url):
+        return ('Only YouTube watch URLs (youtube.com/watch?v=... or youtu.be/...) '
+                'or playlist URLs (youtube.com/playlist?list=... / watch?v=...&list=...) are accepted.')
+    return None
+
+
+_YT_PLAYLIST_CAP = 50
+
+
+@api_view(['POST'])
+def youtube_preview(request):
+    """
+    Fetch metadata for a YouTube URL (single video or playlist) without downloading.
+    Returns {type: 'video', ...} or {type: 'playlist', video_count, capped, videos: [...]}
+    """
+    if not request.user.is_authenticated:
+        return Response({'error': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
+    url = request.data.get('url', '').strip()
+    err = _validate_youtube_url(url)
+    if err:
+        return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+
+    url_type = _yt_url_type(url)
+    try:
+        import yt_dlp
+        if url_type == 'playlist':
+            opts = {
+                'quiet': True, 'no_warnings': True,
+                'extract_flat': 'in_playlist',
+                'skip_download': True,
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            entries = [e for e in (info.get('entries') or []) if e]
+            total = len(entries)
+            capped = total > _YT_PLAYLIST_CAP
+            entries = entries[:_YT_PLAYLIST_CAP]
+            return Response({
+                'type':        'playlist',
+                'title':       info.get('title', ''),
+                'uploader':    info.get('uploader', info.get('channel', '')),
+                'thumbnail':   (entries[0].get('thumbnail', '') or '') if entries else '',
+                'video_count': min(total, _YT_PLAYLIST_CAP),
+                'total_count': total,
+                'capped':      capped,
+                'videos': [
+                    {
+                        'id':        e.get('id', ''),
+                        'title':     e.get('title', ''),
+                        'duration':  e.get('duration', 0),
+                        'thumbnail': e.get('thumbnail', '') or '',
+                    }
+                    for e in entries
+                ],
+            })
+        else:
+            opts = {'quiet': True, 'no_warnings': True, 'noplaylist': True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            return Response({
+                'type':        'video',
+                'title':       info.get('title', ''),
+                'duration':    info.get('duration', 0),
+                'thumbnail':   info.get('thumbnail', ''),
+                'uploader':    info.get('uploader', ''),
+                'description': (info.get('description', '') or '')[:500],
+            })
+    except ImportError:
+        return Response({'error': 'yt-dlp is not installed on this server.'},
+                        status=status.HTTP_501_NOT_IMPLEMENTED)
+    except Exception as exc:
+        return Response({'error': f'Could not fetch video info: {exc}'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+def youtube_import(request):
+    """
+    Queue a YouTube video (or clipped section) or full playlist for import.
+    Single video → creates one Video + queues youtube_import_task.
+    Playlist     → creates Playlist + queues youtube_playlist_import_task.
+    """
+    if not _is_editor(request.user):
+        return Response({'error': 'Editor access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+    url = request.data.get('url', '').strip()
+    err = _validate_youtube_url(url)
+    if err:
+        return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+
+    url_type = _yt_url_type(url)
+
+    title = request.data.get('title', '').strip()
+    if not title:
+        return Response({'error': 'Title is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    channel_id = request.data.get('channel_id')
+    if channel_id:
+        channel = _user_channels(request.user).filter(pk=channel_id).first()
+    else:
+        channel = _user_channel(request.user)
+    if not channel:
+        return Response({'error': 'Channel not found or no access.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    _slug = _tenant_slug(request)
+    if _slug:
+        try:
+            from tenants.metering import check_quota, QuotaExceeded
+            check_quota(_slug, 'ai_minutes')
+        except QuotaExceeded as qe:
+            return Response(
+                {'error': f'Plan quota exceeded: {qe.resource}. Please upgrade your plan.'},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        except Exception:
+            pass
+
+    is_public = bool(request.data.get('is_public', True))
+    tags = request.data.get('tags', '')
+    cat_id = request.data.get('category_id')
+
+    # ── Playlist import ───────────────────────────────────────────────────────
+    if url_type == 'playlist':
+        raw_ids = request.data.get('selected_ids')
+        if isinstance(raw_ids, list) and raw_ids:
+            selected_ids = [str(i) for i in raw_ids[:50]]
+        else:
+            selected_ids = None
+
+        playlist = Playlist.objects.create(
+            owner=request.user,
+            title=title,
+            description=request.data.get('description', ''),
+            is_public=is_public,
+        )
+
+        from videos.tasks import youtube_playlist_import_task
+        youtube_playlist_import_task.apply_async(
+            kwargs={
+                'playlist_id':  str(playlist.id),
+                'url':          url,
+                'channel_id':   channel.id,
+                'category_id':  cat_id,
+                'is_public':    is_public,
+                'tags':         tags,
+                'uploaded_by':  request.user.username,
+                'tenant_slug':  _slug,
+                'selected_ids': selected_ids,
+            },
+            queue='processing',
+        )
+
+        log_activity(
+            request, 'upload', verb='queued YouTube playlist import',
+            metadata={'youtube_url': url, 'playlist_id': str(playlist.id)},
+        )
+        return Response({
+            'type':        'playlist',
+            'playlist_id': str(playlist.id),
+            'title':       playlist.title,
+            'message':     f'Playlist import queued — videos will appear as they finish.',
+        }, status=status.HTTP_201_CREATED)
+
+    # ── Single video import ───────────────────────────────────────────────────
+    section  = request.data.get('section', 'full')
+    if section not in ('full', 'first5', 'last5', 'custom'):
+        return Response({'error': 'Invalid section value.'}, status=status.HTTP_400_BAD_REQUEST)
+    start_ts = request.data.get('start_ts', '').strip()
+    end_ts   = request.data.get('end_ts', '').strip()
+    if section == 'custom' and (not start_ts or not end_ts):
+        return Response({'error': 'Custom section requires both start and end timestamps.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    yt_id = url.split('v=')[-1].split('&')[0] if 'v=' in url else url.rstrip('/').split('/')[-1].split('?')[0]
+
+    video = Video(
+        title=title,
+        description=request.data.get('description', ''),
+        tags=tags,
+        channel=channel,
+        uploaded_by=request.user.username,
+        original_filename=f'youtube_{yt_id}.mp4',
+        visibility=Video.VISIBILITY_PUBLIC if is_public else Video.VISIBILITY_PRIVATE,
+        status=Video.STATUS_PENDING,
+    )
+    if cat_id:
+        try:
+            video.category_id = int(cat_id)
+        except (ValueError, TypeError):
+            pass
+    video.save()
+
+    from videos.tasks import youtube_import_task
+    youtube_import_task.apply_async(
+        kwargs={
+            'video_id':    str(video.id),
+            'url':         url,
+            'section':     section,
+            'start_ts':    start_ts,
+            'end_ts':      end_ts,
+            'tenant_slug': _slug,
+        },
+        queue='processing',
+    )
+
+    log_activity(
+        request, 'upload', target=video, verb='queued YouTube import',
+        metadata={'youtube_url': url, 'section': section},
+    )
+    return Response({
+        'type':    'video',
+        'id':      str(video.id),
+        'title':   video.title,
+        'status':  video.status,
+        'message': 'YouTube import queued. Processing will start shortly.',
+    }, status=status.HTTP_201_CREATED)
+
+
 def _notify_subscribers_new_video(video):
     """Create Notification records for all channel subscribers."""
     if not video.channel:
@@ -7673,16 +7923,30 @@ def photo_faces_list(request, photo_id):
 
     result = []
     for identity in identities:
-        crops_qs = (
+        all_detections = list(
             DetectedFace.objects
             .filter(photo=photo, identity=identity)
-            .exclude(crop_path='')
-            .order_by('-confidence')[:4]
+            .order_by('-confidence')
         )
         crops = [
-            {'id': df.id, 'url': df.crop_url, 'confidence': round(df.confidence or 0, 3)}
-            for df in crops_qs
-        ]
+            {'id': df.id, 'url': df.crop_url, 'confidence': round(df.confidence or 0, 3),
+             'status': df.status}
+            for df in all_detections if df.crop_path
+        ][:4]
+
+        # Identity-level review state for this photo:
+        #   rejected   — every detection rejected
+        #   confirmed  — at least one confirmed, none rejected
+        #   unreviewed — anything else
+        statuses = {df.status for df in all_detections}
+        if statuses == {DetectedFace.STATUS_REJECTED}:
+            review = 'rejected'
+        elif DetectedFace.STATUS_CONFIRMED in statuses and \
+                DetectedFace.STATUS_REJECTED not in statuses:
+            review = 'confirmed'
+        else:
+            review = 'unreviewed'
+
         result.append({
             'id':           identity.id,
             'name':         identity.name,
@@ -7690,6 +7954,7 @@ def photo_faces_list(request, photo_id):
             'thumbnail_url': identity.thumbnail_url or (crops[0]['url'] if crops else None),
             'face_count':   len(crops),
             'crops':        crops,
+            'review_status': review,
         })
 
     return Response(result)
@@ -7711,15 +7976,8 @@ def photo_face_remove(request, photo_id, identity_id):
 
     DetectedFace.objects.filter(photo=photo, identity=identity).delete()
 
-    # Refresh photo face_count / face_names cache
-    remaining_names = list(
-        FaceIdentity.objects.filter(faces__photo=photo)
-        .exclude(name='').distinct()
-        .values_list('name', flat=True)
-    )
-    photo.face_count = DetectedFace.objects.filter(photo=photo).count()
-    photo.face_names = ', '.join(remaining_names)
-    photo.save(update_fields=['face_count', 'face_names'])
+    # Refresh photo face_count / face_names cache (excludes rejected)
+    _resync_photo_face_cache(photo)
 
     if not DetectedFace.objects.filter(identity=identity).exists():
         identity.delete()
@@ -7756,11 +8014,17 @@ def face_identity_merge(request, identity_id):
     _src_snap = {'id': source.pk, 'name': source.name}
     face_count = DetectedFace.objects.filter(identity=source).update(identity=target)
     source.delete()
+
+    # Photos that contained the source identity still carry its old name in
+    # their face_names CSV — rebuild them (repointed faces belong to target now).
+    photos_resynced = _resync_photos_for_identity(target)
+
     log_activity(
         request, 'merge', target=target,
         verb=f'merged face identity "{_src_snap["name"]}" → "{target.name}"',
         metadata={'source': _src_snap, 'target_id': target.pk,
-                  'target_name': target.name, 'faces_migrated': face_count},
+                  'target_name': target.name, 'faces_migrated': face_count,
+                  'photos_resynced': photos_resynced},
     )
     return Response(FaceIdentitySerializer(target, context={}).data)
 
@@ -7975,6 +8239,7 @@ def face_identity_page(request, identity_id):
         _all_ts = (
             DetectedFace.objects
             .filter(identity=identity, video_id__in=video_ids_in_groups)
+            .exclude(timestamp__isnull=True)
             .values_list('video_id', 'timestamp')
             .order_by('video_id', 'timestamp')
         )
@@ -8154,6 +8419,128 @@ def _unread_count(request):
 
 # ─── Face Management API ──────────────────────────────────────────────────────
 
+def _resync_photo_face_cache(photo):
+    """
+    Rebuild the denormalized Photo.face_names / face_count from current
+    DetectedFace state, EXCLUDING rejected detections.
+
+    This is the contract that makes confirm/reject actually work for photos:
+    search pass 8 matches on face_names, so a rejected person's name must
+    leave the CSV or the photo keeps surfacing for that person.
+    """
+    active = DetectedFace.objects.filter(photo=photo).exclude(
+        status=DetectedFace.STATUS_REJECTED)
+    names = list(
+        FaceIdentity.objects
+        .filter(faces__in=active)
+        .exclude(name='').distinct()
+        .values_list('name', flat=True)
+    )
+    photo.face_count = active.count()
+    photo.face_names = ', '.join(sorted(names))
+    photo.save(update_fields=['face_count', 'face_names'])
+
+
+def _split_faces_to_new_identity(request, identity, detections, new_name=''):
+    """
+    Move the given DetectedFace rows (mixed video/photo sources allowed) off
+    `identity` and onto a brand-new FaceIdentity. Used when the clusterer
+    merged two different people and an editor is manually separating them.
+
+    - New identity is auto-named ("Person N") unless new_name is given.
+    - ref_embedding + thumbnail seeded from the strongest moved detection so
+      future uploads of this person cluster onto the right identity.
+    - Moved detections reset to 'unreviewed' (fresh association).
+    - Denormalized search fields resynced on BOTH sides:
+        photos      → Photo.face_names / face_count
+        video frames → VideoFrame.face_names
+    - Reference embeddings recalculated for both identities.
+
+    Returns the new FaceIdentity.
+    """
+    from .models import VideoFrame
+
+    best = max(detections, key=lambda d: (d.confidence or 0))
+    if new_name:
+        new_identity = FaceIdentity.objects.create(
+            name=new_name[:100],
+            is_auto_named=False,
+            ref_embedding=best.embedding or '',
+            thumbnail=best.crop_path or '',
+        )
+    else:
+        n = FaceIdentity.objects.count() + 1
+        new_identity = FaceIdentity.objects.create(
+            name=f'Person {n}',
+            is_auto_named=True,
+            ref_embedding=best.embedding or '',
+            thumbnail=best.crop_path or '',
+        )
+
+    DetectedFace.objects.filter(pk__in=[d.pk for d in detections]).update(
+        identity=new_identity,
+        status=DetectedFace.STATUS_UNREVIEWED,
+    )
+
+    # ── Resync photo search caches ────────────────────────────────────────
+    photo_ids = {d.photo_id for d in detections if d.photo_id}
+    for photo in Photo.objects.filter(id__in=list(photo_ids)):
+        _resync_photo_face_cache(photo)
+
+    # ── Resync VideoFrame.face_names for affected frames ─────────────────
+    frame_ids = {d.frame_id for d in detections if d.frame_id}
+    for fid in frame_ids:
+        names = sorted(set(
+            DetectedFace.objects
+            .filter(frame_id=fid, identity__isnull=False)
+            .exclude(status=DetectedFace.STATUS_REJECTED)
+            .values_list('identity__name', flat=True)
+        ))
+        VideoFrame.objects.filter(pk=fid).update(face_names=', '.join(names))
+
+    # ── Recalc reference embeddings on both sides ─────────────────────────
+    try:
+        from .tasks import _recalc_ref_embedding
+        _recalc_ref_embedding(identity)
+        _recalc_ref_embedding(new_identity)
+    except Exception:
+        pass
+
+    log_activity(
+        request, 'update', target=new_identity,
+        verb=f'separated {len(detections)} face(s) from "{identity.name}" into "{new_identity.name}"',
+        metadata={'source_identity_id': identity.pk,
+                  'source_identity_name': identity.name,
+                  'detections_moved': len(detections),
+                  'photos_affected': len(photo_ids),
+                  'video_frames_affected': len(frame_ids)},
+    )
+    return new_identity
+
+
+def _resync_photos_for_identity(*identities):
+    """
+    Rebuild face_names/face_count on every photo that contains any of the
+    given identities. Used after rename/merge so photo search stays correct.
+
+    Editor-triggered and rare; identities typically appear in tens-to-hundreds
+    of photos, so an inline loop is acceptable.
+    """
+    photo_ids = (
+        DetectedFace.objects
+        .filter(identity__in=identities, photo__isnull=False)
+        .values_list('photo_id', flat=True).distinct()
+    )
+    n = 0
+    for photo in Photo.objects.filter(id__in=list(photo_ids)):
+        try:
+            _resync_photo_face_cache(photo)
+            n += 1
+        except Exception:
+            _task_logger.exception('photo face cache resync failed for %s', photo.pk)
+    return n
+
+
 @api_view(['POST'])
 @api_login_required
 def face_set_status(request, face_id):
@@ -8173,6 +8560,12 @@ def face_set_status(request, face_id):
 
     face.status = new_status
     face.save(update_fields=['status'])
+    # Keep the photo's denormalized search fields in sync with review state
+    if face.photo_id:
+        try:
+            _resync_photo_face_cache(face.photo)
+        except Exception:
+            _task_logger.exception('face_set_status: photo cache resync failed')
     # Recalculate identity embedding now that review status changed
     try:
         from .tasks import _recalc_ref_embedding
@@ -8180,6 +8573,119 @@ def face_set_status(request, face_id):
     except Exception:
         pass
     return Response({'id': face.pk, 'status': face.status})
+
+
+@api_view(['POST'])
+@api_login_required
+def photo_face_set_status(request, photo_id, identity_id):
+    """
+    POST /api/photos/<photo_id>/faces/<identity_id>/status/
+    Body: {"status": "confirmed" | "rejected" | "unreviewed"}
+
+    Identity-level review for a photo.
+
+    confirmed / unreviewed — sets the status on every DetectedFace row for
+    this (photo, identity) pair and resyncs the photo's search cache.
+
+    rejected — means "wrong person, this is someone else": the detections
+    are SPLIT into a brand-new auto-named FaceIdentity instead of being
+    voided. The mis-clustered face becomes its own person that the editor
+    can immediately rename (or merge into the right identity). The new
+    identity's ref embedding is seeded from the strongest detection so
+    future uploads of this person cluster onto it, not back onto the old one.
+    """
+    import json as _json
+
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
+    photo    = get_object_or_404(Photo, id=photo_id)
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
+
+    new_status = (request.data.get('status') or '').strip()
+    valid = {DetectedFace.STATUS_CONFIRMED, DetectedFace.STATUS_REJECTED, DetectedFace.STATUS_UNREVIEWED}
+    if new_status not in valid:
+        return Response({'error': f'status must be one of: {", ".join(valid)}'}, status=400)
+
+    detections = list(DetectedFace.objects.filter(photo=photo, identity=identity)
+                      .order_by('-confidence'))
+    if not detections:
+        return Response({'error': 'No detections for this identity in this photo.'}, status=404)
+
+    new_identity = None
+    if new_status == DetectedFace.STATUS_REJECTED:
+        # ── Split: repoint detections to a fresh identity (shared helper
+        # handles photo + frame cache resync, embeddings, audit log) ─────────
+        new_identity = _split_faces_to_new_identity(
+            request, identity, detections,
+            new_name=(request.data.get('name') or '').strip(),
+        )
+    else:
+        DetectedFace.objects.filter(pk__in=[d.pk for d in detections]).update(
+            status=new_status)
+        _resync_photo_face_cache(photo)
+        try:
+            from .tasks import _recalc_ref_embedding
+            _recalc_ref_embedding(identity)
+        except Exception:
+            pass
+
+    photo.refresh_from_db(fields=['face_names'])
+    return Response({
+        'ok': True,
+        'identity_id': identity.id,
+        'status': new_status,
+        'detections_updated': len(detections),
+        'photo_face_names': photo.face_names,
+        'new_identity': (
+            {'id': new_identity.id, 'name': new_identity.name,
+             'is_auto_named': new_identity.is_auto_named}
+            if new_identity else None
+        ),
+    })
+
+
+@api_view(['POST'])
+@api_login_required
+def face_identity_split(request, identity_id):
+    """
+    POST /api/faces/<identity_id>/split/
+    Body: {"face_ids": [int, ...], "name": "optional name for the new person"}
+
+    Global mis-cluster repair: moves the selected crops (any mix of video-
+    and photo-sourced detections) off this identity and into ONE new
+    FaceIdentity. Works from the People detail page where all of a person's
+    crops are visible together.
+    """
+    if not _is_editor(request.user):
+        return Response({'error': 'Forbidden.'}, status=403)
+    identity = get_object_or_404(FaceIdentity, id=identity_id)
+
+    face_ids = request.data.get('face_ids') or []
+    if not isinstance(face_ids, list) or not face_ids:
+        return Response({'error': 'face_ids (non-empty list) required.'}, status=400)
+    new_name = (request.data.get('name') or '').strip()
+
+    detections = list(DetectedFace.objects.filter(pk__in=face_ids, identity=identity))
+    if not detections:
+        return Response({'error': 'No matching detections on this identity.'}, status=404)
+
+    total = DetectedFace.objects.filter(identity=identity).count()
+    if len(detections) >= total:
+        return Response({
+            'error': 'Cannot separate ALL faces — that would leave the original '
+                     'identity empty. Rename it instead.',
+        }, status=400)
+
+    new_identity = _split_faces_to_new_identity(request, identity, detections,
+                                                new_name=new_name)
+    return Response({
+        'ok': True,
+        'moved': len(detections),
+        'source_identity': {'id': identity.id, 'name': identity.name},
+        'new_identity': {'id': new_identity.id, 'name': new_identity.name,
+                         'is_auto_named': new_identity.is_auto_named,
+                         'url': f'/faces/{new_identity.id}/'},
+    })
 
 
 @api_view(['POST'])
@@ -8234,13 +8740,19 @@ def face_identity_rename(request, identity_id):
         .update(name=name, is_auto_named=False)
     )
 
+    # Photo search matches on the denormalized Photo.face_names CSV — rebuild
+    # it for every photo containing this person or searches for the NEW name
+    # would keep missing them (and the old name would keep matching).
+    photos_resynced = _resync_photos_for_identity(identity)
+
     log_activity(
         request, 'rename', target=identity,
         verb='renamed face identity',
         changes={'name': {'before': old_name, 'after': name}},
-        metadata={'speakers_synced': synced},
+        metadata={'speakers_synced': synced, 'photos_resynced': photos_resynced},
     )
-    return Response({'id': identity.pk, 'name': identity.name, 'speakers_synced': synced})
+    return Response({'id': identity.pk, 'name': identity.name,
+                     'speakers_synced': synced, 'photos_resynced': photos_resynced})
 
 
 @api_view(['GET', 'POST'])

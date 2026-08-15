@@ -30,6 +30,18 @@
 </div>
 
 {% if invite %}
+{% if invite_expired %}
+<div style="background:#2d1a1a; border:1px solid #f85149; border-radius:6px; padding:14px 16px; margin-bottom:16px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+    <span style="font-size:18px;">⚠</span>
+    <strong style="color:#f85149;">Onboarding invite expired</strong>
+    <span style="color:#8b949e; font-size:12px;">expired {{ invite.expires_at|date:"M d, Y H:i" }}</span>
+  </div>
+  <p style="color:#c9d1d9; font-size:13px; margin:0 0 12px;">
+    The invite for <code style="color:#f85149;">{{ invite.admin_email }}</code> has expired.
+    Regenerate a new 7-day link below. You can also send it to a different email address if needed.
+  </p>
+{% else %}
 <div style="background:#1e3a5f; border:1px solid #58a6ff; border-radius:6px; padding:14px 16px; margin-bottom:16px;">
   <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
     <span style="font-size:18px;">📨</span>
@@ -40,7 +52,7 @@
     Share this link with <code style="color:#58a6ff;">{{ invite.admin_email }}</code>.
     They'll set their password and pick a plan to activate the org.
   </p>
-  <div style="display:flex; gap:8px; align-items:center;">
+  <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
     <input type="text" readonly value="{{ onboard_url }}"
            id="invite-link" onclick="this.select()"
            style="flex:1; background:#0d1117; border:1px solid #30363d; color:#58a6ff;
@@ -48,33 +60,47 @@
     <button type="button" class="btn btn-secondary btn-sm" id="copy-invite-btn"
             onclick="copyInviteLink(this)">Copy link</button>
   </div>
+{% endif %}
+
+  <!-- Regenerate / resend form (shown in both expired and valid states) -->
+  <form method="post" action="{% url 'tenants:resend_onboarding_invite' tenant.pk %}"
+        style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;"
+        onsubmit="return confirm('This will invalidate the current link and generate a new one. Continue?')">
+    {% csrf_token %}
+    <div style="flex:1; min-width:200px;">
+      <label style="font-size:11px; color:#8b949e; margin-bottom:4px; display:block;">
+        Send to (leave blank to keep <em>{{ invite.admin_email }}</em>)
+      </label>
+      <input type="email" name="new_email" placeholder="{{ invite.admin_email }}"
+             style="width:100%; background:#0d1117; border:1px solid #30363d; color:#e1e4e8;
+                    padding:7px 10px; border-radius:4px; font-size:13px;">
+    </div>
+    <button type="submit" class="btn {% if invite_expired %}btn-primary{% else %}btn-secondary{% endif %} btn-sm"
+            style="white-space:nowrap;">
+      {% if invite_expired %}Regenerate &amp; resend{% else %}Regenerate link{% endif %}
+    </button>
+  </form>
 </div>
 
 <script>
-// Clipboard helper that works in both HTTPS and HTTP contexts
 function copyInviteLink(btn) {
   const text = document.getElementById('invite-link').value;
   const doFallback = () => {
     const ta = document.createElement('textarea');
     ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
+    document.body.appendChild(ta); ta.select();
     let ok = false;
     try { ok = document.execCommand('copy'); } catch (e) {}
     document.body.removeChild(ta);
     return ok;
   };
-
   const show = (ok) => {
     btn.textContent = ok ? '✓ Copied' : '✗ Copy failed';
     setTimeout(() => { btn.textContent = 'Copy link'; }, 2000);
   };
-
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(text).then(() => show(true)).catch(() => show(doFallback()));
-  } else {
-    show(doFallback());
-  }
+  } else { show(doFallback()); }
 }
 </script>
 {% endif %}
@@ -98,8 +124,8 @@ function copyInviteLink(btn) {
     <div class="stat-label">AI Minutes (this month)</div>
     {% if tenant.plan %}
     <div class="progress-bar" style="margin-top:8px;">
-      <div class="progress-fill {% if usage.ai_minutes >= usage.ai_minutes_effective %}critical{% endif %}"
-           style="width:{% widthratio usage.ai_minutes usage.ai_minutes_effective 100 %}%"></div>
+      <div class="progress-fill {% if usage.ai_minutes >= usage.ai_minutes_capacity %}critical{% endif %}"
+           style="width:{% widthratio usage.ai_minutes usage.ai_minutes_capacity 100 %}%"></div>
     </div>
     <small style="color:#8b949e; font-size:11px;">
       Plan: {{ tenant.plan.ai_minutes_limit }} min

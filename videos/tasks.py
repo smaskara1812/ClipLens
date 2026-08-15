@@ -131,6 +131,7 @@ def process_video_task(self, video_id: str, skip_ai: bool = False, **kwargs):
         # Fire as soon as HLS + thumbnail are ready, regardless of AI status —
         # users care about "can I watch it?" first.
         try:
+            from .models import Video
             from .notifications import notify_video_processed
             v = Video.objects.filter(id=video_id).first()
             if v:
@@ -4423,3 +4424,232 @@ def apply_active_policies_to_video_task(self, video_id, *, tenant_slug='', **kwa
         logger.info('apply_active_policies: video %s — %d policies created %d redactions',
                     video.pk, affected, total)
     return {'ok': True, 'policies_matched': affected, 'redactions_created': total}
+
+
+# ── YouTube import ──────────────────────────────────────────────────────────────
+
+def _yt_ts_to_seconds(ts: str) -> float:
+    """Convert HH:MM:SS or MM:SS or SS string to float seconds."""
+    parts = [float(p) for p in ts.strip().split(':')]
+    multipliers = [1, 60, 3600]
+    return sum(v * multipliers[i] for i, v in enumerate(reversed(parts)))
+
+
+@shared_task(bind=True, name='videos.tasks.youtube_import_task', queue='processing')
+def youtube_import_task(self, video_id: str, url: str, section: str = 'full',
+                        start_ts: str = '', end_ts: str = '',
+                        tenant_slug: str = '', **kwargs):
+    """
+    Download a YouTube video (or a clipped section) and run the standard
+    HLS + AI pipeline on it.
+
+    section values:
+        'full'   — entire video
+        'first5' — first 5 minutes
+        'last5'  — last 5 minutes
+        'custom' — start_ts..end_ts (HH:MM:SS strings)
+    """
+    import tempfile
+    import yt_dlp
+    from django.core.files import File
+    from .models import Video
+
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            pass
+
+    try:
+        video = Video.objects.get(id=video_id)
+    except Video.DoesNotExist:
+        logger.warning('youtube_import_task: video %s not found', video_id)
+        return
+
+    try:
+        with tempfile.TemporaryDirectory(prefix='yt_import_') as tmpdir:
+            outtmpl = os.path.join(tmpdir, '%(id)s.%(ext)s')
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': outtmpl,
+                'quiet': True,
+                'no_warnings': True,
+                'merge_output_format': 'mp4',
+                'noplaylist': True,  # never accidentally download a playlist when given a watch?v= URL
+            }
+
+            if section != 'full':
+                if section == 'first5':
+                    ranges = [(0, 300)]
+                elif section == 'last5':
+                    with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as _ydl:
+                        _info = _ydl.extract_info(url, download=False)
+                    dur = _info.get('duration') or 0
+                    ranges = [(max(0.0, float(dur) - 300), float(dur))]
+                elif section == 'custom' and start_ts and end_ts:
+                    ranges = [(_yt_ts_to_seconds(start_ts), _yt_ts_to_seconds(end_ts))]
+                else:
+                    ranges = None
+
+                if ranges:
+                    ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(None, ranges)
+                    ydl_opts['force_keyframes_at_cuts'] = True
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+
+            # yt-dlp may write a different extension
+            if not os.path.exists(filename):
+                base = os.path.splitext(filename)[0]
+                for ext in ('.mp4', '.webm', '.mkv'):
+                    if os.path.exists(base + ext):
+                        filename = base + ext
+                        break
+
+            file_size = os.path.getsize(filename)
+            yt_id = info.get('id', video_id)
+            safe_name = f"yt_{yt_id}.mp4"
+
+            with open(filename, 'rb') as f:
+                video.original_file.save(safe_name, File(f), save=False)
+
+            video.file_size = file_size
+            yt_title = info.get('title', '')
+            video.original_filename = f"{yt_title} [{yt_id}].mp4" if yt_title else safe_name
+            video.save(update_fields=['original_file', 'file_size', 'original_filename'])
+
+        logger.info('youtube_import_task: downloaded %s bytes for video %s, dispatching pipeline',
+                    file_size, video_id)
+
+    except Exception as exc:
+        logger.exception('youtube_import_task: download failed for video %s url=%s', video_id, url)
+        Video.objects.filter(id=video_id).update(status='failed')
+        raise
+
+    # Hand off to the normal HLS + AI pipeline
+    from videos.views import _dispatch_process_video
+    _dispatch_process_video(video_id, tenant_slug=tenant_slug)
+
+
+@shared_task(bind=True, name='videos.tasks.youtube_playlist_import_task', queue='processing')
+def youtube_playlist_import_task(self, playlist_id: str, url: str, channel_id: int,
+                                  category_id=None, is_public: bool = True, tags: str = '',
+                                  uploaded_by: str = '', tenant_slug: str = '',
+                                  video_limit: int = 50, selected_ids=None, **kwargs):
+    """
+    Orchestrate a YouTube playlist import (max 50 videos).
+    1. Extract all entries via flat extraction (no per-video download).
+    2. Create Video + PlaylistItem records for each entry.
+    3. Queue individual youtube_import_task per video.
+    4. Returns {queued, skipped, total}.
+
+    Failures on individual videos are handled inside youtube_import_task —
+    they mark that video as 'failed' and do not interrupt the others.
+    """
+    import yt_dlp
+    from .models import Video, Playlist, PlaylistItem, Channel
+
+    if tenant_slug:
+        try:
+            from tenants.celery_utils import setup_tenant_context
+            setup_tenant_context(tenant_slug)
+        except Exception:
+            pass
+
+    try:
+        playlist = Playlist.objects.get(id=playlist_id)
+    except Playlist.DoesNotExist:
+        logger.warning('youtube_playlist_import_task: playlist %s not found', playlist_id)
+        return {'ok': False, 'error': 'playlist not found'}
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        logger.warning('youtube_playlist_import_task: channel %s not found', channel_id)
+        return {'ok': False, 'error': 'channel not found'}
+
+    # Fast extraction — only metadata, no downloads
+    try:
+        opts = {
+            'quiet': True, 'no_warnings': True,
+            'extract_flat': 'in_playlist',
+            'skip_download': True,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            playlist_info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        logger.exception('youtube_playlist_import_task: failed to extract %s', url)
+        return {'ok': False, 'error': str(exc)}
+
+    raw_entries = [e for e in (playlist_info.get('entries') or []) if e and e.get('id')]
+    total_available = len(raw_entries)
+    if selected_ids:
+        id_map = {e['id']: e for e in raw_entries}
+        entries = [id_map[vid] for vid in selected_ids if vid in id_map]
+    else:
+        cap = min(max(1, int(video_limit)), 50)
+        entries = raw_entries[:cap]
+
+    visibility = Video.VISIBILITY_PUBLIC if is_public else Video.VISIBILITY_PRIVATE
+    queued = 0
+    skipped = 0
+
+    for order, entry in enumerate(entries):
+        yt_video_id = entry.get('id', '')
+        video_url   = f'https://www.youtube.com/watch?v={yt_video_id}'
+        entry_title = (entry.get('title') or '').strip() or video_url
+
+        try:
+            video = Video(
+                title=entry_title,
+                tags=tags,
+                channel=channel,
+                uploaded_by=uploaded_by,
+                original_filename=f'youtube_{yt_video_id}.mp4',
+                visibility=visibility,
+                status=Video.STATUS_PENDING,
+            )
+            if category_id:
+                try:
+                    video.category_id = int(category_id)
+                except (ValueError, TypeError):
+                    pass
+            video.save()
+
+            PlaylistItem.objects.create(
+                playlist=playlist,
+                video=video,
+                order=order,
+            )
+
+            youtube_import_task.apply_async(
+                kwargs={
+                    'video_id':    str(video.id),
+                    'url':         video_url,
+                    'section':     'full',
+                    'tenant_slug': tenant_slug,
+                },
+                queue='processing',
+            )
+            queued += 1
+
+        except Exception:
+            logger.exception(
+                'youtube_playlist_import_task: failed to queue entry %s (%s)',
+                yt_video_id, entry_title,
+            )
+            skipped += 1
+
+    logger.info(
+        'youtube_playlist_import_task: playlist=%s queued=%d skipped=%d total_available=%d',
+        playlist_id, queued, skipped, total_available,
+    )
+    return {
+        'ok':             True,
+        'queued':         queued,
+        'skipped':        skipped,
+        'total_available': total_available,
+        'capped':         total_available > 50,
+    }

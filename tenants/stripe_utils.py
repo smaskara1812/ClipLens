@@ -393,6 +393,11 @@ def handle_webhook_event(event) -> dict:
                 stripe_subscription_id=sub_id,
             )
             logger.info("Stripe: created StorageAddon for tenant=%s sub=%s", tenant_slug, sub_id)
+            try:
+                from django.core.cache import cache as _cache
+                _cache.delete(f'usage_warning_{tenant_slug}')
+            except Exception:
+                pass
             return {'ok': True, 'kind': 'storage', 'tenant': tenant_slug}
 
         else:   # KIND_CREDITS
@@ -411,6 +416,12 @@ def handle_webhook_event(event) -> dict:
                 stripe_payment_intent_id=pi_id,
             )
             logger.info("Stripe: created AICreditPack for tenant=%s pi=%s", tenant_slug, pi_id)
+            # Bust the usage-warning banner cache so the tenant sees updated limits immediately
+            try:
+                from django.core.cache import cache as _cache
+                _cache.delete(f'usage_warning_{tenant_slug}')
+            except Exception:
+                pass
             return {'ok': True, 'kind': 'credits', 'tenant': tenant_slug}
 
     elif event_type == 'customer.subscription.deleted':

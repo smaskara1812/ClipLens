@@ -123,6 +123,8 @@ urlpatterns = [
     # ── API: Videos ──
     path('api/videos/',                                    views.video_list),
     path('api/videos/upload/',                             views.video_upload),
+    path('api/videos/youtube-preview/',                    views.youtube_preview),
+    path('api/videos/youtube-import/',                     views.youtube_import),
     path('api/videos/<uuid:video_id>/',                    views.video_detail),
     path('api/videos/<uuid:video_id>/restore/',             views.video_restore),
     path('api/videos/<uuid:video_id>/purge/',               views.video_purge),
@@ -172,6 +174,7 @@ urlpatterns = [
     path('api/faces/list/',                                                  views.face_identity_list),
     path('api/faces/<int:identity_id>/tag/',                               views.face_identity_tag),
     path('api/faces/<int:identity_id>/merge/',                             views.face_identity_merge),
+    path('api/faces/<int:identity_id>/split/',                             views.face_identity_split),
     path('api/faces/<int:identity_id>/rename/',                            views.face_identity_rename),
     path('api/faces/<int:identity_id>/nicknames/',                         views.face_identity_nicknames),
     path('api/faces/<int:identity_id>/nicknames/<int:nickname_id>/',       views.face_identity_nickname_delete),
@@ -249,6 +252,7 @@ urlpatterns = [
     path('api/photos/<uuid:photo_id>/upscale/',                             views.photo_upscale_start),
     path('api/photos/<uuid:photo_id>/faces/',                              views.photo_faces_list),
     path('api/photos/<uuid:photo_id>/faces/<int:identity_id>/remove/',     views.photo_face_remove),
+    path('api/photos/<uuid:photo_id>/faces/<int:identity_id>/status/',     views.photo_face_set_status),
 
     # ── Albums — pages ──
     path('albums/',                              views.albums_page,        name='albums'),

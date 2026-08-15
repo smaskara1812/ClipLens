@@ -104,6 +104,43 @@
   .poll-badge.failed   { background: var(--red-bg); color: var(--red); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
+  /* Upload mode tabs */
+  .upload-tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .upload-tab {
+    padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer;
+    color: var(--text-muted); border: none; background: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .upload-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .upload-tab:hover:not(.active) { color: var(--text); }
+
+  /* YouTube panel */
+  .yt-url-row { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 16px; }
+  .yt-url-row input { flex: 1; }
+  .yt-preview {
+    display: none; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; margin-bottom: 16px;
+    display: none; gap: 14px; align-items: flex-start;
+  }
+  .yt-preview.show { display: flex; }
+  .yt-thumb { width: 120px; height: 68px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+  .yt-meta-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .yt-meta-sub { font-size: 12px; color: var(--text-muted); }
+
+  .section-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .section-chip {
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 500;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted);
+    cursor: pointer; transition: all .15s;
+  }
+  .section-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .custom-range {
+    display: none; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .custom-range.show { display: flex; }
+  .custom-range input { width: 100px; font-family: monospace; }
+
   @media (max-width: 640px) {
     .upload-wrap { padding: 16px 14px; }
     .result-table-wrap { overflow-x: auto; }
@@ -126,6 +163,21 @@
     <p style="font-size:13px;"><a href="{% url 'channels_manage' %}" style="color:var(--accent);">Create a channel</a> before uploading.</p>
   </div>
   {% else %}
+
+  <!-- Mode tab switcher -->
+  <div class="upload-tabs">
+    <button class="upload-tab active" id="tabBtnFile" onclick="switchTab('file')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Upload File
+    </button>
+    <button class="upload-tab" id="tabBtnYoutube" onclick="switchTab('youtube')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Import from YouTube
+    </button>
+  </div>
+
+  <!-- ── File upload panel (existing) ────────────────────────────────── -->
+  <div id="panelFile">
   <div class="card">
     <form id="uploadForm">
 
@@ -295,6 +347,175 @@
       </div>
     </div>
   </div>
+  </div><!-- /panelFile -->
+
+  <!-- ── YouTube import panel ─────────────────────────────────────────── -->
+  <div id="panelYoutube" style="display:none;">
+  <div class="card">
+
+    <!-- URL input + fetch -->
+    <div class="form-section">
+      <label class="form-label">YouTube URL <span class="req">*</span></label>
+      <div class="yt-url-row">
+        <input type="url" id="ytUrl" class="form-input"
+               placeholder="https://www.youtube.com/watch?v=..."
+               oninput="ytUrlChanged()" />
+        <button type="button" class="btn btn-secondary btn-sm" id="ytFetchBtn"
+                onclick="ytFetchInfo()" style="white-space:nowrap;" disabled>
+          Fetch info
+        </button>
+      </div>
+      <span class="form-hint" id="ytUrlHint"></span>
+    </div>
+
+    <!-- Preview card (shown after fetch) -->
+    <div class="yt-preview" id="ytPreview">
+      <img class="yt-thumb" id="ytThumb" src="" alt="" />
+      <div>
+        <div class="yt-meta-title" id="ytMetaTitle">—</div>
+        <div class="yt-meta-sub" id="ytMetaSub">—</div>
+      </div>
+    </div>
+
+    <!-- Playlist video list with checkboxes (shown for playlist URLs) -->
+    <div id="ytPlaylistVideoWrap" style="display:none;margin:12px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:12px;color:var(--text-muted);" id="ytSelectionLabel">Select videos to import:</span>
+        <div style="display:flex;gap:6px;">
+          <button type="button" class="section-chip" data-count="all"  onclick="selectPlaylistCount('all')"  style="padding:2px 8px;font-size:11px;">All</button>
+          <button type="button" class="section-chip" data-count="10"   onclick="selectPlaylistCount('10')"  style="padding:2px 8px;font-size:11px;">First 10</button>
+          <button type="button" class="section-chip" data-count="5"    onclick="selectPlaylistCount('5')"   style="padding:2px 8px;font-size:11px;">First 5</button>
+          <button type="button" class="section-chip" data-count="none" onclick="selectPlaylistCount('none')" style="padding:2px 8px;font-size:11px;">None</button>
+        </div>
+      </div>
+      <div id="ytPlaylistVideoList" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:4px 10px;background:var(--surface-elevated);"></div>
+      <span class="form-hint" id="ytCountHint" style="display:block;margin-top:5px;"></span>
+    </div>
+
+    <!-- Section selector -->
+    <div class="form-section" id="ytSectionWrap" style="display:none;">
+      <label class="form-label">Download section</label>
+      <div class="section-chips">
+        <button type="button" class="section-chip active" data-section="full"   onclick="selectSection('full')">Full video</button>
+        <button type="button" class="section-chip"        data-section="first5" onclick="selectSection('first5')">First 5 min</button>
+        <button type="button" class="section-chip"        data-section="last5"  onclick="selectSection('last5')">Last 5 min</button>
+        <button type="button" class="section-chip"        data-section="custom" onclick="selectSection('custom')">Custom</button>
+      </div>
+      <div class="custom-range" id="ytCustomRange">
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px;">Start (HH:MM:SS)</label>
+          <input type="text" id="ytStartTs" class="form-input" placeholder="0:00:00" />
+        </div>
+        <span style="color:var(--text-muted);padding-top:18px;">→</span>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px;">End (HH:MM:SS)</label>
+          <input type="text" id="ytEndTs" class="form-input" placeholder="0:05:00" />
+        </div>
+      </div>
+      <span class="form-hint" id="ytSectionHint"></span>
+    </div>
+
+    <!-- Metadata (shown after fetch, pre-filled from YouTube) -->
+    <div id="ytMetaFields" style="display:none;">
+      <!-- Channel selector -->
+      {% if channels|length > 1 %}
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Channel <span class="req">*</span></label>
+          <select id="ytChannelSelect" class="form-select">
+            {% for ch in channels %}
+            <option value="{{ ch.id }}">{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {% else %}
+      <input type="hidden" id="ytChannelSelect" value="{{ channels.0.id }}" />
+      {% endif %}
+
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Title <span class="req">*</span></label>
+          <input type="text" id="ytTitle" class="form-input" placeholder="Video title" required />
+        </div>
+      </div>
+      <div class="form-section">
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="ytDescription" class="form-textarea" placeholder="Description (auto-filled from YouTube)"></textarea>
+        </div>
+      </div>
+      <div class="form-grid-2 form-section">
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <select id="ytCategory" class="form-select">
+            <option value="">— No category —</option>
+            {% for cat in categories %}
+            <option value="{{ cat.id }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tags</label>
+          <input type="text" id="ytTags" class="form-input" placeholder="tutorial, demo…" />
+        </div>
+      </div>
+      <div class="form-section">
+        <div class="card" style="padding:14px 16px;">
+          <div class="toggle-wrap">
+            <div class="toggle-info">
+              <div class="toggle-label">Public</div>
+              <div class="toggle-hint">Private videos are only accessible via direct URL</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="ytIsPublic" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" class="btn btn-primary btn-full btn-lg" id="ytImportBtn"
+              onclick="ytSubmitImport()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Import from YouTube
+      </button>
+    </div>
+
+  </div><!-- /card -->
+
+  <!-- YouTube result card (reuses same structure as file upload) -->
+  <div class="result-card" id="ytResultCard">
+    <div class="result-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="ytResultTitle">Import queued — downloading &amp; converting</span>
+    </div>
+    <div class="result-table-wrap">
+    <table class="result-table">
+      <tr><td>Video ID</td><td id="ytRId">—</td></tr>
+      <tr>
+        <td>Status</td>
+        <td>
+          <span class="poll-badge pending" id="ytRStatus">
+            <span class="dot"></span>
+            <span id="ytRStatusText">pending</span>
+          </span>
+        </td>
+      </tr>
+      <tr>
+        <td>Watch URL</td>
+        <td>
+          <a id="ytRWatchLink" href="#" target="_blank">—</a>
+          <button class="copy-btn" onclick="copyYtWatchUrl()">copy</button>
+        </td>
+      </tr>
+      <tr><td>HLS URL</td><td id="ytRHlsUrl" style="color:var(--text-muted);">— downloading…</td></tr>
+    </table>
+    </div>
+  </div>
+
+  </div><!-- /panelYoutube -->
+
   {% endif %}
 </div>
 {% endblock %}
@@ -537,5 +758,282 @@
     const titleInput = document.getElementById('newChapterTitle');
     if (titleInput) titleInput.addEventListener('keydown', e => { if (e.key === 'Enter') addChapter(); });
   });
+
+  // ── Tab switcher ────────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    document.getElementById('panelFile').style.display    = tab === 'file'    ? '' : 'none';
+    document.getElementById('panelYoutube').style.display = tab === 'youtube' ? '' : 'none';
+    document.getElementById('tabBtnFile').classList.toggle('active',    tab === 'file');
+    document.getElementById('tabBtnYoutube').classList.toggle('active', tab === 'youtube');
+  }
+
+  // ── YouTube import ──────────────────────────────────────────────────────────
+  const YT_VIDEO_RE    = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=[\w-]{11}|youtu\.be\/[\w-]{11})([&?].*)?$/;
+  const YT_PLAYLIST_RE = /^https?:\/\/(www\.)?youtube\.com\/playlist\?list=[\w-]+([&?].*)?$/;
+  let _ytSection    = 'full';
+  let _ytPollTimer  = null;
+  let _ytImportedId = null;
+  let _ytUrlType    = 'video';
+  let _ytPlaylistVideos = [];  // [{id, title, duration}, ...] populated on fetch
+
+  function _ytIsValid(url) { return YT_VIDEO_RE.test(url) || YT_PLAYLIST_RE.test(url); }
+  function _ytDetectType(url) {
+    if (YT_PLAYLIST_RE.test(url)) return 'playlist';
+    // watch?v=...&list=... — Radio Mix or auto-playlist; treat as playlist
+    if (YT_VIDEO_RE.test(url) && url.includes('list=')) return 'playlist';
+    return 'video';
+  }
+
+  function ytUrlChanged() {
+    const url  = document.getElementById('ytUrl').value.trim();
+    const btn  = document.getElementById('ytFetchBtn');
+    const hint = document.getElementById('ytUrlHint');
+    if (!url) { btn.disabled = true; hint.textContent = ''; return; }
+    if (!_ytIsValid(url)) {
+      btn.disabled = true;
+      hint.textContent = 'Accepts youtube.com/watch?v=..., youtu.be/..., or youtube.com/playlist?list=...';
+      hint.style.color = 'var(--red)';
+    } else {
+      btn.disabled = false;
+      const detectedType = _ytDetectType(url);
+      hint.textContent = detectedType === 'playlist'
+        ? (url.includes('list=RD') ? 'Radio Mix / auto-playlist detected' : 'Playlist URL detected')
+        : '';
+      hint.style.color = 'var(--text-muted)';
+    }
+  }
+
+  async function ytFetchInfo() {
+    const url = document.getElementById('ytUrl').value.trim();
+    const btn = document.getElementById('ytFetchBtn');
+    btn.disabled = true; btn.textContent = 'Fetching…';
+
+    try {
+      const res = await fetch(`${API}/videos/youtube-preview/`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Fetch failed');
+
+      _ytUrlType = data.type || 'video';
+
+      if (_ytUrlType === 'playlist') {
+        // ── Playlist preview ──
+        document.getElementById('ytThumb').src = data.thumbnail || '';
+        document.getElementById('ytMetaTitle').textContent = data.title || '(no title)';
+        const capNote = data.capped ? ` (capped at 50 of ${data.total_count})` : '';
+        document.getElementById('ytMetaSub').textContent =
+          `${data.uploader || ''}  ·  ${data.video_count} videos${capNote}`;
+        document.getElementById('ytPreview').classList.add('show');
+
+        // Build checkbox video list (all videos, not just first 8)
+        if (data.videos) {
+          _renderPlaylistVideos(data.videos);
+          document.getElementById('ytPlaylistVideoWrap').style.display = '';
+        }
+
+        // Hide section selector (no clipping for playlists), show metadata
+        document.getElementById('ytSectionWrap').style.display = 'none';
+        document.getElementById('ytMetaFields').style.display = '';
+        document.getElementById('ytTitle').value = data.title || '';
+        document.getElementById('ytDescription').value = '';
+
+        showToast('success', 'Playlist found', `${data.video_count} videos will be imported.`);
+
+      } else {
+        // ── Single video preview ──
+        document.getElementById('ytThumb').src = data.thumbnail || '';
+        document.getElementById('ytMetaTitle').textContent = data.title || '(no title)';
+        const dur = data.duration ? fmtDuration(data.duration) : '';
+        document.getElementById('ytMetaSub').textContent = [data.uploader, dur].filter(Boolean).join(' · ');
+        document.getElementById('ytPreview').classList.add('show');
+        document.getElementById('ytPlaylistVideoWrap').style.display = 'none';
+        document.getElementById('ytCountWrap').style.display = 'none';
+        document.getElementById('ytSectionWrap').style.display = '';
+        document.getElementById('ytMetaFields').style.display = '';
+        document.getElementById('ytTitle').value = data.title || '';
+        document.getElementById('ytDescription').value = data.description || '';
+        document.getElementById('ytImportBtn').innerHTML =
+          `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="5 3 19 12 5 21 5 3"/></svg> Import from YouTube`;
+        _updateSectionHint(data.duration || 0);
+        showToast('success', 'Video info loaded', 'Fill in the details below and click Import.');
+      }
+    } catch (err) {
+      showToast('error', 'Could not fetch info', err.message);
+    }
+
+    btn.disabled = false; btn.textContent = 'Fetch info';
+  }
+
+  function fmtDuration(s) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
+  }
+
+  function selectSection(sec) {
+    _ytSection = sec;
+    document.querySelectorAll('.section-chip').forEach(c =>
+      c.classList.toggle('active', c.dataset.section === sec));
+    document.getElementById('ytCustomRange').classList.toggle('show', sec === 'custom');
+  }
+
+  function _updateSectionHint(durationSec) {
+    const hint = document.getElementById('ytSectionHint');
+    if (!durationSec) { hint.textContent = ''; return; }
+    hint.textContent = `Video is ${fmtDuration(durationSec)} long.`;
+  }
+
+  function _renderPlaylistVideos(videos) {
+    _ytPlaylistVideos = videos;
+    const listEl = document.getElementById('ytPlaylistVideoList');
+    listEl.innerHTML = videos.map((v, i) =>
+      `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;">
+        <input type="checkbox" class="yt-video-check" value="${v.id}" checked onchange="ytUpdateSelection()" style="flex-shrink:0;cursor:pointer;" />
+        <span style="font-size:11px;color:var(--text-muted);min-width:20px;text-align:right;">${i+1}</span>
+        <span style="font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(v.title||v.id).replace(/"/g,'&quot;')}">${v.title || v.id}</span>
+        ${v.duration ? `<span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">${fmtDuration(v.duration)}</span>` : ''}
+      </label>`
+    ).join('');
+    ytUpdateSelection();
+  }
+
+  function ytUpdateSelection() {
+    const all   = [...document.querySelectorAll('.yt-video-check')];
+    const checked = all.filter(b => b.checked);
+    const n = checked.length, total = all.length;
+    document.getElementById('ytCountHint').textContent =
+      `${n} of ${total} video${total !== 1 ? 's' : ''} selected`;
+    const btn = document.getElementById('ytImportBtn');
+    if (btn) btn.textContent = n > 0 ? `Import ${n} video${n !== 1 ? 's' : ''}` : 'Select at least one video';
+    // Highlight matching quick-select chip
+    const firstN = n => all.slice(0,n).every(b=>b.checked) && all.slice(n).every(b=>!b.checked);
+    document.querySelectorAll('#ytPlaylistVideoWrap .section-chip').forEach(c => {
+      const v = c.dataset.count;
+      c.classList.toggle('active',
+        v === 'all'  ? n === total :
+        v === 'none' ? n === 0 :
+        v === '10'   ? firstN(10) :
+        v === '5'    ? firstN(5)  : false);
+    });
+  }
+
+  function selectPlaylistCount(val) {
+    const boxes = [...document.querySelectorAll('.yt-video-check')];
+    if (val === 'all')  boxes.forEach(b => b.checked = true);
+    else if (val === 'none') boxes.forEach(b => b.checked = false);
+    else { const n = parseInt(val); boxes.forEach((b,i) => b.checked = i < n); }
+    ytUpdateSelection();
+  }
+
+  async function ytSubmitImport() {
+    const url   = document.getElementById('ytUrl').value.trim();
+    const title = document.getElementById('ytTitle').value.trim();
+    if (!title) { showToast('error', 'Title required'); return; }
+    if (!_ytIsValid(url)) { showToast('error', 'Invalid YouTube URL'); return; }
+
+    if (_ytUrlType === 'video' && _ytSection === 'custom') {
+      const s = document.getElementById('ytStartTs').value.trim();
+      const e = document.getElementById('ytEndTs').value.trim();
+      if (!s || !e) { showToast('error', 'Enter start and end timestamps for custom section'); return; }
+    }
+
+    const btn = document.getElementById('ytImportBtn');
+    btn.disabled = true;
+    const origLabel = btn.innerHTML;
+    btn.textContent = 'Queuing…';
+
+    const payload = {
+      url, title,
+      description:  document.getElementById('ytDescription').value,
+      tags:         document.getElementById('ytTags').value,
+      is_public:    document.getElementById('ytIsPublic').checked,
+      section:      _ytUrlType === 'playlist' ? 'full' : _ytSection,
+      start_ts:     _ytSection === 'custom' ? document.getElementById('ytStartTs').value.trim() : '',
+      end_ts:       _ytSection === 'custom' ? document.getElementById('ytEndTs').value.trim()   : '',
+      selected_ids: _ytUrlType === 'playlist'
+        ? [...document.querySelectorAll('.yt-video-check:checked')].map(b => b.value)
+        : undefined,
+    };
+    const chSel = document.getElementById('ytChannelSelect');
+    if (chSel && chSel.value) payload.channel_id = chSel.value;
+    const cat = document.getElementById('ytCategory').value;
+    if (cat) payload.category_id = cat;
+
+    try {
+      const res = await fetch(`${API}/videos/youtube-import/`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || JSON.stringify(data));
+
+      if (data.type === 'playlist') {
+        // ── Playlist result ──
+        document.getElementById('ytRId').textContent  = data.playlist_id;
+        const plUrl = `${location.origin}/playlists/`;
+        document.getElementById('ytRWatchLink').href  = plUrl;
+        document.getElementById('ytRWatchLink').textContent = 'View Playlists →';
+        document.getElementById('ytRHlsUrl').textContent = data.message;
+        document.getElementById('ytResultCard').style.display = 'block';
+        document.getElementById('ytResultTitle').textContent = 'Playlist queued — videos are importing in the background';
+        ytSetStatus('processing');
+        showToast('success', 'Playlist queued!', data.message);
+        // No polling for playlists — just link to the playlist page
+
+      } else {
+        // ── Single video result ──
+        _ytImportedId = data.id;
+        document.getElementById('ytRId').textContent = data.id;
+        const watchUrl = `${location.origin}/watch/${data.id}/`;
+        document.getElementById('ytRWatchLink').href = watchUrl;
+        document.getElementById('ytRWatchLink').textContent = watchUrl;
+        document.getElementById('ytRHlsUrl').textContent = '— downloading from YouTube…';
+        document.getElementById('ytResultCard').style.display = 'block';
+        ytSetStatus('pending');
+        showToast('success', 'Import queued!', 'Downloading from YouTube in the background.');
+        ytStartPolling(data.id);
+      }
+    } catch (err) {
+      showToast('error', 'Import failed', err.message);
+    }
+
+    btn.disabled = false; btn.innerHTML = origLabel;
+  }
+
+  function ytSetStatus(s) {
+    const el = document.getElementById('ytRStatus');
+    el.className = `poll-badge ${s}`;
+    document.getElementById('ytRStatusText').textContent = s;
+  }
+
+  function ytStartPolling(id) {
+    if (_ytPollTimer) clearInterval(_ytPollTimer);
+    _ytPollTimer = setInterval(async () => {
+      try {
+        const res  = await fetch(`${API}/videos/${id}/status/`, { credentials: 'include' });
+        const data = await res.json();
+        ytSetStatus(data.status);
+        if (data.hls_url)
+          document.getElementById('ytRHlsUrl').textContent = `{{ SITE_URL }}${data.hls_url}`;
+        if (data.status === 'ready') {
+          clearInterval(_ytPollTimer);
+          showToast('success', 'Ready to stream!', 'Your imported video is live.');
+        }
+        if (data.status === 'failed') {
+          clearInterval(_ytPollTimer);
+          showToast('error', 'Processing failed', data.processing_error || 'Unknown error');
+        }
+      } catch {}
+    }, 4000);
+  }
+
+  function copyYtWatchUrl() {
+    if (_ytImportedId) copyText(`${location.origin}/watch/${_ytImportedId}/`, 'Watch URL copied!');
+  }
 </script>
 {% endblock %}

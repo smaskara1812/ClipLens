@@ -8,6 +8,7 @@ urlpatterns = [
     path('tenants/new/', views.create_tenant, name='create_tenant'),
     path('tenants/<int:tenant_id>/', views.tenant_detail, name='tenant_detail'),
     path('tenants/<int:tenant_id>/change-plan/', views.change_plan, name='change_plan'),
+    path('tenants/<int:tenant_id>/invite/resend/', views.resend_onboarding_invite, name='resend_onboarding_invite'),
     path('tenants/<int:tenant_id>/toggle/', views.toggle_tenant, name='toggle_tenant'),
     # ── Per-tenant media relocation (Phase 7) ─────────────────────────────────
     path('tenants/<int:tenant_id>/media/relocate/queue/',

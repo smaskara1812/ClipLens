@@ -119,9 +119,9 @@ def _check_and_fire_quota_warnings(tenant_slug: str) -> None:
     if not plan:
         return
 
-    # AI minutes
+    # AI minutes — use total capacity (plan + purchased credits) for accurate thresholds
     ai_used  = usage.get('ai_minutes', 0) or 0
-    ai_limit = (plan.ai_minutes_limit or 0) + (usage.get('credit_minutes', 0) or 0)
+    ai_limit = usage.get('ai_minutes_capacity') or (plan.ai_minutes_limit or 0)
     if ai_limit > 0:
         pct = (ai_used / ai_limit) * 100
         _maybe_notify_quota(tenant_slug, 'AI processing minutes',
@@ -138,7 +138,7 @@ def _check_and_fire_quota_warnings(tenant_slug: str) -> None:
 
 def _maybe_notify_quota(tenant_slug: str, resource: str,
                         pct: float, used: float, limit: float, unit: str) -> None:
-    """Fire 95% notification if pct >= 95, else 80% if pct >= 80. Dedupe is in dispatch."""
+    """Fire at 80%, 90%, 95%, 100% thresholds. Dedupe (30-day window) is in dispatch."""
     if pct < 80:
         return
     try:
@@ -282,15 +282,22 @@ def get_monthly_usage(tenant_slug: str) -> dict:
     plan = tenant.plan
     plan_ai_limit      = plan.ai_minutes_limit  if plan else 0
     plan_storage_limit = plan.storage_limit_gb  if plan else 0
-    credit_minutes     = get_credit_minutes_available(tenant)
+    credit_minutes_remaining = get_credit_minutes_available(tenant)  # unconsumed (for blocking)
     addon_storage_gb   = get_storage_addon_gb(tenant)
 
+    # Capacity for display: max(actual used, plan baseline) + remaining active credits.
+    # Using max(ai_minutes, plan_limit) ensures expiring a partially-consumed pack
+    # never makes the usage percentage spike — consumed minutes stay in the denominator.
+    ai_minutes_f = float(ai_minutes)
+    ai_minutes_capacity = max(ai_minutes_f, float(plan_ai_limit)) + credit_minutes_remaining
+
     return {
-        'ai_minutes':              round(float(ai_minutes), 2),
+        'ai_minutes':              round(ai_minutes_f, 2),
         'storage_gb':              round(float(storage_bytes) / 1024**3, 4),
         'ai_minutes_limit_plan':   plan_ai_limit,
-        'ai_minutes_credits':      round(credit_minutes, 2),
-        'ai_minutes_effective':    plan_ai_limit + credit_minutes,
+        'ai_minutes_credits':      round(credit_minutes_remaining, 2),  # remaining in active packs
+        'ai_minutes_effective':    plan_ai_limit + credit_minutes_remaining,  # for blocking/check_quota
+        'ai_minutes_capacity':     round(ai_minutes_capacity, 1),            # for display/remaining
         'storage_addon_gb':        addon_storage_gb,
         'storage_limit_plan':      plan_storage_limit,
         'storage_limit_effective': plan_storage_limit + addon_storage_gb,
@@ -316,7 +323,7 @@ def check_quota(tenant_slug: str, resource: str = 'ai_minutes',
 
     if resource == 'ai_minutes':
         used  = usage['ai_minutes'] + additional
-        limit = usage['ai_minutes_effective']   # plan + credit packs
+        limit = usage['ai_minutes_capacity']    # plan + total purchased credits
         if limit > 0 and used >= limit:
             raise QuotaExceeded('ai_minutes', used, limit)
 

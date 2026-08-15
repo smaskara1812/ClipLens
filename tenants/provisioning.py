@@ -307,6 +307,7 @@ def provision_tenant_with_invite(
     admin_email: str,
     admin_username: str,
     invite_ttl_days: int = 7,
+    source: str = 'admin',
 ) -> dict:
     """
     Invite-based provisioning: creates the tenant DB and media folder but
@@ -355,6 +356,7 @@ def provision_tenant_with_invite(
             token=token,
             admin_email=admin_email,
             admin_username=admin_username,
+            source=source,
             expires_at=timezone.now() + timedelta(days=invite_ttl_days),
         )
 
@@ -377,6 +379,7 @@ def claim_onboarding_invite(
     token: str,
     password: str,
     plan_id: int,
+    username: str = None,
 ) -> dict:
     """
     Called when an org admin clicks the invite link, sets their password,
@@ -420,7 +423,8 @@ def claim_onboarding_invite(
     tenant = invite.tenant
     try:
         _register_db_alias(tenant.db_name)
-        _create_admin_user(tenant.db_name, invite.admin_email, password, invite.admin_username)
+        effective_username = username or invite.admin_username
+        _create_admin_user(tenant.db_name, invite.admin_email, password, effective_username)
 
         tenant.plan = plan
         if plan.is_free:
@@ -439,7 +443,7 @@ def claim_onboarding_invite(
         return {
             'success':       True,
             'tenant':        tenant,
-            'username':      invite.admin_username,
+            'username':      effective_username,
             'needs_payment': not plan.is_free,
         }
     except Exception as exc:

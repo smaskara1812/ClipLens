@@ -72,7 +72,7 @@ class TopUpProductAdmin(admin.ModelAdmin):
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ['name', 'storage_limit_gb', 'ai_minutes_limit', 'max_users', 'max_videos']
+    list_display = ['name', 'storage_limit_gb', 'ai_minutes_limit', 'max_users']
 
 
 @admin.register(Tenant)
@@ -91,10 +91,21 @@ class UsageEventAdmin(admin.ModelAdmin):
 
 @admin.register(OnboardingInvite)
 class OnboardingInviteAdmin(admin.ModelAdmin):
-    list_display  = ['tenant', 'admin_email', 'admin_username', 'created_at', 'expires_at', 'consumed_at']
-    list_filter   = ['consumed_at']
-    search_fields = ['tenant__slug', 'admin_email']
-    readonly_fields = ['token', 'created_at']
+    list_display   = ['tenant', 'admin_email', 'source', 'invite_status',
+                      'created_at', 'expires_at', 'consumed_at']
+    list_filter    = ['source']
+    search_fields  = ['tenant__slug', 'admin_email', 'admin_username']
+    readonly_fields = ['token', 'source', 'created_at']
+
+    @admin.display(description='Status')
+    def invite_status(self, obj):
+        from django.utils import timezone
+        from django.utils.html import format_html
+        if obj.consumed_at:
+            return format_html('<span style="color:#4ade80;font-weight:600">&#10003; Activated</span>')
+        if obj.expires_at < timezone.now():
+            return format_html('<span style="color:#f87171">&#x2715; Expired</span>')
+        return format_html('<span style="color:#f59e0b;font-weight:600">&#x23F3; Pending</span>')
 
 
 @admin.register(StorageAddon)

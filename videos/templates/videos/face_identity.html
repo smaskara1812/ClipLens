@@ -294,6 +294,21 @@
   .crop-card.confirmed { border-color: var(--green); }
   .crop-card.rejected  { border-color: var(--red); opacity: .55; }
 
+  /* Select-to-separate mode */
+  body.select-mode .crop-card { cursor: pointer; }
+  body.select-mode .crop-overlay { display: none; }   /* no hover actions while selecting */
+  .crop-card.selected {
+    border-color: #ff9e6d !important;
+    box-shadow: 0 0 0 2px rgba(255,158,109,.35);
+  }
+  .crop-card.selected::after {
+    content: '⊘'; position: absolute; top: 4px; left: 4px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #bb6a3c; color: #fff; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 3;
+  }
+
   /* Image wrapper keeps the 1:1 ratio; overlays are relative to this */
   .crop-img-wrap {
     position: relative;
@@ -598,8 +613,33 @@
     <button class="fi-filter-btn" onclick="filterCrops('rejected', this)">Rejected</button>
     {% if can_edit %}
     <button class="fi-confirm-all-btn" onclick="confirmAll()">✓ Confirm all unreviewed</button>
+    <button class="fi-filter-btn" id="selectModeBtn" onclick="toggleSelectMode()"
+            title="Select mis-matched crops, then separate them into a new person">
+      ⊘ Select to separate
+    </button>
     {% endif %}
   </div>
+
+  {% if can_edit %}
+  <!-- Floating bulk-separate bar (visible while crops are selected) -->
+  <div id="splitBar"
+       style="display:none; position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+              z-index:1000; background:var(--surface, #161c25); border:1px solid var(--border, #30363d);
+              border-radius:12px; padding:12px 18px; box-shadow:0 12px 36px rgba(0,0,0,.5);
+              display:none; align-items:center; gap:14px;">
+    <span style="font-size:13px;"><strong id="splitCount">0</strong> crop(s) selected</span>
+    <button onclick="splitSelected()"
+            style="background:#bb6a3c; color:#fff; border:none; border-radius:8px;
+                   padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer;">
+      ⊘ Separate into new person
+    </button>
+    <button onclick="toggleSelectMode()"
+            style="background:none; border:1px solid var(--border,#30363d); color:var(--text-muted,#8b949e);
+                   border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer;">
+      Cancel
+    </button>
+  </div>
+  {% endif %}
 
   <!-- Content tabs: Videos · Photos · Audio — only show tabs with content -->
   <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px;margin-top:8px;">
@@ -733,8 +773,11 @@
           <div class="crop-overlay">
             <button class="crop-action confirm" title="Confirm — this is {{ identity.name }}"
                     onclick="setStatus(event, {{ face.pk }}, 'confirmed')">✓</button>
-            <button class="crop-action reject"  title="Reject — this is NOT {{ identity.name }}"
+            <button class="crop-action reject"  title="Hide — bad/blurry detection (not a usable face)"
                     onclick="setStatus(event, {{ face.pk }}, 'rejected')">✕</button>
+            <button class="crop-action" title="Not {{ identity.name }}? Separate this crop into a new person"
+                    style="color:#ff9e6d;"
+                    onclick="splitSingle(event, {{ face.pk }})">⊘</button>
             {% if face.status != 'unreviewed' %}
             <button class="crop-action unset" title="Reset to unreviewed"
                     onclick="setStatus(event, {{ face.pk }}, 'unreviewed')">↺</button>
@@ -1220,10 +1263,81 @@ async function setStatus(evt, faceId, newStatus) {
       card.style.display = 'none';
     }
 
-    showToast(newStatus === 'confirmed' ? '✓ Confirmed' : newStatus === 'rejected' ? '✕ Rejected' : '↺ Reset');
+    showToast(newStatus === 'confirmed' ? '✓ Confirmed' : newStatus === 'rejected' ? '✕ Hidden' : '↺ Reset');
   } catch (e) {
     showToast('Error saving — try again', true);
   }
+}
+
+/* ── Split / separate mis-clustered faces ─────────────────────────────────── */
+let selectMode = false;
+
+async function _callSplit(faceIds) {
+  const name = prompt(
+    `Separating ${faceIds.length} crop(s) from "{{ identity.name|escapejs }}" into a NEW person.\n\n` +
+    `If you know who this actually is, type their name now (or leave blank to auto-name):`
+  );
+  if (name === null) return null;   // cancelled
+  const res = await fetch(`/api/faces/${IDENTITY_ID}/split/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({ face_ids: faceIds, name: (name || '').trim() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(data.error || 'Separation failed', true);
+    return null;
+  }
+  return data;
+}
+
+async function splitSingle(evt, faceId) {
+  evt.stopPropagation();
+  const data = await _callSplit([faceId]);
+  if (!data) return;
+  showToast(`⊘ Separated into "${data.new_identity.name}"`);
+  setTimeout(() => { window.location.href = data.new_identity.url; }, 900);
+}
+
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  document.body.classList.toggle('select-mode', selectMode);
+  const btn = document.getElementById('selectModeBtn');
+  if (btn) btn.classList.toggle('active', selectMode);
+  if (!selectMode) {
+    document.querySelectorAll('.crop-card.selected').forEach(c => c.classList.remove('selected'));
+  }
+  _updateSplitBar();
+}
+
+function _updateSplitBar() {
+  const bar = document.getElementById('splitBar');
+  if (!bar) return;
+  const n = document.querySelectorAll('.crop-card.selected').length;
+  document.getElementById('splitCount').textContent = n;
+  bar.style.display = (selectMode && n > 0) ? 'flex' : 'none';
+}
+
+// In select mode, clicking a crop toggles selection (capture phase so we
+// beat any other click handlers on the card)
+document.addEventListener('click', (e) => {
+  if (!selectMode) return;
+  const card = e.target.closest('.crop-card');
+  if (!card) return;
+  e.preventDefault();
+  e.stopPropagation();
+  card.classList.toggle('selected');
+  _updateSplitBar();
+}, true);
+
+async function splitSelected() {
+  const ids = [...document.querySelectorAll('.crop-card.selected')]
+    .map(c => parseInt(c.dataset.id, 10)).filter(Boolean);
+  if (!ids.length) return;
+  const data = await _callSplit(ids);
+  if (!data) return;
+  showToast(`⊘ ${data.moved} crop(s) separated into "${data.new_identity.name}"`);
+  setTimeout(() => { window.location.href = data.new_identity.url; }, 900);
 }
 
 /* ── Set thumbnail ───────────────────────────────────────────────────────── */

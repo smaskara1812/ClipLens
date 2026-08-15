@@ -120,10 +120,12 @@
         <div class="step-title">Create your password</div>
 
         <div class="form-group">
-          <label>Username</label>
-          <input type="text" value="{{ invite.admin_username }}" disabled
-                 style="opacity:.6; cursor:not-allowed">
-          <div class="form-hint">Set by the platform administrator. You'll log in with this.</div>
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username"
+                 value="{{ chosen_username|default:invite.admin_username }}"
+                 autocomplete="username" autocapitalize="none" spellcheck="false"
+                 maxlength="30" required>
+          <div class="form-hint" id="username-hint">3–30 characters — lowercase letters, numbers, underscores only.</div>
         </div>
 
         <div class="form-group">
@@ -204,17 +206,74 @@
     });
 
     // Live password match validation
-    const pw = document.getElementById('password');
+    const pw  = document.getElementById('password');
     const pw2 = document.getElementById('password_confirm');
     const submitBtn = document.getElementById('submit-btn');
-    function validate() {
+    function validatePasswords() {
       const match = pw.value && pw.value === pw2.value && pw.value.length >= 8;
       pw2.style.borderColor = pw2.value
         ? (match ? 'var(--success)' : 'var(--danger)')
         : 'var(--border)';
     }
-    pw.addEventListener('input', validate);
-    pw2.addEventListener('input', validate);
+    pw.addEventListener('input', validatePasswords);
+    pw2.addEventListener('input', validatePasswords);
+
+    // Live username validation
+    const usernameInput = document.getElementById('username');
+    const usernameHint  = document.getElementById('username-hint');
+    const TOKEN = '{{ invite.token }}';
+    let usernameTimer = null;
+    let usernameOk = true;
+
+    function setUsernameState(msg, color) {
+      usernameHint.textContent = msg;
+      usernameHint.style.color = color;
+      usernameInput.style.borderColor = color === 'var(--success)' ? 'var(--success)'
+                                      : color === 'var(--danger)'  ? 'var(--danger)'
+                                      : 'var(--border)';
+    }
+
+    function checkUsername(val) {
+      clearTimeout(usernameTimer);
+      if (!val) { setUsernameState('3–30 characters — lowercase letters, numbers, underscores only.', 'var(--text-muted)'); usernameOk = false; return; }
+      const fmt = /^[a-z0-9_]{3,30}$/.test(val);
+      if (!fmt) {
+        setUsernameState('Only lowercase letters, numbers, and underscores. 3–30 characters.', 'var(--danger)');
+        usernameOk = false;
+        return;
+      }
+      setUsernameState('Checking…', 'var(--text-muted)');
+      usernameTimer = setTimeout(() => {
+        fetch(`/api/onboard/check-username/?token=${encodeURIComponent(TOKEN)}&username=${encodeURIComponent(val)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.available) {
+              setUsernameState('✓ Available', 'var(--success)');
+              usernameOk = true;
+            } else {
+              setUsernameState(data.error || `"${val}" is already taken.`, 'var(--danger)');
+              usernameOk = false;
+            }
+          })
+          .catch(() => { setUsernameState('3–30 characters — lowercase letters, numbers, underscores only.', 'var(--text-muted)'); usernameOk = true; });
+      }, 350);
+    }
+
+    usernameInput.addEventListener('input', e => {
+      // Auto-lowercase as they type
+      const pos = e.target.selectionStart;
+      e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      e.target.setSelectionRange(pos, pos);
+      checkUsername(e.target.value);
+    });
+
+    // Run check on load for the pre-filled suggestion
+    if (usernameInput.value) checkUsername(usernameInput.value);
+
+    // Block submit if username invalid
+    document.querySelector('form').addEventListener('submit', e => {
+      if (!usernameOk) { e.preventDefault(); setUsernameState('Please choose a valid, available username.', 'var(--danger)'); }
+    });
   </script>
 </body>
 </html>

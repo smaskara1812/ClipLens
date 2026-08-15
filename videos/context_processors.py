@@ -103,31 +103,35 @@ def tenant_usage_warning(request):
         # Live disk usage — matches admin platform + org usage page
         storage_gb = _disk_usage_bytes(tenant) / 1024**3  # tenant-aware (honours media_root_absolute)
 
-        # Check both resources; surface the most severe
-        ai_level      = usage_warning_level(usage['ai_minutes'], plan.ai_minutes_limit)
-        storage_level = usage_warning_level(storage_gb, plan.storage_limit_gb)
+        # Capacity = plan + total purchased (what the user paid for, for display/warnings)
+        ai_limit_eff      = usage.get('ai_minutes_capacity') or usage['ai_minutes_effective']
+        storage_limit_eff = usage['storage_limit_effective']
+
+        # Check both resources against effective (not base-plan) limits
+        ai_level      = usage_warning_level(usage['ai_minutes'], ai_limit_eff)
+        storage_level = usage_warning_level(storage_gb, storage_limit_eff)
 
         severity_rank = {None: 0, 'warning': 1, 'critical': 2}
         if severity_rank.get(ai_level, 0) >= severity_rank.get(storage_level, 0):
             worst_level = ai_level
-            if ai_level and plan.ai_minutes_limit > 0:
+            if ai_level and ai_limit_eff > 0:
                 detail = {
                     'resource': 'AI processing',
                     'used': round(usage['ai_minutes'], 1),
-                    'limit': plan.ai_minutes_limit,
-                    'pct': round(usage['ai_minutes'] / plan.ai_minutes_limit * 100, 1),
+                    'limit': round(ai_limit_eff, 1),
+                    'pct': round(usage['ai_minutes'] / ai_limit_eff * 100, 1),
                     'unit': 'min',
                 }
             else:
                 detail = None
         else:
             worst_level = storage_level
-            if storage_level and plan.storage_limit_gb > 0:
+            if storage_level and storage_limit_eff > 0:
                 detail = {
                     'resource': 'Storage',
                     'used': round(storage_gb, 2),
-                    'limit': plan.storage_limit_gb,
-                    'pct': round(storage_gb / plan.storage_limit_gb * 100, 1),
+                    'limit': round(storage_limit_eff, 1),
+                    'pct': round(storage_gb / storage_limit_eff * 100, 1),
                     'unit': 'GB',
                 }
             else:

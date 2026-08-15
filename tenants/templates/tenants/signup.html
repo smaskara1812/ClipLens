@@ -1,0 +1,292 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create your ClipLens workspace</title>
+  <link rel="icon" type="image/png" href="{% static 'videos/logos/favicon.ico' %}">
+  <style>
+    :root {
+      --bg:          #07090d;
+      --bg-2:        #0c1118;
+      --surface:     #161c25;
+      --surface-2:   #1c2330;
+      --border:      #232b38;
+      --border-soft: #1a212c;
+      --text:        #e8edf5;
+      --text-muted:  #8b96a8;
+      --text-soft:   #5b6678;
+      --accent:      #6da6ff;
+      --accent-hi:   #8fc1ff;
+      --accent-glow: rgba(109,166,255,.35);
+      --accent-soft: rgba(109,166,255,.12);
+      --green:       #4ade80;
+      --red:         #f87171;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      position: relative;
+    }
+
+    /* Grid background */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(var(--border-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border-soft) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: .5;
+      pointer-events: none;
+    }
+    /* Radial glow */
+    body::after {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(109,166,255,.08), transparent 50%),
+        radial-gradient(circle at 75% 70%, rgba(141,121,255,.06), transparent 50%);
+      pointer-events: none;
+    }
+
+    .wrap {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 440px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+
+    .logo-wrap { margin-bottom: 28px; }
+    .logo-wrap img { height: 30px; width: auto; display: block; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      box-shadow: 0 24px 64px -12px rgba(0,0,0,.5);
+    }
+
+    h1 { font-size: 20px; font-weight: 700; letter-spacing: -.3px; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 28px; line-height: 1.5; }
+
+    .form-group { margin-bottom: 18px; }
+    label {
+      display: block; font-size: 11px; font-weight: 600;
+      margin-bottom: 6px; color: var(--text-muted);
+      letter-spacing: .06em; text-transform: uppercase;
+    }
+    input[type=text], input[type=email] {
+      width: 100%; padding: 10px 12px;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    input.error { border-color: var(--red); }
+    input.error:focus { box-shadow: 0 0 0 3px rgba(248,113,113,.12); }
+    .field-error { font-size: 12px; color: var(--red); margin-top: 5px; }
+    .hint { font-size: 12px; color: var(--text-soft); margin-top: 5px; line-height: 1.4; }
+
+    /* Slug row */
+    .slug-row { display: flex; align-items: stretch; }
+    .slug-prefix, .slug-suffix {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 10px 10px;
+      font-size: 12px; color: var(--text-soft);
+      white-space: nowrap; flex-shrink: 0;
+      display: flex; align-items: center;
+    }
+    .slug-prefix { border-right: none; border-radius: 8px 0 0 8px; }
+    .slug-suffix { border-left: none; border-radius: 0 8px 8px 0; }
+    .slug-row input { border-radius: 0; flex: 1; min-width: 0; }
+    .slug-status { font-size: 12px; margin-top: 6px; min-height: 16px; }
+    .slug-status.ok       { color: var(--green); }
+    .slug-status.bad      { color: var(--red); }
+    .slug-status.checking { color: var(--text-muted); }
+
+    .divider { border: none; border-top: 1px solid var(--border-soft); margin: 24px 0; }
+
+    .btn {
+      display: block; width: 100%; padding: 11px;
+      background: linear-gradient(180deg, var(--accent), #5093f0);
+      color: #fff;
+      font-size: 14px; font-weight: 600;
+      border: none; border-radius: 8px;
+      cursor: pointer;
+      transition: filter .15s, box-shadow .15s;
+      box-shadow: 0 1px 0 rgba(255,255,255,.15) inset, 0 6px 20px -8px var(--accent-glow);
+      letter-spacing: .1px;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; filter: none; }
+
+    .global-error {
+      background: rgba(248,113,113,.08);
+      border: 1px solid rgba(248,113,113,.25);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--red);
+      margin-bottom: 18px;
+    }
+
+    .login-link {
+      text-align: center; font-size: 13px;
+      color: var(--text-soft); margin-top: 20px;
+    }
+    .login-link a { color: var(--accent); text-decoration: none; }
+    .login-link a:hover { color: var(--accent-hi); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo-wrap">
+      <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens">
+    </div>
+
+    <div class="card">
+      <h1>Create your workspace</h1>
+      <p class="subtitle">Set up your organisation in minutes. No credit card required.</p>
+
+      {% if error %}
+        <div class="global-error">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" id="signupForm">
+        {% csrf_token %}
+
+        <div class="form-group">
+          <label for="org_name">Organisation name</label>
+          <input type="text" id="org_name" name="org_name"
+                 value="{{ org_name|default:'' }}"
+                 placeholder="Acme Media" autocomplete="organization" autofocus
+                 class="{% if errors.org_name %}error{% endif %}">
+          {% if errors.org_name %}<p class="field-error">{{ errors.org_name }}</p>{% endif %}
+        </div>
+
+        <div class="form-group">
+          <label for="slug">Workspace URL</label>
+          <div class="slug-row">
+            <span class="slug-prefix">https://</span>
+            <input type="text" id="slug" name="slug"
+                   value="{{ slug|default:'' }}"
+                   placeholder="acme" autocomplete="off"
+                   class="{% if errors.slug %}error{% endif %}">
+            <span class="slug-suffix">.cliplens.in</span>
+          </div>
+          <div class="slug-status" id="slugStatus">
+            {% if errors.slug %}<span class="bad">{{ errors.slug }}</span>{% endif %}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="email">Work email</label>
+          <input type="email" id="email" name="email"
+                 value="{{ email|default:'' }}"
+                 placeholder="you@company.com" autocomplete="email"
+                 class="{% if errors.email %}error{% endif %}">
+          {% if errors.email %}<p class="field-error">{{ errors.email }}</p>{% endif %}
+          <p class="hint">We'll send an activation link to this address.</p>
+        </div>
+
+        <hr class="divider">
+
+        <button type="submit" class="btn" id="submitBtn">Create workspace →</button>
+      </form>
+
+      <p class="login-link">Already have a workspace? <a href="/login/">Sign in</a></p>
+    </div>
+  </div>
+
+  <script>
+    const orgInput   = document.getElementById('org_name');
+    const slugInput  = document.getElementById('slug');
+    const slugStatus = document.getElementById('slugStatus');
+    const submitBtn  = document.getElementById('submitBtn');
+
+    let slugTimer = null;
+    let slugManuallyEdited = {{ slug|yesno:"true,false" }};
+
+    function slugify(str) {
+      return str.toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .trim()
+        .replace(/[\s-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .substring(0, 30);
+    }
+
+    function checkSlug(slug) {
+      clearTimeout(slugTimer);
+      if (!slug || slug.length < 3) {
+        slugStatus.className = 'slug-status';
+        slugStatus.innerHTML = '';
+        return;
+      }
+      slugStatus.className = 'slug-status checking';
+      slugStatus.textContent = 'Checking…';
+      slugTimer = setTimeout(() => {
+        fetch(`/api/signup/check-slug/?slug=${encodeURIComponent(slug)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.available) {
+              slugStatus.className = 'slug-status ok';
+              slugStatus.textContent = '✓ Available';
+              submitBtn.disabled = false;
+            } else {
+              slugStatus.className = 'slug-status bad';
+              slugStatus.textContent = data.error || `"${slug}" is already taken.`;
+              submitBtn.disabled = true;
+            }
+          })
+          .catch(() => {
+            slugStatus.className = 'slug-status';
+            slugStatus.innerHTML = '';
+            submitBtn.disabled = false;
+          });
+      }, 350);
+    }
+
+    orgInput.addEventListener('input', () => {
+      if (!slugManuallyEdited) {
+        slugInput.value = slugify(orgInput.value);
+        checkSlug(slugInput.value);
+      }
+    });
+
+    slugInput.addEventListener('input', () => {
+      slugManuallyEdited = true;
+      checkSlug(slugInput.value);
+    });
+
+    if (slugInput.value) checkSlug(slugInput.value);
+
+    document.getElementById('signupForm').addEventListener('submit', e => {
+      if (submitBtn.disabled) e.preventDefault();
+    });
+  </script>
+</body>
+</html>

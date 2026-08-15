@@ -33,6 +33,10 @@ class LoginRequiredMiddleware:
         r'|/contact/'                  # public contact form submission
         r'|/privacy/'                  # public privacy policy
         r'|/terms/'                    # public terms of service
+        r'|/signup/'                   # self-service signup
+        r'|/api/signup/'               # signup AJAX endpoints (slug check)
+        r'|/api/onboard/'              # onboarding AJAX endpoints (username check)
+        r'|/team-invite/'              # team member invite flow
         r')'
     )
 

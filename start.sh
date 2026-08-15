@@ -85,7 +85,7 @@ echo "  ✓ ${TASK_COUNT} Celery tasks registered"
 echo ""
 
 # ── 1. Django dev server ─────────────────────────────────────────────────────
-echo "  [1/6] Django dev server       → http://localhost:8000"
+echo "  [1/7] Django dev server       → http://localhost:8000"
 python manage.py runserver &
 DJANGO_PID=$!
 
@@ -102,7 +102,7 @@ export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 #   --pool=solo: runs tasks in the main process (no fork). This avoids
 #   SIGSEGV crashes on macOS where PyTorch/onnxruntime/OpenCV are not
 #   fork-safe. Tasks run serially but models stay loaded between tasks.
-echo "  [2/6] Celery main worker      (processing, captions, default)"
+echo "  [2/7] Celery main worker      (processing, captions, default)"
 celery -A cliplens worker -l info \
   -Q processing,captions,default \
   -n main@%h \
@@ -112,7 +112,7 @@ CELERY_PID=$!
 # ── 3. Audio worker ───────────────────────────────────────────────────────────
 #   Handles: PANNs CNN14 audio event detection + FFmpeg silence detection.
 #   --pool=solo: PANNs (onnxruntime) also crashes under fork on macOS.
-echo "  [3/6] Celery audio worker     (${AUDIO_QUEUE})"
+echo "  [3/7] Celery audio worker     (${AUDIO_QUEUE})"
 celery -A cliplens worker -l info \
   -Q "${AUDIO_QUEUE}" \
   -n audio@%h \
@@ -122,7 +122,7 @@ AUDIO_CELERY_PID=$!
 # ── 4. Translation worker ─────────────────────────────────────────────────────
 #   Handles: NLLB-200 subtitle translation (~2.4 GB model, CPU/GPU).
 #   Concurrency=1 — one instance is enough and avoids OOM.
-echo "  [4/6] Celery translation      (translation)"
+echo "  [4/7] Celery translation      (translation)"
 celery -A cliplens worker -l info \
   -Q translation \
   -n translation@%h \
@@ -132,7 +132,7 @@ TRANSLATION_CELERY_PID=$!
 # ── 5. Live worker ────────────────────────────────────────────────────────────
 #   Handles: run_live_ffmpeg — blocks for the entire stream duration.
 #   Kept separate so live streams never starve other tasks.
-echo "  [5/6] Celery live worker      (live)"
+echo "  [5/7] Celery live worker      (live)"
 celery -A cliplens worker -l info \
   -Q live \
   -n live@%h \

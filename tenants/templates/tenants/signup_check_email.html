@@ -1,0 +1,145 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Check your email — ClipLens</title>
+  <link rel="icon" type="image/png" href="{% static 'videos/logos/favicon.ico' %}">
+  <style>
+    :root {
+      --bg:          #07090d;
+      --bg-2:        #0c1118;
+      --surface:     #161c25;
+      --border:      #232b38;
+      --border-soft: #1a212c;
+      --text:        #e8edf5;
+      --text-muted:  #8b96a8;
+      --text-soft:   #5b6678;
+      --accent:      #6da6ff;
+      --accent-hi:   #8fc1ff;
+      --green:       #4ade80;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased; min-height: 100vh;
+    }
+    body {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 32px 20px; position: relative;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(var(--border-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border-soft) 1px, transparent 1px);
+      background-size: 40px 40px; opacity: .5; pointer-events: none;
+    }
+    body::after {
+      content: ''; position: fixed; inset: 0; z-index: 0;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(109,166,255,.08), transparent 50%),
+        radial-gradient(circle at 75% 70%, rgba(141,121,255,.06), transparent 50%);
+      pointer-events: none;
+    }
+
+    .wrap {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 440px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+
+    .logo-wrap { margin-bottom: 28px; }
+    .logo-wrap img { height: 30px; width: auto; display: block; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px 32px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 24px 64px -12px rgba(0,0,0,.5);
+    }
+
+    .icon-wrap {
+      width: 56px; height: 56px; border-radius: 14px;
+      background: rgba(109,166,255,.1);
+      border: 1px solid rgba(109,166,255,.2);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 24px;
+    }
+
+    h1 { font-size: 20px; font-weight: 700; letter-spacing: -.3px; margin-bottom: 10px; }
+
+    p { font-size: 14px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px; }
+    p:last-of-type { margin-bottom: 0; }
+
+    .email-highlight {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .steps {
+      background: var(--bg-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin: 20px 0;
+      text-align: left;
+    }
+    .steps li {
+      font-size: 13px; color: var(--text-muted);
+      padding: 5px 0; list-style: none;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .steps li .num {
+      flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%;
+      background: rgba(109,166,255,.15); color: var(--accent);
+      font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      margin-top: 1px;
+    }
+
+    .divider { border: none; border-top: 1px solid var(--border-soft); margin: 24px 0; }
+
+    .hint { font-size: 12px; color: var(--text-soft) !important; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hi); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo-wrap">
+      <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens">
+    </div>
+
+    <div class="card">
+      <div class="icon-wrap">✉️</div>
+      <h1>Check your inbox</h1>
+      <p>We've sent an activation link to<br>
+        <span class="email-highlight">{{ email }}</span>
+      </p>
+
+      <ul class="steps">
+        <li><span class="num">1</span>Open the email from ClipLens</li>
+        <li><span class="num">2</span>Click the activation link</li>
+        <li><span class="num">3</span>Set your password and choose a plan</li>
+      </ul>
+
+      <p>The link expires in <strong>7 days</strong>.</p>
+
+      <hr class="divider">
+
+      <p class="hint">
+        Didn't receive it? Check your spam folder, or
+        <a href="/signup/">try signing up again</a> with the same email.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

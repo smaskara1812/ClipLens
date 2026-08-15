@@ -13,14 +13,13 @@ from django.contrib.auth.models import User
 class Plan(models.Model):
     """
     Subscription tier. Tenants are assigned one plan.
-    Zero values mean unlimited (e.g. max_videos=0 → unlimited videos).
+    Zero values mean unlimited (e.g. max_users=0 → unlimited users).
     price_usd = 0 → free plan (no Stripe checkout required during onboarding).
     """
     name = models.CharField(max_length=80, unique=True)
     storage_limit_gb = models.PositiveIntegerField(default=100)
     ai_minutes_limit = models.PositiveIntegerField(default=300)
     max_users = models.PositiveIntegerField(default=3)
-    max_videos = models.PositiveIntegerField(default=0, help_text="0 = unlimited")
     price_usd = models.DecimalField(max_digits=8, decimal_places=2, default=0,
                                     help_text="Monthly price. 0 = free.")
     # Stripe (created lazily on first paid use)
@@ -168,11 +167,20 @@ class OnboardingInvite(models.Model):
     One-time invite link sent to an org admin after provisioning.
     Token is consumed when the admin sets their password + picks a plan.
     """
+    SOURCE_SELF_SERVICE = 'self_service'
+    SOURCE_ADMIN        = 'admin'
+    SOURCE_CHOICES      = [
+        (SOURCE_SELF_SERVICE, 'Self-service signup'),
+        (SOURCE_ADMIN,        'Admin-provisioned'),
+    ]
+
     tenant         = models.OneToOneField(Tenant, on_delete=models.CASCADE,
                                           related_name='invite')
     token          = models.CharField(max_length=64, unique=True, db_index=True)
     admin_email    = models.EmailField()
     admin_username = models.CharField(max_length=150)
+    source         = models.CharField(max_length=20, choices=SOURCE_CHOICES,
+                                      default=SOURCE_ADMIN)
     created_at     = models.DateTimeField(auto_now_add=True)
     expires_at     = models.DateTimeField()
     consumed_at    = models.DateTimeField(null=True, blank=True)

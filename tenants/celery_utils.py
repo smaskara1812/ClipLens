@@ -171,7 +171,7 @@ def _on_task_failure(task_id, exception, args, kwargs, **extra):
             task_name=task_name[:200],
             task_id=task_id or '',
             tenant_slug=slug,
-            queue=getattr(getattr(sender, 'request', None), 'delivery_info', {}).get('routing_key', '')
+            queue=(getattr(getattr(sender, 'request', None), 'delivery_info', None) or {}).get('routing_key', '')
                   if sender else '',
             args_snippet=repr(args)[:500],
             error_message=f'{type(exception).__name__}: {exception}'[:2000],

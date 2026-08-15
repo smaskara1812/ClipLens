@@ -1,1766 +1,457 @@
-<!DOCTYPE html>
 {% load static %}
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ClipLens — Searchable AI media intelligence for organisations</title>
-  <meta name="description" content="ClipLens transforms hours of raw video and photo libraries into a searchable, multilingual knowledge base — with face recognition, transcription, and semantic search built in.">
+  <title>ClipLens — AI search for your video archive</title>
+  <meta name="description" content="ClipLens makes your video and photo archive searchable by what was said, who appeared, and what happened on screen. Private beta — now accepting early teams.">
+  <meta property="og:title" content="ClipLens — AI search for your video archive">
+  <meta property="og:description" content="Search your video archive by what was said, who appeared, and what happened on screen. No tagging, no manual transcription.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://cliplens.in/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ClipLens — AI search for your video archive">
+  <meta name="twitter:description" content="Search your video archive by what was said, who appeared, and what happened on screen.">
   <link rel="icon" type="image/png" href="{% static 'videos/logos/logo-icon.png' %}">
-
+  <link rel="canonical" href="https://cliplens.in/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
   <style>
-    /* ─────────────────────────────────────────────────────────────
-       Design tokens
-       ───────────────────────────────────────────────────────────── */
     :root {
-      --bg:           #07090d;
-      --bg-2:         #0c1118;
-      --bg-3:         #11161e;
-      --surface:      #161c25;
-      --surface-2:    #1c2330;
-      --border:       #232b38;
-      --border-soft:  #1a212c;
-      --text:         #e8edf5;
-      --text-muted:   #8b96a8;
-      --text-soft:    #5b6678;
-      --accent:       #6da6ff;
-      --accent-hi:    #8fc1ff;
-      --accent-glow:  rgba(109, 166, 255, .35);
-      --success:      #4ade80;
-      --warning:      #f59e0b;
-      --radius:       12px;
-      --radius-lg:    16px;
+      --bg:          #07090d;
+      --bg-2:        #0c1118;
+      --surface:     #161c25;
+      --surface-2:   #1c2330;
+      --border:      #232b38;
+      --border-soft: #1a212c;
+      --text:        #e8edf5;
+      --text-muted:  #8b96a8;
+      --text-soft:   #5b6678;
+      --accent:      #6da6ff;
+      --accent-hi:   #8fc1ff;
+      --accent-glow: rgba(109,166,255,.35);
+      --purple:      #b89aff;
+      --orange:      #ff8a65;
+      --green:       #4ade80;
+      --radius:      12px;
+      --radius-lg:   16px;
     }
-    * { box-sizing: border-box; }
-    html, body {
-      margin: 0; padding: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      font-feature-settings: 'cv11', 'ss01';
-    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg); color: var(--text);
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
     img { max-width: 100%; display: block; }
     a { color: var(--accent); text-decoration: none; transition: color .15s; }
     a:hover { color: var(--accent-hi); }
+    h1, h2 { font-family: 'DM Serif Display', Georgia, serif; font-weight: 400;
+      letter-spacing: -.03em; line-height: 1.08; }
+    h3 { font-family: 'DM Sans', sans-serif; font-weight: 600; letter-spacing: -.01em; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 28px; }
 
-    h1, h2, h3, h4 {
-      margin: 0; font-weight: 700;
-      letter-spacing: -0.02em; line-height: 1.15;
-    }
-    h1 { font-size: 64px; letter-spacing: -0.04em; line-height: 1.05; }
-    h2 { font-size: 40px; letter-spacing: -0.025em; }
-    h3 { font-size: 20px; }
+    /* ── NAV ── */
+    .nav { position: sticky; top: 0; z-index: 100;
+      backdrop-filter: blur(16px) saturate(160%);
+      background: rgba(7,9,13,.82);
+      border-bottom: 1px solid var(--border-soft); }
+    .nav-inner { display: flex; justify-content: space-between; align-items: center;
+      padding: 0 28px; max-width: 1180px; margin: 0 auto; height: 60px; }
+    .nav-logo img { height: 26px; }
+    .nav-links { display: flex; align-items: center; gap: 8px; }
+    .nav-link { font-size: 14px; color: var(--text-muted); padding: 6px 12px;
+      border-radius: 8px; font-weight: 500; transition: color .15s; }
+    .nav-link:hover { color: var(--text); }
+    .nav-cta { font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px;
+      background: linear-gradient(160deg, #7dbdff, #4d8ff0); color: #fff !important;
+      box-shadow: 0 6px 20px -6px var(--accent-glow); transition: filter .15s; }
+    .nav-cta:hover { filter: brightness(1.1); color: #fff !important; }
+    @media (max-width: 600px) { .nav-link { display: none; } }
 
-    @media (max-width: 900px) {
-      h1 { font-size: 42px; }
-      h2 { font-size: 30px; }
-    }
-    @media (max-width: 560px) {
-      h1 { font-size: 34px; }
-    }
+    /* ── HERO ── */
+    .hero { padding: 100px 28px 80px; position: relative; overflow: hidden; }
+    .hero::before { content: ""; position: absolute; inset: 0;
+      background: radial-gradient(ellipse 800px 500px at 50% -80px, rgba(109,166,255,.1), transparent);
+      pointer-events: none; }
+    .hero-inner { max-width: 780px; margin: 0 auto; position: relative; z-index: 1; }
+    .beta-badge { display: inline-flex; align-items: center; gap: 8px; padding: 5px 14px;
+      border-radius: 100px; background: rgba(74,222,128,.06);
+      border: 1px solid rgba(74,222,128,.2); margin-bottom: 28px; }
+    .beta-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+      box-shadow: 0 0 8px var(--green); animation: pulse 2.2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(.85)} }
+    .beta-badge span { font-size: 12px; font-weight: 600; color: var(--green); letter-spacing: .04em; }
+    h1 { font-size: clamp(40px, 6.5vw, 72px); margin-bottom: 20px; }
+    h1 em { font-style: italic; color: var(--accent); }
+    .hero-sub { font-size: clamp(16px, 2vw, 19px); color: var(--text-muted);
+      line-height: 1.7; max-width: 580px; margin-bottom: 36px; font-weight: 300; }
+    .hero-ctас { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 13px 24px;
+      border-radius: 10px; font-family: 'DM Sans', sans-serif; font-weight: 600;
+      font-size: 15px; border: none; cursor: pointer; transition: all .15s; text-decoration: none; }
+    .btn-primary { background: linear-gradient(160deg, #7dbdff, #4d8ff0); color: #fff !important;
+      box-shadow: 0 8px 28px -8px var(--accent-glow); }
+    .btn-primary:hover { filter: brightness(1.1); color: #fff !important; }
+    .btn-ghost { background: transparent; color: var(--text) !important;
+      border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface-2); border-color: var(--text-soft); color: var(--text) !important; }
 
-    p { margin: 0; }
-    .container { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+    /* ── PROOF STRIP ── */
+    .proof { border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+      padding: 20px 28px; }
+    .proof-inner { max-width: 1100px; margin: 0 auto;
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 48px; }
+    .proof-item { display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    .proof-item svg { width: 15px; height: 15px; color: var(--accent); flex-shrink: 0; }
 
-    /* ─────────────────────────────────────────────────────────────
-       Top navigation
-       ───────────────────────────────────────────────────────────── */
-    .nav {
-      position: sticky; top: 0; z-index: 100;
-      backdrop-filter: blur(14px) saturate(140%);
-      background: rgba(7, 9, 13, 0.78);
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .nav-inner {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 16px 28px;
-      max-width: 1180px; margin: 0 auto;
-    }
-    .nav-logo img { height: 28px; }
-    .nav-links { display: flex; gap: 32px; align-items: center; }
-    .nav-links a {
-      color: var(--text-muted); font-size: 14px; font-weight: 500;
-    }
-    .nav-links a:hover { color: var(--text); }
-    .nav-cta {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 9px 18px; border-radius: 8px;
-      background: linear-gradient(180deg, var(--accent), #5093f0);
-      color: #fff !important; font-size: 14px; font-weight: 600;
-      box-shadow: 0 1px 0 rgba(255,255,255,.15) inset, 0 6px 20px -8px var(--accent-glow);
-    }
-    .nav-cta:hover { color: #fff !important; filter: brightness(1.08); }
-    @media (max-width: 720px) {
-      .nav-links a:not(.nav-cta) { display: none; }
-    }
+    /* ── PROBLEM ── */
+    .problem { padding: 96px 28px; }
+    .problem-inner { max-width: 900px; margin: 0 auto; display: grid; gap: 40px; }
+    @media (min-width: 680px) { .problem-inner { grid-template-columns: 1fr 1fr; gap: 60px; } }
+    .problem-copy h2 { font-size: clamp(28px, 4vw, 44px); margin-bottom: 18px; }
+    .problem-copy p { font-size: 15px; color: var(--text-muted); line-height: 1.75; margin-bottom: 12px; }
+    .problem-panel { background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 22px; }
+    .problem-panel-label { font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .12em; color: var(--text-soft); margin-bottom: 14px; }
+    .before-item { display: flex; align-items: flex-start; gap: 10px;
+      font-size: 13px; color: var(--text-muted); padding: 6px 0;
+      border-bottom: 1px solid var(--border-soft); font-family: 'SF Mono', monospace; }
+    .before-item:last-child { border-bottom: none; }
+    .before-icon { color: var(--text-soft); font-style: normal; }
 
-    /* ─────────────────────────────────────────────────────────────
-       Hero
-       ───────────────────────────────────────────────────────────── */
-    .hero {
-      position: relative;
-      padding: 120px 28px 100px;
-      overflow: hidden;
-    }
-    .hero::before {
-      content: ""; position: absolute; inset: 0;
-      background:
-        radial-gradient(circle at 20% 0%, rgba(109,166,255,.12), transparent 50%),
-        radial-gradient(circle at 80% 30%, rgba(141,121,255,.08), transparent 55%);
-      pointer-events: none;
-    }
-    .hero-inner {
-      position: relative; max-width: 1180px; margin: 0 auto;
-      text-align: center;
-    }
-    .hero-eyebrow {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 6px 14px; border-radius: 100px;
-      background: rgba(109,166,255,.08);
-      border: 1px solid rgba(109,166,255,.18);
-      color: var(--accent); font-size: 13px; font-weight: 500;
-      margin-bottom: 32px;
-    }
-    .hero-eyebrow .dot {
-      width: 6px; height: 6px; border-radius: 50%;
-      background: var(--accent); box-shadow: 0 0 12px var(--accent);
-    }
-    .hero h1 { max-width: 920px; margin: 0 auto; }
-    .hero h1 .gradient {
-      background: linear-gradient(120deg, var(--accent), #b89aff);
-      -webkit-background-clip: text; background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .hero .lede {
-      max-width: 660px; margin: 28px auto 0;
-      font-size: 19px; color: var(--text-muted);
-    }
-    .hero-ctas {
-      margin-top: 40px;
-      display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
-    }
-    .btn {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 14px 26px; border-radius: 10px;
-      font-weight: 600; font-size: 15px;
-      border: none; cursor: pointer; font-family: inherit;
-      transition: all .15s;
-    }
-    .btn-primary {
-      background: linear-gradient(180deg, var(--accent), #5093f0);
-      color: #fff !important;
-      box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 10px 30px -10px var(--accent-glow);
-    }
-    .btn-primary:hover { filter: brightness(1.08); color: #fff !important; }
-    .btn-ghost {
-      background: var(--surface); color: var(--text) !important;
-      border: 1px solid var(--border);
-    }
-    .btn-ghost:hover { background: var(--surface-2); color: var(--text) !important; }
+    /* ── NOT A MAM ── */
+    .not-mam { padding: 0 28px 96px; }
+    .nm-inner { max-width: 940px; margin: 0 auto; display: grid; gap: 48px; align-items: center; }
+    @media (min-width: 720px) { .nm-inner { grid-template-columns: 1fr 1fr; gap: 64px; } }
+    .nm-eyebrow { font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .14em; color: var(--text-soft); margin-bottom: 12px; }
+    .nm-copy h2 { font-size: clamp(26px, 3.5vw, 40px); margin-bottom: 16px; }
+    .nm-copy p { font-size: 14px; color: var(--text-muted); line-height: 1.75; margin-bottom: 10px; }
+    .nm-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .nm-col-label { font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .12em; color: var(--text-soft); margin-bottom: 10px; padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-soft); }
+    .nm-item { font-size: 12px; line-height: 1.5; padding: 5px 0;
+      border-bottom: 1px solid var(--border-soft); display: flex; gap: 7px; align-items: baseline; }
+    .nm-item:last-child { border-bottom: none; }
+    .nm-bad { color: var(--text-soft); }
+    .nm-bad::before { content: "✗"; color: #ef4444; font-weight: 700; flex-shrink: 0; }
+    .nm-good { color: var(--text-muted); }
+    .nm-good::before { content: "✓"; color: var(--green); font-weight: 700; flex-shrink: 0; }
 
-    .hero-meta {
-      margin-top: 28px; font-size: 13px; color: var(--text-soft);
-    }
+    /* ── PILLARS PREVIEW ── */
+    .pillars-preview { padding: 0 28px 96px; }
+    .pp-head { max-width: 600px; margin: 0 auto 48px; text-align: center; }
+    .pp-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    .pp-head h2 { font-size: clamp(26px, 3.5vw, 42px); margin-bottom: 12px; }
+    .pp-head p { font-size: 15px; color: var(--text-muted); line-height: 1.7; }
+    .pp-grid { max-width: 900px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+    .pp-card { background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 24px; display: flex; flex-direction: column; gap: 10px;
+      transition: border-color .2s; text-decoration: none; }
+    .pp-card:hover { border-color: rgba(109,166,255,.3); }
+    .pp-icon { width: 36px; height: 36px; border-radius: 9px; display: flex;
+      align-items: center; justify-content: center; }
+    .pp-icon svg { width: 16px; height: 16px; }
+    .pp-card h3 { font-size: 15px; color: var(--text); margin: 0; }
+    .pp-card p { font-size: 13px; color: var(--text-muted); line-height: 1.6; flex: 1; }
+    .pp-more { font-size: 12px; color: var(--accent); font-weight: 600; margin-top: 4px; }
+    .pp-find .pp-icon { background: rgba(109,166,255,.08); color: var(--accent); }
+    .pp-understand .pp-icon { background: rgba(184,154,255,.08); color: var(--purple); }
+    .pp-protect .pp-icon { background: rgba(255,138,101,.08); color: var(--orange); }
+    .pp-manage .pp-icon { background: rgba(74,222,128,.08); color: var(--green); }
 
-    /* Hero visual — a real-looking product mock */
-    .hero-mock {
-      max-width: 980px; margin: 64px auto 0;
-      position: relative;
-    }
-    .mock-frame {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      box-shadow:
-        0 1px 0 rgba(255,255,255,.04) inset,
-        0 30px 80px -20px rgba(0,0,0,.6),
-        0 0 0 1px rgba(109,166,255,.08);
-    }
-    .mock-bar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 12px 16px; background: var(--bg-3);
-      border-bottom: 1px solid var(--border);
-    }
-    .mock-bar .dots { display: flex; gap: 6px; margin-right: 12px; }
-    .mock-bar .dots span {
-      width: 10px; height: 10px; border-radius: 50%; background: #353d4d;
-    }
-    .mock-bar .url {
-      flex: 1; background: var(--surface); border-radius: 6px;
-      padding: 5px 12px; font-size: 12px; color: var(--text-muted);
-      font-family: 'SF Mono', Menlo, monospace;
-    }
-    .mock-body {
-      display: grid; grid-template-columns: 240px 1fr;
-      min-height: 340px;
-    }
-    @media (max-width: 720px) {
-      .mock-body { grid-template-columns: 1fr; }
-      .mock-side { display: none; }
-    }
-    .mock-side {
-      background: var(--bg-3); border-right: 1px solid var(--border);
-      padding: 20px 16px; font-size: 13px;
-    }
-    .mock-side-h {
-      font-size: 10px; color: var(--text-soft);
-      text-transform: uppercase; letter-spacing: .12em; font-weight: 600;
-      margin: 0 0 10px;
-    }
-    .mock-side-item {
-      display: flex; align-items: center; gap: 10px;
-      padding: 8px 10px; border-radius: 6px;
-      color: var(--text-muted); margin-bottom: 2px;
-    }
-    .mock-side-item.active { background: rgba(109,166,255,.1); color: var(--accent); }
-    .mock-side-item svg { width: 16px; height: 16px; opacity: .75; }
-    .mock-main { padding: 20px; }
-    .mock-search {
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px 16px;
-      font-size: 14px; color: var(--text);
-      display: flex; align-items: center; gap: 10px;
-    }
-    .mock-search .cursor {
-      width: 1.5px; height: 16px; background: var(--accent);
-      animation: blink 1.1s steps(2) infinite;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
-    .mock-results {
-      margin-top: 16px; display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 10px;
-    }
-    .mock-card {
-      aspect-ratio: 16/10; border-radius: 6px;
-      background: linear-gradient(135deg, #1b2532, #131922);
-      border: 1px solid var(--border-soft);
-      position: relative; overflow: hidden;
-    }
-    .mock-card::before, .mock-card::after {
-      content: ""; position: absolute;
-    }
-    .mock-card::before {
-      inset: 0; opacity: .35;
-      background: radial-gradient(circle at 30% 30%, var(--accent), transparent 60%);
-    }
-    .mock-card::after {
-      bottom: 6px; left: 6px; right: 6px; height: 4px;
-      background: rgba(255,255,255,.06); border-radius: 2px;
-    }
-    .mock-card:nth-child(3n)::before { background: radial-gradient(circle at 70% 60%, #b89aff, transparent 60%); }
-    .mock-card:nth-child(5n)::before { background: radial-gradient(circle at 50% 50%, #4ade80, transparent 60%); }
+    /* ── BETA PITCH ── */
+    .beta-section { background: var(--bg-2); border-top: 1px solid var(--border-soft);
+      border-bottom: 1px solid var(--border-soft); padding: 96px 28px; }
+    .beta-inner { max-width: 860px; margin: 0 auto; display: grid; gap: 48px; align-items: start; }
+    @media (min-width: 780px) { .beta-inner { grid-template-columns: 1fr 1fr; } }
+    .beta-copy h2 { font-size: clamp(28px, 4vw, 44px); margin-bottom: 18px; }
+    .beta-copy p { font-size: 15px; color: var(--text-muted); line-height: 1.75; margin-bottom: 14px; }
+    .beta-perks { list-style: none; margin-top: 8px; }
+    .beta-perks li { font-size: 14px; color: var(--text-muted); padding: 7px 0;
+      border-bottom: 1px solid var(--border-soft); display: flex; gap: 10px; }
+    .beta-perks li:last-child { border-bottom: none; }
+    .beta-perks li::before { content: "→"; color: var(--accent); font-weight: 700; flex-shrink: 0; }
+    .beta-form-wrap { background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 28px; }
+    .beta-form-wrap h3 { font-size: 17px; margin-bottom: 6px; }
+    .beta-form-wrap > p { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+    .form-field { margin-bottom: 12px; }
+    .form-field input { width: 100%; padding: 11px 14px; border-radius: 8px;
+      background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+      font-family: 'DM Sans', sans-serif; font-size: 14px; outline: none; transition: border-color .15s; }
+    .form-field input:focus { border-color: var(--accent); }
+    .form-field input::placeholder { color: var(--text-soft); }
+    .form-submit { width: 100%; padding: 13px; border-radius: 8px; border: none;
+      background: linear-gradient(160deg, #7dbdff, #4d8ff0); color: #fff;
+      font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: filter .15s; margin-top: 4px; }
+    .form-submit:hover { filter: brightness(1.1); }
+    .form-note { font-size: 11px; color: var(--text-soft); margin-top: 10px; text-align: center; }
+    .form-success { text-align: center; padding: 24px 0; display: none; }
+    .form-success .ok { font-size: 28px; margin-bottom: 8px; }
+    .form-success p { font-size: 14px; color: var(--text-muted); }
 
-    /* ─────────────────────────────────────────────────────────────
-       Trust logos / section divider
-       ───────────────────────────────────────────────────────────── */
-    .trust {
-      padding: 60px 28px 30px;
-      text-align: center;
-      border-top: 1px solid var(--border-soft);
-      border-bottom: 1px solid var(--border-soft);
-      background: var(--bg-2);
-    }
-    .trust-text {
-      color: var(--text-soft); font-size: 12px; letter-spacing: .15em;
-      text-transform: uppercase; font-weight: 600; margin-bottom: 24px;
-    }
-    .trust-grid {
-      display: flex; justify-content: center; align-items: center;
-      flex-wrap: wrap; gap: 40px;
-      color: var(--text-muted); font-weight: 600;
-      opacity: .65;
-    }
-    .trust-grid span { font-size: 18px; letter-spacing: -.02em; }
-
-    /* ─────────────────────────────────────────────────────────────
-       Problem / Solution
-       ───────────────────────────────────────────────────────────── */
-    .problem {
-      padding: 110px 28px;
-      background: var(--bg);
-    }
-    .problem-grid {
-      display: grid; grid-template-columns: 1fr; gap: 40px; align-items: center;
-    }
-    @media (min-width: 900px) {
-      .problem-grid { grid-template-columns: 1.1fr 1fr; gap: 80px; }
-    }
-    .problem-text h2 { margin-bottom: 20px; }
-    .problem-text p { font-size: 17px; color: var(--text-muted); margin-bottom: 16px; }
-    .problem-list { margin: 24px 0 0; padding: 0; list-style: none; }
-    .problem-list li {
-      display: flex; gap: 12px; padding: 12px 0;
-      color: var(--text);
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .problem-list li:last-child { border-bottom: none; }
-    .problem-list .check {
-      flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
-      background: rgba(74,222,128,.12); color: var(--success);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; margin-top: 2px;
-    }
-    .problem-aside {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-lg); padding: 32px;
-    }
-    .problem-stat { margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--border-soft); }
-    .problem-stat:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
-    .problem-stat .num {
-      font-size: 38px; font-weight: 700; line-height: 1;
-      background: linear-gradient(120deg, var(--accent), #b89aff);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    }
-    .problem-stat .label { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
-
-    /* ─────────────────────────────────────────────────────────────
-       Capabilities grid
-       ───────────────────────────────────────────────────────────── */
-    .caps {
-      padding: 110px 28px;
-      background: var(--bg-2);
-      border-top: 1px solid var(--border-soft);
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .caps-head {
-      text-align: center; max-width: 720px; margin: 0 auto 64px;
-    }
-    .caps-head .eyebrow {
-      display: inline-block; color: var(--accent); font-size: 13px;
-      font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-      margin-bottom: 16px;
-    }
-    .caps-head p { color: var(--text-muted); font-size: 17px; margin-top: 16px; }
-
-    .caps-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 20px;
-    }
-    .cap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 28px;
-      transition: transform .25s, border-color .25s, box-shadow .25s;
-    }
-    .cap:hover {
-      transform: translateY(-3px);
-      border-color: rgba(109,166,255,.3);
-      box-shadow: 0 12px 40px -16px rgba(109,166,255,.18);
-    }
-    .cap-icon {
-      width: 44px; height: 44px; border-radius: 10px;
-      background: linear-gradient(135deg, rgba(109,166,255,.15), rgba(184,154,255,.1));
+    /* ── FOUNDER ── */
+    .founder { padding: 80px 28px; }
+    .founder-card { max-width: 700px; margin: 0 auto; display: flex; gap: 24px; align-items: flex-start; }
+    .founder-avatar { flex-shrink: 0; width: 52px; height: 52px; border-radius: 50%;
+      background: linear-gradient(135deg, rgba(109,166,255,.3), rgba(184,154,255,.3));
       border: 1px solid rgba(109,166,255,.2);
       display: flex; align-items: center; justify-content: center;
-      margin-bottom: 18px;
-      color: var(--accent);
-    }
-    .cap-icon svg { width: 22px; height: 22px; }
-    .cap h3 { margin-bottom: 10px; }
-    .cap p { color: var(--text-muted); font-size: 14px; }
+      font-size: 16px; font-weight: 700; color: var(--accent); }
+    .founder-body { font-size: 15px; color: var(--text-muted); line-height: 1.75; }
+    .founder-body p { margin-bottom: 12px; }
+    .founder-sig { font-size: 13px; color: var(--text-soft); margin-top: 16px; }
+    .founder-sig strong { color: var(--text-muted); }
 
-    /* ─────────────────────────────────────────────────────────────
-       How it works
-       ───────────────────────────────────────────────────────────── */
-    .how {
-      padding: 110px 28px;
-    }
-    .how-head { text-align: center; margin-bottom: 64px; }
-    .how-head p { color: var(--text-muted); font-size: 17px; margin-top: 16px; }
-    .how-steps {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 24px;
-      counter-reset: step;
-    }
-    .step {
-      position: relative; padding: 28px 24px 24px;
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius);
-      counter-increment: step;
-    }
-    .step::before {
-      content: "0" counter(step);
-      position: absolute; top: -14px; left: 24px;
-      background: var(--bg); color: var(--accent);
-      font-size: 12px; font-weight: 700;
-      padding: 4px 10px; border-radius: 10px;
-      border: 1px solid var(--border);
-      font-family: 'SF Mono', Menlo, monospace;
-    }
-    .step h3 { font-size: 16px; margin-bottom: 8px; }
-    .step p { color: var(--text-muted); font-size: 13px; }
+    /* ── FOOTER ── */
+    footer { border-top: 1px solid var(--border-soft); padding: 32px 28px; }
+    .footer-inner { max-width: 1100px; margin: 0 auto; display: flex;
+      justify-content: space-between; align-items: center; flex-wrap: wrap;
+      gap: 14px; font-size: 13px; color: var(--text-soft); }
+    .footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
+    footer a { color: var(--text-muted); }
+    footer a:hover { color: var(--text); }
 
-    /* ─────────────────────────────────────────────────────────────
-       Plans
-       ───────────────────────────────────────────────────────────── */
-    .plans-section {
-      padding: 110px 28px;
-      background: var(--bg-2);
-      border-top: 1px solid var(--border-soft);
-    }
-    .plans-head { text-align: center; max-width: 720px; margin: 0 auto 56px; }
-    .plans-head .eyebrow {
-      color: var(--accent); font-size: 13px;
-      font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-      margin-bottom: 16px; display: inline-block;
-    }
-    .plans-head p { color: var(--text-muted); font-size: 17px; margin-top: 16px; }
-    .plan-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 20px;
-      max-width: 1000px; margin: 0 auto;
-    }
-    .plan {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 32px 28px;
-      display: flex; flex-direction: column;
-      position: relative;
-    }
-    .plan.featured {
-      background: linear-gradient(180deg, rgba(109,166,255,.05), var(--surface) 30%);
-      border-color: rgba(109,166,255,.4);
-      box-shadow: 0 20px 60px -25px var(--accent-glow);
-    }
-    .plan.featured::before {
-      content: "Most popular";
-      position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
-      background: linear-gradient(180deg, var(--accent), #5093f0);
-      color: #fff; font-size: 11px; font-weight: 700;
-      padding: 4px 12px; border-radius: 100px;
-      letter-spacing: .04em; text-transform: uppercase;
-      box-shadow: 0 4px 14px -4px var(--accent-glow);
-    }
-    .plan-name {
-      color: var(--text); font-size: 14px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: .08em;
-    }
-    .plan-tagline {
-      color: var(--text-muted); font-size: 13px; margin: 4px 0 20px;
-    }
-    .plan-price { font-size: 48px; font-weight: 700; line-height: 1; letter-spacing: -.03em; }
-    .plan-price small { font-size: 14px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
-    .plan-price.free { color: var(--success); font-size: 36px; }
-    .plan-features {
-      list-style: none; padding: 0; margin: 28px 0;
-      flex: 1;
-    }
-    .plan-features li {
-      display: flex; gap: 10px; align-items: flex-start;
-      padding: 8px 0; font-size: 14px;
-    }
-    .plan-features li::before {
-      content: "✓"; color: var(--accent); font-weight: 700;
-      flex-shrink: 0; margin-top: 1px;
-    }
-    .plan a.plan-cta {
-      display: block; text-align: center;
-      padding: 12px; border-radius: 8px;
-      background: var(--surface-2); color: var(--text) !important;
-      font-size: 14px; font-weight: 600;
-      border: 1px solid var(--border);
-    }
-    .plan.featured a.plan-cta {
-      background: linear-gradient(180deg, var(--accent), #5093f0);
-      color: #fff !important; border: none;
-      box-shadow: 0 6px 20px -8px var(--accent-glow);
-    }
-    .plan a.plan-cta:hover { filter: brightness(1.1); }
-
-    .plans-footnote {
-      text-align: center; color: var(--text-muted);
-      font-size: 13px; margin-top: 40px;
-    }
-
-    /* ─────────────────────────────────────────────────────────────
-       Contact
-       ───────────────────────────────────────────────────────────── */
-    .contact-section {
-      padding: 110px 28px;
-      background: linear-gradient(180deg, var(--bg-2), var(--bg));
-    }
-    .contact-card {
-      max-width: 980px; margin: 0 auto;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 48px;
-      display: grid;
-      grid-template-columns: 1fr; gap: 40px;
-      position: relative; overflow: hidden;
-    }
-    .contact-card::before {
-      content: ""; position: absolute;
-      top: -120px; right: -120px; width: 320px; height: 320px;
-      background: radial-gradient(circle, rgba(109,166,255,.2), transparent 70%);
-      pointer-events: none;
-    }
-    @media (min-width: 900px) {
-      .contact-card { grid-template-columns: 1fr 1.4fr; padding: 56px; }
-    }
-    .contact-info { position: relative; }
-    .contact-info h2 { margin-bottom: 16px; }
-    .contact-info p { color: var(--text-muted); font-size: 16px; }
-    .contact-info .checks {
-      list-style: none; padding: 0; margin: 24px 0 0;
-      font-size: 14px;
-    }
-    .contact-info .checks li {
-      display: flex; gap: 10px; padding: 6px 0;
-      color: var(--text-muted);
-    }
-    .contact-info .checks li::before {
-      content: "→"; color: var(--accent); font-weight: 700;
-    }
-    .contact-form { position: relative; }
-    .form-row { margin-bottom: 16px; }
-    .form-row label {
-      display: block; font-size: 12px; font-weight: 600;
-      color: var(--text-muted); margin-bottom: 6px;
-      text-transform: uppercase; letter-spacing: .05em;
-    }
-    .form-row input, .form-row select, .form-row textarea {
-      width: 100%; padding: 12px 14px;
-      background: var(--bg); border: 1px solid var(--border);
-      color: var(--text); border-radius: 8px;
-      font-size: 14px; font-family: inherit;
-      transition: border-color .15s, background .15s;
-    }
-    .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
-      outline: none; border-color: var(--accent);
-      background: var(--bg-3);
-    }
-    .form-row textarea { resize: vertical; min-height: 90px; }
-    .form-cols { display: grid; gap: 14px; grid-template-columns: 1fr; }
-    @media (min-width: 520px) { .form-cols { grid-template-columns: 1fr 1fr; } }
-    .hp { position: absolute; left: -9999px; }
-
-    .contact-form button {
-      width: 100%; margin-top: 8px;
-      padding: 14px; border: none; border-radius: 8px;
-      background: linear-gradient(180deg, var(--accent), #5093f0);
-      color: #fff; font-size: 15px; font-weight: 600;
-      cursor: pointer; font-family: inherit;
-      box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 8px 24px -10px var(--accent-glow);
-      transition: filter .15s;
-    }
-    .contact-form button:hover { filter: brightness(1.08); }
-
-    /* ─────────────────────────────────────────────────────────────
-       Use cases
-       ───────────────────────────────────────────────────────────── */
-    .use-cases {
-      padding: 110px 28px;
-      background: var(--bg);
-    }
-    .uc-head {
-      text-align: center; max-width: 720px; margin: 0 auto 56px;
-    }
-    .uc-head .eyebrow {
-      color: var(--accent); font-size: 13px;
-      font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-      margin-bottom: 16px; display: inline-block;
-    }
-    .uc-head p { color: var(--text-muted); font-size: 17px; margin-top: 16px; }
-    .uc-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 20px;
-    }
-    .uc {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 32px 28px;
-      transition: border-color .25s, transform .25s;
-    }
-    .uc:hover { border-color: rgba(109,166,255,.3); transform: translateY(-2px); }
-    .uc-tag {
-      display: inline-block; padding: 4px 12px; border-radius: 100px;
-      background: rgba(109,166,255,.1); color: var(--accent);
-      font-size: 12px; font-weight: 600; margin-bottom: 16px;
-      border: 1px solid rgba(109,166,255,.2);
-    }
-    .uc h3 { margin-bottom: 12px; font-size: 18px; }
-    .uc p { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; }
-    .uc-needs {
-      list-style: none; padding: 0; margin: 0;
-      font-size: 13px;
-    }
-    .uc-needs li {
-      display: flex; gap: 8px; padding: 5px 0;
-      color: var(--text-muted);
-    }
-    .uc-needs li::before {
-      content: "→"; color: var(--accent); font-weight: 700; flex-shrink: 0;
-    }
-
-    /* ─────────────────────────────────────────────────────────────
-       Security band
-       ───────────────────────────────────────────────────────────── */
-    .security {
-      padding: 80px 28px;
-      background: var(--bg-2);
-      border-top: 1px solid var(--border-soft);
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .sec-head { text-align: center; max-width: 720px; margin: 0 auto 48px; }
-    .sec-head .eyebrow {
-      color: var(--accent); font-size: 13px;
-      font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-      margin-bottom: 16px; display: inline-block;
-    }
-    .sec-head p { color: var(--text-muted); font-size: 17px; margin-top: 16px; }
-    .sec-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 18px;
-    }
-    .sec-item {
-      display: flex; gap: 14px; align-items: flex-start;
-      padding: 18px 20px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-    }
-    .sec-item-icon {
-      flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px;
-      background: rgba(109,166,255,.1); color: var(--accent);
-      display: flex; align-items: center; justify-content: center;
-    }
-    .sec-item-icon svg { width: 16px; height: 16px; }
-    .sec-item h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-    .sec-item p { color: var(--text-muted); font-size: 12px; margin: 0; line-height: 1.5; }
-
-    /* ─────────────────────────────────────────────────────────────
-       Redaction spotlight
-       ───────────────────────────────────────────────────────────── */
-    .redact-section {
-      padding: 110px 28px;
-      background: var(--bg);
-    }
-    .redact-grid {
-      max-width: 1100px; margin: 0 auto;
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: 60px; align-items: center;
-    }
-    @media (max-width: 860px) { .redact-grid { grid-template-columns: 1fr; gap: 40px; } }
-    .redact-copy .eyebrow {
-      color: #ff8a65; font-size: 13px; font-weight: 600;
-      letter-spacing: .1em; text-transform: uppercase; margin-bottom: 16px;
-      display: inline-block;
-    }
-    .redact-copy h2 { font-size: 36px; line-height: 1.15; margin-bottom: 18px; }
-    .redact-copy p { color: var(--text-muted); font-size: 17px; line-height: 1.6; margin-bottom: 16px; }
-    .redact-list { list-style: none; padding: 0; margin: 24px 0 0; }
-    .redact-list li {
-      display: flex; gap: 12px; padding: 10px 0;
-      color: var(--text); font-size: 14.5px; line-height: 1.55;
-    }
-    .redact-list li::before {
-      content: "■"; color: #ff8a65; font-size: 10px;
-      flex-shrink: 0; margin-top: 6px;
-    }
-    .redact-visual {
-      background: linear-gradient(135deg, #1a1620, #14181f);
-      border: 1px solid var(--border); border-radius: 16px;
-      padding: 30px; min-height: 360px;
-      display: flex; flex-direction: column; gap: 14px;
-    }
-    .redact-row {
-      display: flex; align-items: center; gap: 12px;
-      padding: 12px 14px; background: rgba(255,138,101,.06);
-      border: 1px solid rgba(255,138,101,.18);
-      border-radius: 8px; font-size: 13px;
-    }
-    .redact-row .badge {
-      background: rgba(255,138,101,.18); color: #ff8a65;
-      padding: 2px 8px; border-radius: 4px; font-size: 11px;
-      font-weight: 600; font-family: var(--mono);
-    }
-    .redact-row .label { flex: 1; color: var(--text); }
-    .redact-row .time { color: var(--text-muted); font-family: var(--mono); font-size: 11px; }
-
-    /* ─────────────────────────────────────────────────────────────
-       Storage flexibility
-       ───────────────────────────────────────────────────────────── */
-    .storage-section {
-      padding: 100px 28px;
-      background: var(--bg-2);
-      border-top: 1px solid var(--border-soft);
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .storage-head { text-align: center; max-width: 760px; margin: 0 auto 56px; }
-    .storage-head .eyebrow {
-      color: var(--accent); font-size: 13px; font-weight: 600;
-      letter-spacing: .1em; text-transform: uppercase; margin-bottom: 16px;
-      display: inline-block;
-    }
-    .storage-head h2 { font-size: 36px; line-height: 1.15; margin-bottom: 16px; }
-    .storage-head p { color: var(--text-muted); font-size: 17px; }
-    .storage-grid {
-      max-width: 1100px; margin: 0 auto;
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 20px;
-    }
-    .storage-card {
-      padding: 28px;
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius);
-      display: flex; flex-direction: column; gap: 12px;
-    }
-    .storage-card .tag {
-      font-family: var(--mono); font-size: 11px;
-      color: var(--accent); letter-spacing: .05em;
-      text-transform: uppercase;
-    }
-    .storage-card h4 { font-size: 18px; font-weight: 600; }
-    .storage-card p { color: var(--text-muted); font-size: 14px; line-height: 1.55; margin: 0; }
-    .storage-card .when {
-      margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--border-soft);
-      font-size: 12px; color: var(--text-muted);
-    }
-    .storage-card .when strong { color: var(--text); font-weight: 500; }
-    .storage-foot {
-      max-width: 760px; margin: 40px auto 0; text-align: center;
-      color: var(--text-muted); font-size: 14px;
-    }
-    .storage-foot a { color: var(--accent); text-decoration: none; }
-    .storage-foot a:hover { text-decoration: underline; }
-
-    /* ─────────────────────────────────────────────────────────────
-       Founder / About
-       ───────────────────────────────────────────────────────────── */
-    .founder {
-      padding: 110px 28px;
-      background: var(--bg);
-    }
-    .founder-card {
-      max-width: 880px; margin: 0 auto;
-      background: linear-gradient(135deg, var(--surface), var(--bg-3));
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 48px;
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 32px;
-      position: relative; overflow: hidden;
-    }
-    .founder-card::before {
-      content: ""; position: absolute;
-      top: -100px; left: -100px; width: 240px; height: 240px;
-      background: radial-gradient(circle, rgba(184,154,255,.15), transparent 70%);
-      pointer-events: none;
-    }
-    @media (min-width: 760px) {
-      .founder-card { grid-template-columns: 200px 1fr; gap: 48px; align-items: center; }
-    }
-    .founder-avatar {
-      width: 160px; height: 160px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--accent), #b89aff);
-      display: flex; align-items: center; justify-content: center;
-      color: #fff; font-size: 56px; font-weight: 700;
-      letter-spacing: -.02em; margin: 0 auto;
-      box-shadow: 0 12px 40px -12px var(--accent-glow);
-      position: relative; z-index: 1;
-    }
-    .founder-content { position: relative; z-index: 1; }
-    .founder-eyebrow {
-      display: inline-block; color: var(--accent); font-size: 12px;
-      font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-      margin-bottom: 10px;
-    }
-    .founder h2 { font-size: 28px; margin-bottom: 8px; }
-    .founder-title { color: var(--text-muted); font-size: 14px; margin-bottom: 18px; }
-    .founder p { color: var(--text-muted); font-size: 15px; line-height: 1.7; }
-    .founder p + p { margin-top: 14px; }
-
-    /* ─────────────────────────────────────────────────────────────
-       FAQ
-       ───────────────────────────────────────────────────────────── */
-    .faq {
-      padding: 110px 28px;
-      background: var(--bg-2);
-      border-top: 1px solid var(--border-soft);
-    }
-    .faq-head { text-align: center; max-width: 720px; margin: 0 auto 56px; }
-    .faq-head .eyebrow {
-      color: var(--accent); font-size: 13px;
-      font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-      margin-bottom: 16px; display: inline-block;
-    }
-    .faq-head p { color: var(--text-muted); font-size: 17px; margin-top: 16px; }
-    .faq-list {
-      max-width: 800px; margin: 0 auto;
-      display: flex; flex-direction: column; gap: 12px;
-    }
-    .faq-item {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      transition: border-color .15s;
-    }
-    .faq-item[open] { border-color: rgba(109,166,255,.3); }
-    .faq-item summary {
-      padding: 18px 24px;
-      font-size: 15px; font-weight: 600;
-      cursor: pointer;
-      display: flex; justify-content: space-between; align-items: center;
-      list-style: none;
-      color: var(--text);
-    }
-    .faq-item summary::-webkit-details-marker { display: none; }
-    .faq-item summary::after {
-      content: "+"; font-size: 22px; font-weight: 300;
-      color: var(--accent); transition: transform .2s;
-    }
-    .faq-item[open] summary::after { transform: rotate(45deg); }
-    .faq-body {
-      padding: 0 24px 20px;
-      color: var(--text-muted); font-size: 14px; line-height: 1.7;
-    }
-
-    /* ─────────────────────────────────────────────────────────────
-       Footer (expanded)
-       ───────────────────────────────────────────────────────────── */
-    footer {
-      padding: 60px 28px 30px;
-      border-top: 1px solid var(--border-soft);
-      background: var(--bg);
-    }
-    .footer-grid {
-      max-width: 1180px; margin: 0 auto;
-      display: grid; gap: 40px;
-      grid-template-columns: 1.5fr repeat(3, 1fr);
-    }
-    @media (max-width: 760px) {
-      .footer-grid { grid-template-columns: 1fr 1fr; }
-    }
-    @media (max-width: 480px) {
-      .footer-grid { grid-template-columns: 1fr; }
-    }
-    .footer-brand img { height: 26px; margin-bottom: 14px; opacity: .85; }
-    .footer-brand p {
-      color: var(--text-muted); font-size: 13px; max-width: 280px;
-    }
-    .footer-col h4 {
-      font-size: 11px; font-weight: 700;
-      color: var(--text-soft); text-transform: uppercase;
-      letter-spacing: .12em; margin-bottom: 14px;
-    }
-    .footer-col ul { list-style: none; padding: 0; margin: 0; }
-    .footer-col li { margin-bottom: 8px; }
-    .footer-col a {
-      color: var(--text-muted); font-size: 13px;
-    }
-    .footer-col a:hover { color: var(--text); }
-    .footer-bottom {
-      max-width: 1180px; margin: 50px auto 0;
-      padding-top: 24px;
-      border-top: 1px solid var(--border-soft);
-      display: flex; justify-content: space-between;
-      flex-wrap: wrap; gap: 14px;
-      font-size: 12px; color: var(--text-soft);
-    }
-    .footer-bottom .made-with {
-      display: flex; align-items: center; gap: 6px;
-    }
-    .footer-bottom .made-with .heart {
-      color: #ef4444; font-size: 13px;
-    }
-
-    /* ─────────────────────────────────────────────────────────────
-       Toast messages
-       ───────────────────────────────────────────────────────────── */
-    .toast-wrap {
-      position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
-      z-index: 1000; max-width: 560px; width: 90%;
-    }
-    .toast {
-      padding: 12px 16px; border-radius: 8px;
-      font-size: 14px; margin-bottom: 8px;
-      backdrop-filter: blur(10px);
-      animation: slideIn .3s ease;
-    }
-    .toast.success { background: rgba(74,222,128,.15); border: 1px solid rgba(74,222,128,.3); color: var(--success); }
-    .toast.error   { background: rgba(239,68,68,.15);  border: 1px solid rgba(239,68,68,.3);  color: #fca5a5; }
-    @keyframes slideIn { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+    /* ── SCROLL REVEAL ── */
+    .reveal { opacity: 0; transform: translateY(20px); transition: opacity .55s ease, transform .55s ease; }
+    .reveal.visible { opacity: 1; transform: none; }
+    .reveal-d1 { transition-delay: .1s; }
+    .reveal-d2 { transition-delay: .2s; }
+    .reveal-d3 { transition-delay: .3s; }
   </style>
 </head>
 <body>
 
-  <!-- ── NAV ──────────────────────────────────────────────────────── -->
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-logo">
-        <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens">
-      </a>
-      <div class="nav-links">
-        <a href="#capabilities">Capabilities</a>
-        <a href="#redaction">Redaction</a>
-        <a href="#storage">Storage</a>
-        <a href="#plans">Plans</a>
-        <a href="#faq">FAQ</a>
-        <a href="#contact" class="nav-cta">Request demo</a>
-      </div>
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo"><img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens"></a>
+    <div class="nav-links">
+      <a href="https://cliplens.in/product.html" class="nav-link">Product</a>
+      <a href="https://cliplens.in/security.html" class="nav-link">Security</a>
+      <a href="#beta" class="nav-cta">Join private beta</a>
     </div>
-  </nav>
-
-  {% if messages %}
-  <div class="toast-wrap">
-    {% for m in messages %}<div class="toast {{ m.tags }}">{{ m }}</div>{% endfor %}
   </div>
-  {% endif %}
+</nav>
 
-  <!-- ── HERO ─────────────────────────────────────────────────────── -->
-  <section class="hero">
-    <div class="hero-inner">
-      <span class="hero-eyebrow"><span class="dot"></span>AI media intelligence platform</span>
-      <h1>
-        Your entire media archive,<br>
-        <span class="gradient">searchable like a database.</span>
-      </h1>
-      <p class="lede">
-        Upload videos and photos once — ClipLens transcribes every word, recognises every face,
-        tags every object, and translates everything into 200+ languages. Your team finds any
-        moment in seconds, not hours.
-      </p>
-      <div class="hero-ctas">
-        <a href="#contact" class="btn btn-primary">Request a demo →</a>
-        <a href="#plans" class="btn btn-ghost">See pricing</a>
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="beta-badge"><div class="beta-dot"></div><span>Private beta · Now accepting early teams</span></div>
+    <h1>Your media archive has<br>more value than you can <em>find.</em></h1>
+    <p class="hero-sub">ClipLens makes your video and photo archive searchable by what was said, who appeared, and what happened on screen. Self-hosted, it reads files from wherever they already live. Cloud, you upload once — your originals stay yours, no lock-in.</p>
+    <div class="hero-ctас">
+      <a href="#beta" class="btn btn-primary">Join the private beta</a>
+      <a href="https://cliplens.in/product.html" class="btn btn-ghost">See how it works →</a>
+    </div>
+  </div>
+</section>
+
+<!-- PROOF STRIP -->
+<div class="proof">
+  <div class="proof-inner">
+    <div class="proof-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      4 search modes simultaneously
+    </div>
+    <div class="proof-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 1 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+      200+ languages
+    </div>
+    <div class="proof-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Self-hostable · your infrastructure
+    </div>
+    <div class="proof-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/></svg>
+      No external AI calls
+    </div>
+    <div class="proof-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      GDPR tools built in
+    </div>
+  </div>
+</div>
+
+<!-- PROBLEM -->
+<section class="problem">
+  <div class="problem-inner">
+    <div class="problem-copy reveal">
+      <h2>The problem isn't storage. It's findability.</h2>
+      <p>Years of interviews, events, training sessions, and product shoots sit on drives and servers — named by date or job number, indexed only by whoever was there that day.</p>
+      <p>When your team needs a specific moment, they start guessing. Folder by folder. Drive by drive. Until they give up and reshoot it.</p>
+      <p>ClipLens makes the archive you already own searchable. Self-hosted: files stay exactly where they are — ClipLens reads directly from your storage. Cloud: upload once, your originals stay yours, export everything at any time.</p>
+    </div>
+    <div class="problem-panel reveal reveal-d2">
+      <div class="problem-panel-label">Without ClipLens</div>
+      <div class="before-item"><span class="before-icon">›</span> NAS/2023/events/recording_003.mp4</div>
+      <div class="before-item"><span class="before-icon">›</span> "Where's that clip of Sarah?"</div>
+      <div class="before-item"><span class="before-icon">›</span> "Check the backup drive, maybe?"</div>
+      <div class="before-item"><span class="before-icon">›</span> "Does anyone remember who uploaded it?"</div>
+      <div class="before-item"><span class="before-icon">›</span> 3 hours later — "let's just reshoot it."</div>
+    </div>
+  </div>
+</section>
+
+<!-- NOT A MAM -->
+<section class="not-mam">
+  <div class="nm-inner">
+    <div class="nm-copy reveal">
+      <div class="nm-eyebrow">What ClipLens is not</div>
+      <h2>Not a MAM.<br>An intelligence layer.</h2>
+      <p>Media asset management systems like Axle AI and iconik are powerful. They're also expensive to implement, slow to adopt, and require migrating your entire archive into a proprietary system.</p>
+      <p>ClipLens doesn't replace your storage or your workflow. It sits on top of what you already own and makes it searchable — in days, not months.</p>
+    </div>
+    <div class="nm-compare reveal reveal-d1">
+      <div class="nm-col">
+        <div class="nm-col-label">Full MAM</div>
+        <div class="nm-item nm-bad">Migrate archive to their storage</div>
+        <div class="nm-item nm-bad">Rebuild your metadata schema</div>
+        <div class="nm-item nm-bad">Rename and restructure folders</div>
+        <div class="nm-item nm-bad">6–12 month implementation</div>
+        <div class="nm-item nm-bad">Per-user, per-module pricing</div>
       </div>
-      <p class="hero-meta">Built for broadcasters, agencies, training teams, and enterprise media libraries.</p>
-
-      <!-- Product mock -->
-      <div class="hero-mock">
-        <div class="mock-frame">
-          <div class="mock-bar">
-            <div class="dots"><span></span><span></span><span></span></div>
-            <div class="url">acme.cliplens.com/?q=woman speaking on stage</div>
-          </div>
-          <div class="mock-body">
-            <aside class="mock-side">
-              <div class="mock-side-h">Library</div>
-              <div class="mock-side-item active">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                Search
-              </div>
-              <div class="mock-side-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-                Videos
-              </div>
-              <div class="mock-side-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                Photos
-              </div>
-              <div class="mock-side-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/></svg>
-                People
-              </div>
-              <div class="mock-side-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                Places
-              </div>
-            </aside>
-            <div class="mock-main">
-              <div class="mock-search">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                woman speaking on stage<span class="cursor"></span>
-              </div>
-              <div class="mock-results">
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-                <div class="mock-card"></div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div class="nm-col">
+        <div class="nm-col-label">ClipLens</div>
+        <div class="nm-item nm-good">Your storage stays exactly as-is</div>
+        <div class="nm-item nm-good">No metadata restructuring</div>
+        <div class="nm-item nm-good">No folder renaming needed</div>
+        <div class="nm-item nm-good">Up and running in days</div>
+        <div class="nm-item nm-good">One search layer on what you own</div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ── TRUST BAND ───────────────────────────────────────────────── -->
-  <section class="trust">
-    <div class="container">
-      <div class="trust-text">Built with industry-leading open AI models</div>
-      <div class="trust-grid">
-        <span>OpenAI Whisper</span>
-        <span>Meta NLLB-200</span>
-        <span>OpenAI CLIP</span>
-        <span>InsightFace</span>
-        <span>YOLO v8</span>
-        <span>BLIP / Florence-2</span>
+<!-- PILLARS PREVIEW -->
+<section class="pillars-preview">
+  <div class="pp-head reveal">
+    <div class="pp-eyebrow">What ClipLens does</div>
+    <h2>One archive. Four ways to get more from it.</h2>
+    <p>ClipLens automatically understands what's inside your media — so your team can find, use, protect, and manage it.</p>
+  </div>
+  <div class="pp-grid">
+    <a href="https://cliplens.in/product.html#find" class="pp-card pp-find reveal">
+      <div class="pp-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       </div>
+      <h3>Find</h3>
+      <p>Search spoken words, visual scenes, detected faces, and tagged locations — all at once, in plain English.</p>
+      <div class="pp-more">Explore search →</div>
+    </a>
+    <a href="https://cliplens.in/product.html#understand" class="pp-card pp-understand reveal reveal-d1">
+      <div class="pp-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 1 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+      </div>
+      <h3>Understand</h3>
+      <p>Auto-transcription, speaker attribution, and caption translation across 200+ languages. Nothing to configure.</p>
+      <div class="pp-more">Explore transcription →</div>
+    </a>
+    <a href="https://cliplens.in/product.html#protect" class="pp-card pp-protect reveal reveal-d2">
+      <div class="pp-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </div>
+      <h3>Protect</h3>
+      <p>Redact faces, mute voices, and remove PII without touching originals. Library-wide policies auto-apply to new uploads.</p>
+      <div class="pp-more">Explore compliance →</div>
+    </a>
+    <a href="https://cliplens.in/product.html#manage" class="pp-card pp-manage reveal reveal-d3">
+      <div class="pp-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+      </div>
+      <h3>Manage</h3>
+      <p>No restructuring, no renaming, no proprietary lock-in. Self-hosted: ClipLens reads your files in place. Cloud: upload once, export anytime.</p>
+      <div class="pp-more">Explore storage →</div>
+    </a>
+  </div>
+</section>
+
+<!-- BETA PITCH + FORM -->
+<section id="beta" class="beta-section">
+  <div class="beta-inner">
+    <div class="beta-copy reveal">
+      <h2>We're building ClipLens with our first users.</h2>
+      <p>ClipLens is in private beta. We're looking for teams with real video or photo archives — news teams, creative agencies, corporate media libraries — to help shape the product before public launch.</p>
+      <p>You'll get hands-on setup, direct access to the founder, and pricing locked in before we go public. In return, we'll ask you to test ClipLens on your real workflows and tell us what doesn't work.</p>
+      <ul class="beta-perks">
+        <li>Free access throughout the beta period</li>
+        <li>Direct Slack / email line to the founder</li>
+        <li>Your workflows shape the roadmap</li>
+        <li>Grandfathered pricing at launch</li>
+        <li>Priority onboarding and setup support</li>
+      </ul>
     </div>
-  </section>
-
-  <!-- ── PROBLEM / VALUE ──────────────────────────────────────────── -->
-  <section class="problem">
-    <div class="container">
-      <div class="problem-grid">
-        <div class="problem-text">
-          <h2>You have hours of footage.<br>Finding the right 30 seconds takes hours too.</h2>
-          <p>Most media archives are dead weight. Files sit on a NAS, named by date or job number, indexed only by whoever uploaded them. Your team waits days to get a clip — or just reshoots.</p>
-          <p>ClipLens turns that archive into a live, searchable knowledge base. Every minute uploaded gets the full AI treatment, automatically.</p>
-          <ul class="problem-list">
-            <li><span class="check">✓</span><div>Search 10,000 videos in under a second — by spoken word, scene, or person</div></li>
-            <li><span class="check">✓</span><div>Auto-generated captions in any language, ready to broadcast</div></li>
-            <li><span class="check">✓</span><div>Self-hosted on your infrastructure, your data never leaves</div></li>
-          </ul>
+    <div class="reveal reveal-d2">
+      <div class="beta-form-wrap" id="betaFormSection">
+        <h3>Request early access</h3>
+        <p>10 spots · No credit card · We'll respond within 24h</p>
+        {% if request.GET.contact == 'ok' %}
+        <div class="form-success" style="display:block;">
+          <div class="ok">✓</div>
+          <p><strong>You're on the list.</strong><br>We'll be in touch within 24 hours.</p>
         </div>
-        <div class="problem-aside">
-          <div class="problem-stat">
-            <div class="num">~3 hrs</div>
-            <div class="label">Average time a media team spends finding a single archival clip the old way</div>
-          </div>
-          <div class="problem-stat">
-            <div class="num">&lt; 2 sec</div>
-            <div class="label">Time to surface the same clip in ClipLens via transcript, scene, or face match</div>
-          </div>
-          <div class="problem-stat">
-            <div class="num">200+</div>
-            <div class="label">Languages your captions ship in — one click from English original</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── CAPABILITIES ─────────────────────────────────────────────── -->
-  <section id="capabilities" class="caps">
-    <div class="container">
-      <div class="caps-head">
-        <div class="eyebrow">What's inside</div>
-        <h2>One upload, every kind of search</h2>
-        <p>Every file you upload runs through a multi-stage AI pipeline. Nothing for your team to configure.</p>
-      </div>
-      <div class="caps-grid">
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-          </div>
-          <h3>Adaptive streaming</h3>
-          <p>Automatic HLS encoding in every resolution from 144p to 4K, with scrub-thumbnail sprite sheets so users seek smoothly across hours of footage.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 1 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-          </div>
-          <h3>Word-level transcripts</h3>
-          <p>Whisper transcribes every word with timestamps. Search a phrase, jump to the exact second it was spoken. Captions ship to the player automatically.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-          </div>
-          <h3>Translation to 200+ languages</h3>
-          <p>One click translates subtitles using Meta's NLLB-200. No re-encoding needed — players show a language picker.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/></svg>
-          </div>
-          <h3>Face recognition</h3>
-          <p>InsightFace clusters faces across your whole library. Tag a person once — find every clip they appear in, forever.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          </div>
-          <h3>Semantic visual search</h3>
-          <p>Type "sunset over the city" — CLIP returns matching frames even when no caption mentions sunsets. Search what you see, not what you remember.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-          </div>
-          <h3>Geo + named places</h3>
-          <p>Photos with GPS land on an interactive map. Tag your sites once and find media by location.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-          </div>
-          <h3>Speaker diarization</h3>
-          <p>Pyannote tags who is speaking when. Search by person AND topic together — "Sarah talking about Q3 revenue".</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </div>
-          <h3>Audio event detection</h3>
-          <p>PANNs detects applause, laughter, music, silence — useful highlights surface automatically across long-form footage.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </div>
-          <h3>Tenant isolation</h3>
-          <p>Per-organisation database and media folder. Your videos never share infrastructure with another client's. Self-host or use ours.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-          </div>
-          <h3>Visual + audio redaction</h3>
-          <p>Blur faces, mute voices, and scrub transcripts of names or PII — applied as policies that auto-protect new uploads. Render a fully baked-in MP4 when you need to share externally.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-          </div>
-          <h3>Flexible storage</h3>
-          <p>Default to local disk, point a tenant at a NAS mount, an SSHFS volume, or a cloud bucket via FUSE — switch between them with a live, verified migration. No re-uploads, no link rot.</p>
-        </div>
-        <div class="cap">
-          <div class="cap-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-          </div>
-          <h3>GDPR &amp; audit log</h3>
-          <p>Right-to-be-forgotten in one click — purges face data, embeddings, and crops while logging the action for compliance. Every sensitive operation appears in a tamper-evident audit trail.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── USE CASES ────────────────────────────────────────────────── -->
-  <section id="use-cases" class="use-cases">
-    <div class="container">
-      <div class="uc-head">
-        <div class="eyebrow">Who it's for</div>
-        <h2>Made for teams drowning in media</h2>
-        <p>If you upload more video and photo than your team can manually catalogue, you'll feel the difference in the first week.</p>
-      </div>
-      <div class="uc-grid">
-        <div class="uc">
-          <span class="uc-tag">Broadcasters</span>
-          <h3>News &amp; production archives</h3>
-          <p>Find any historical segment by quote, on-screen text, or who appeared in it — across decades of footage.</p>
-          <ul class="uc-needs">
-            <li>Speaker diarization &amp; named-person search</li>
-            <li>Subtitle generation in broadcast formats</li>
-            <li>Translation to local language editions</li>
-          </ul>
-        </div>
-        <div class="uc">
-          <span class="uc-tag">Training &amp; L&amp;D</span>
-          <h3>Internal learning libraries</h3>
-          <p>Turn hours of recorded sessions into a searchable, captioned knowledge base employees actually use.</p>
-          <ul class="uc-needs">
-            <li>Word-level transcript search across modules</li>
-            <li>Auto chapters and seek thumbnails</li>
-            <li>Multilingual captions for global teams</li>
-          </ul>
-        </div>
-        <div class="uc">
-          <span class="uc-tag">Agencies</span>
-          <h3>Creative &amp; marketing teams</h3>
-          <p>Surface footage for pitches instantly. Search by mood, scene, or visual concept — not just file names.</p>
-          <ul class="uc-needs">
-            <li>CLIP semantic search ("city at golden hour")</li>
-            <li>Face library for talent/model lookup</li>
-            <li>Per-client tenant isolation</li>
-          </ul>
-        </div>
-        <div class="uc">
-          <span class="uc-tag">Enterprise</span>
-          <h3>Corporate media libraries</h3>
-          <p>Centralise the chaos. One place to ingest, index, and govern all internal video and photo assets.</p>
-          <ul class="uc-needs">
-            <li>Role-based access (admin / editor / viewer)</li>
-            <li>Audit log of every action</li>
-            <li>Self-hosted deployment option</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── SECURITY BAND ────────────────────────────────────────────── -->
-  <section class="security">
-    <div class="container">
-      <div class="sec-head">
-        <div class="eyebrow">Built secure by design</div>
-        <h2>Your media stays yours</h2>
-        <p>Architectural choices that keep tenant data isolated, auditable, and portable from day one.</p>
-      </div>
-      <div class="sec-grid">
-        <div class="sec-item">
-          <div class="sec-item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </div>
-          <div>
-            <h4>Per-tenant DB isolation</h4>
-            <p>Each org gets its own PostgreSQL database. Cross-tenant queries are physically impossible.</p>
-          </div>
-        </div>
-        <div class="sec-item">
-          <div class="sec-item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          </div>
-          <div>
-            <h4>Self-hostable</h4>
-            <p>Run the whole stack on your own infrastructure. We supply the code, you keep the data.</p>
-          </div>
-        </div>
-        <div class="sec-item">
-          <div class="sec-item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="16" r="1"/><path d="M12 7v4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/><path d="M5 9V7a7 7 0 0 1 14 0v2"/></svg>
-          </div>
-          <div>
-            <h4>Encrypted at rest</h4>
-            <p>Postgres + media volumes encrypted via underlying disk encryption. TLS in transit everywhere.</p>
-          </div>
-        </div>
-        <div class="sec-item">
-          <div class="sec-item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/></svg>
-          </div>
-          <div>
-            <h4>Role-based access</h4>
-            <p>Three roles (Admin, Editor, Viewer) plus an audit log of every change inside your tenant.</p>
-          </div>
-        </div>
-        <div class="sec-item">
-          <div class="sec-item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          </div>
-          <div>
-            <h4>Export anytime</h4>
-            <p>Your originals, transcripts, and metadata are always one command away from a clean backup.</p>
-          </div>
-        </div>
-        <div class="sec-item">
-          <div class="sec-item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/></svg>
-          </div>
-          <div>
-            <h4>Data residency choice</h4>
-            <p>Pick the region your data lives in. Or run on-prem — your data never crosses the WAN.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── REDACTION & COMPLIANCE ───────────────────────────────────── -->
-  <section id="redaction" class="redact-section">
-    <div class="redact-grid">
-      <div class="redact-copy">
-        <div class="eyebrow">Privacy + compliance</div>
-        <h2>Redact faces, voices, and transcripts — easily</h2>
-        <p>
-          Mark a person, a clip, or a phrase and ClipLens applies the redaction
-          live in the player. Visual block, audio mute, and transcript scrubbing
-          happen at playback time — your originals stay untouched until you
-          choose to bake redactions into a permanent copy.
-        </p>
-        <p>
-          Library-wide <strong>redaction policies</strong> auto-apply to every new
-          upload, so once you tag a person as protected, every future video that
-          contains them is redacted from the moment it finishes processing.
-        </p>
-        <ul class="redact-list">
-          <li>Per-face, per-segment, or whole-video scope</li>
-          <li>Reversible redactions for internal staff, baked-in renders for external shares</li>
-          <li>One-click GDPR forget-person: Nukes data from the database, faces stored, and transcript mentions</li>
-          <li>Every redaction action lands in the tenant's audit log for compliance</li>
-        </ul>
-      </div>
-      <div class="redact-visual">
-        <div style="font-family: var(--mono); font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .08em;">
-          Active policies — auto-applied to new uploads
-        </div>
-        <div class="redact-row">
-          <span class="badge">FACE</span>
-          <span class="label">Block · "Witness A"</span>
-          <span class="time">all videos</span>
-        </div>
-        <div class="redact-row">
-          <span class="badge">VOICE</span>
-          <span class="label">Mute/beep · "Witness A"</span>
-          <span class="time">all videos</span>
-        </div>
-        <div class="redact-row">
-          <span class="badge">TEXT</span>
-          <span class="label">Scrub transcript · "Operation Kestrel"</span>
-          <span class="time">true erasure</span>
-        </div>
-        <div class="redact-row">
-          <span class="badge">RANGE</span>
-          <span class="label">Black-frame · 04:12 → 04:38</span>
-          <span class="time">video #4821</span>
-        </div>
-        <div style="margin-top: auto; padding-top: 12px; font-size: 11px; color: var(--text-muted); border-top: 1px solid rgba(255,138,101,.15);">
-          12 policies active · 847 videos protected · audited
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── STORAGE FLEXIBILITY ──────────────────────────────────────── -->
-  <section id="storage" class="storage-section">
-    <div class="storage-head">
-      <div class="eyebrow">Storage</div>
-      <h2>Pick where your media physically resides — change your mind later</h2>
-      <p>
-        Every tenant gets its own storage root. Start on local disk, move to a
-        NAS or a cloud bucket whenever you outgrow it. ClipLens migrates the
-        files with verification and backups, a 24-hour rollback window, and an audit log.
-      </p>
-    </div>
-    <div class="storage-grid">
-      <div class="storage-card">
-        <span class="tag">Local SSD</span>
-        <h4>Default, fast, simple</h4>
-        <p>Stored on the application server's local disk. Sub-millisecond random reads — best for hot playback and active editing workflows.</p>
-        <div class="when"><strong>When:</strong> dev, small teams, anything under a few TB.</div>
-      </div>
-      <div class="storage-card">
-        <span class="tag">Mounted NAS / SAN</span>
-        <h4>Shared network volume</h4>
-        <p>Point a tenant at any absolute path — NFS, SMB, iSCSI, or local RAID. Pre-flight checks verify accessibility, writability, and free space.</p>
-        <div class="when"><strong>When:</strong> on-prem deployments, regulated industries, existing storage infrastructure.</div>
-      </div>
-      <div class="storage-card">
-        <span class="tag">Remote SSHFS</span>
-        <h4>Any SSH-reachable server</h4>
-        <p>Mount a DAM server or remote host as a local path. Credentials live at the OS level — never in the app, never in the database.</p>
-        <div class="when"><strong>When:</strong> off-site archive, hybrid setups, legacy DAM integration.</div>
-      </div>
-      <div class="storage-card">
-        <span class="tag">Cloud bucket via FUSE</span>
-        <h4>S3, GCS, Azure, R2</h4>
-        <p>Mount any object store with rclone/s3fs and treat it like a local folder. Object lifecycle policies handle long-term cold storage.</p>
-        <div class="when"><strong>When:</strong> elastic scaling, multi-region redundancy, large libraries.</div>
-      </div>
-    </div>
-    <p class="storage-foot">
-      Switching is non-destructive — the old data stays in place for 24 hours
-      after migration so you can roll back if anything looks off.
-      <a href="#contact">Talk to us about your setup →</a>
-    </p>
-  </section>
-
-  <!-- ── HOW IT WORKS ─────────────────────────────────────────────── -->
-  <section id="how" class="how">
-    <div class="container">
-      <div class="how-head">
-        <h2>From upload to searchable in minutes</h2>
-        <p>You drop a file in. Five things happen automatically. You search.</p>
-      </div>
-      <div class="how-steps">
-        <div class="step">
-          <h3>Upload</h3>
-          <p>Drag and drop or use the API. Any common video or photo format, up to 4 GB per file.</p>
-        </div>
-        <div class="step">
-          <h3>Encode</h3>
-          <p>FFmpeg generates adaptive HLS streams in every resolution and a scrub-preview sprite.</p>
-        </div>
-        <div class="step">
-          <h3>Analyse</h3>
-          <p>YOLO + CLIP + InsightFace + BLIP run on sampled frames. Whisper transcribes audio.</p>
-        </div>
-        <div class="step">
-          <h3>Index</h3>
-          <p>Everything lands in PostgreSQL — full-text, trigram fuzzy, and pgvector embeddings.</p>
-        </div>
-        <div class="step">
-          <h3>Search</h3>
-          <p>Your team queries in plain English. Filter by date, channel, person, place, language.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── FOUNDER ──────────────────────────────────────────────────── -->
-  <section class="founder">
-    <div class="founder-card">
-      <div class="founder-avatar">SM</div>
-      <div class="founder-content">
-        <div class="founder-eyebrow">From the founder</div>
-        <h2>Built by</h2>
-        <div class="founder-title">Soham Maskara · Founder &amp; Engineer</div>
-        <p>
-          ClipLens started as an internal tool — I kept watching teams sit on terabytes of valuable
-          footage they couldn't actually use, because nobody had time to label or transcribe it.
-          Existing media-asset platforms were either built for the broadcast industry of 1998
-          or were too expensive for a small team.
-        </p>
-        <p>
-          So I built a stack that takes the best of open sourced AI research — Whisper, CLIP, InsightFace,
-          NLLB — and stitches it into something a small team can deploy in a day. Per-org isolation
-          and self-hosting are first-class concerns, because your archive is too sensitive to live
-          in someone else's general-purpose vector database.
-        </p>
-        <p style="color:var(--text); font-weight:500;">
-          If your team is buried in media you can't search, I'd love to show you what ClipLens
-          can do on your own footage. <a href="#contact">Reach out</a>
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── PLANS ────────────────────────────────────────────────────── -->
-  {% if plans %}
-  <section id="plans" class="plans-section">
-    <div class="container">
-      <div class="plans-head">
-        <div class="eyebrow">Pricing</div>
-        <h2>Simple, predictable plans</h2>
-        <p>Pay monthly. Cancel anytime. Top up storage or AI minutes when you need more.</p>
-      </div>
-      <div class="plan-grid">
-        {% for p in plans %}
-        <div class="plan {% if forloop.counter == 2 %}featured{% endif %}">
-          <div class="plan-name">{{ p.name }}</div>
-          <div class="plan-tagline">
-            {% if p.is_free %}Try it free, no card needed
-            {% elif forloop.counter == 2 %}For growing teams
-            {% else %}For larger operations{% endif %}
-          </div>
-          <div class="plan-price {% if p.is_free %}free{% endif %}">
-            {% if p.is_free %}Free{% else %}${{ p.price_usd|floatformat:0 }}<small>/mo</small>{% endif %}
-          </div>
-          <ul class="plan-features">
-            <li>{{ p.storage_limit_gb }} GB storage</li>
-            <li>{{ p.ai_minutes_limit }} AI minutes/month</li>
-            <li>{% if p.max_users %}{{ p.max_users }} team members{% else %}Unlimited members{% endif %}</li>
-            <li>{% if p.max_videos %}{{ p.max_videos }} videos{% else %}Unlimited videos{% endif %}</li>
-            <li>Top-ups available anytime</li>
-          </ul>
-          <a href="#contact" class="plan-cta">{% if p.is_free %}Get started{% else %}Choose {{ p.name }}{% endif %}</a>
-        </div>
-        {% endfor %}
-      </div>
-      <p class="plans-footnote">
-        Need bigger limits, dedicated infrastructure, or self-hosting? <a href="#contact">Talk to us about an enterprise plan</a>.
-      </p>
-    </div>
-  </section>
-  {% endif %}
-
-  <!-- ── FAQ ──────────────────────────────────────────────────────── -->
-  <section id="faq" class="faq">
-    <div class="container">
-      <div class="faq-head">
-        <div class="eyebrow">Common questions</div>
-        <h2>Things buyers usually ask</h2>
-        <p>If your question isn't here, the contact form below lands directly in my inbox.</p>
-      </div>
-      <div class="faq-list">
-
-        <details class="faq-item">
-          <summary>How does the AI processing actually work — do you send our media to OpenAI?</summary>
-          <div class="faq-body">
-            No. Every AI model runs locally inside your tenant — Whisper for transcription, InsightFace for faces,
-            CLIP for visual search, NLLB-200 for translation, YOLO for objects. Nothing is sent to OpenAI, Anthropic,
-            or any third-party AI service. Your media stays inside your infrastructure (or ours, depending on
-            deployment model).
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>Can we self-host ClipLens on our own servers?</summary>
-          <div class="faq-body">
-            Yes — self-hosting is a first-class deployment option. We provide the full Django + Celery + PostgreSQL
-            stack with deployment scripts. Recommended specs: 32&nbsp;GB RAM, 8 CPU cores, and a GPU for faster AI
-            processing (CPU-only works too but slower). Contact us for an enterprise self-host license.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What file formats and sizes do you support?</summary>
-          <div class="faq-body">
-            Videos: MP4, MOV, MKV, AVI, WebM, M4V (anything FFmpeg can read) — up to 4&nbsp;GB per file by default.
-            Photos: JPEG, PNG, WebP, HEIC, RAW (with EXIF + GPS extraction). Larger limits available on request.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What languages are supported for transcription and translation?</summary>
-          <div class="faq-body">
-            Whisper transcribes ~100 languages with auto-detection. NLLB-200 translates between any pair of 200+
-            languages. You can ship a single video with captions in 10 languages and the player will let viewers
-            pick — no re-encoding required.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>How accurate is the face recognition?</summary>
-          <div class="faq-body">
-            We use InsightFace, currently among the most accurate open face-recognition models. Cosine similarity
-            thresholds are configurable per tenant (default 0.82 for auto-confirm). The system auto-clusters faces
-            and asks you to confirm tags — accuracy improves as your team confirms more matches.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>I'm worried about GDPR / BIPA — can we disable biometric processing?</summary>
-          <div class="faq-body">
-            Yes. Each organisation administrator has a control panel at <code>/ai-features/</code>
-            where they can disable face recognition, speaker diarization, or any individual AI feature with a
-            single toggle. Disabling stops new processing immediately — existing data is preserved unless you
-            explicitly erase it. You can also disable features that aren't biometric (translation, scene
-            description, audio events, etc.) the same way, if you want to limit your AI minute consumption.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What if someone asks us to delete their biometric data?</summary>
-          <div class="faq-body">
-            Every person identified in your library has their own detail page with a <strong>Forget person</strong>
-            button. Clicking it performs an irreversible, audited deletion within 24 hours of: the face embeddings,
-            cropped face images, the identity record, and any linked speaker references. The action is recorded in
-            an audit log with the operator's username and timestamp, so you can prove compliance to a regulator if
-            asked. There's also an <strong>Export data</strong> button on the same page that produces a ZIP
-            containing everything we hold about that person — useful for GDPR Article 20 (data portability) requests.
-            The forget action can simultaneously enrol an automatic <strong>blur + mute redaction policy</strong>
-            against that person across every existing and future video.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>How does redaction work — do you re-encode every video?</summary>
-          <div class="faq-body">
-            No, redactions are applied live in the player. The original file is untouched.
-            For a face, we overlay a blur box on the HLS stream at the timestamps where that
-            person appears. For a voice, the player mutes (or beeps) the matching audio
-            ranges. For a transcript, the captions and search index are scrubbed so the
-            redacted phrases never surface. If you need to share a video externally with the
-            redactions <em>baked in</em>, one click renders a permanent MP4 — that's the only
-            time we re-encode. Policies can be revoked: removing a policy restores the
-            original instantly because nothing was ever destructively edited.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>Where is our media stored — can we use our own storage?</summary>
-          <div class="faq-body">
-            By default each tenant gets an isolated folder on the ClipLens server's local disk.
-            You can point a tenant at any absolute path the operating system can reach:
-            a network share (NFS, SMB), an SSHFS mount to a remote DAM, or a cloud bucket
-            mounted via rclone or s3fs. Switching mid-life is a verified online migration —
-            we copy every file, verify size and counts, and keep the old location for
-            24 hours so you can roll back. Cloud credentials never enter ClipLens; the
-            mount is set up at the OS level so the app stays storage-agnostic.
-            <a href="#storage">See the storage options above</a> or
-            <a href="#contact">ask us about your specific setup</a>.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What exactly is an "AI minute" — how is it measured?</summary>
-          <div class="faq-body">
-            One AI minute = one minute of wall-clock time that a background worker spends running an AI task on your
-            media (HLS encoding, transcription, face recognition, translation, frame analysis, etc.). Pure database
-            operations and live-streaming don't count. We log elapsed time even when a task fails — the compute
-            was real. Full breakdown in our <a href="/terms/#ai-minutes">Terms</a>.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>How many AI minutes does a typical video consume?</summary>
-          <div class="faq-body">
-            A rough rule of thumb on our hosted infrastructure:
-            <ul style="margin: 8px 0 0 18px; padding: 0;">
-              <li><strong>~4 AI minutes per minute of 4K (2160p) video</strong> for the full pipeline (HLS + Whisper + face recognition + frame analysis)</li>
-              <li><strong>~2-3 AI minutes per minute</strong> for 1080p video</li>
-              <li><strong>~2-3 AI minutes per minute</strong> for 720p and below</li>
-              <li><strong>+1-2 AI minutes per language</strong> for subtitle translation</li>
-            </ul>
-            <p style="margin-top: 10px;">Example: a 6-minute 4K video with English captions consumes roughly 25 AI minutes.
-            All hosted plans run on the same hardware, so the ratio is consistent regardless of tier.</p>
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What happens to AI minutes if a task fails halfway?</summary>
-          <div class="faq-body">
-            We log the elapsed compute time regardless of outcome, since the work was real. But automatic retries
-            are bounded (Celery retries on transient errors only, with a strict retry cap). Most user-facing
-            failures (bad file format, missing audio track, etc.) bail early before consuming significant minutes.
-            Internal infrastructure failures on our end are never billed to you.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>Can we customise the platform with our own branding?</summary>
-          <div class="faq-body">
-            White-label branding (custom logo, colours, favicon, email-sender name) is on the roadmap and available
-            on Enterprise plans. Your users see "Your Brand" everywhere, not ClipLens.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What about billing — do unused storage and AI minutes roll over?</summary>
-          <div class="faq-body">
-            <strong>AI minute top-up credits</strong> roll forward and expire 12 months after purchase.
-            <strong>Plan AI minutes</strong> reset every month (use-it-or-lose-it). <strong>Storage add-ons</strong>
-            stay active until you cancel — and cancellation only takes effect at the end of the current billing
-            period, so you never lose paid-for capacity early.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>Can multiple people from our team use one account?</summary>
-          <div class="faq-body">
-            Yes — your organisation gets its own subdomain (yourorg.cliplens.com) with three roles: Admin (full
-            control), Editor (upload &amp; manage media), Viewer (read-only). The number of seats depends on your plan.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary>What's your refund and cancellation policy?</summary>
-          <div class="faq-body">
-            Plan subscriptions can be cancelled anytime from the billing page — you keep access until the end of
-            the paid period. Top-up credits are non-refundable but never expire mid-period. Annual plans (available
-            on request) can be refunded pro-rata within 30 days. No hidden fees.
-          </div>
-        </details>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- ── CONTACT ──────────────────────────────────────────────────── -->
-  <section id="contact" class="contact-section">
-    <div class="container">
-      <div class="contact-card">
-        <div class="contact-info">
-          <h2>Let's talk</h2>
-          <p>Tell us what kind of media you work with and we'll set up a demo on real data of yours.</p>
-          <ul class="checks">
-            <li>30-minute personalised walkthrough</li>
-            <li>Sandbox environment to test on your own footage</li>
-            <li>Custom pricing for high-volume archives</li>
-            <li>White-label / on-prem deployment options</li>
-          </ul>
-        </div>
-
-        <form class="contact-form" method="post" action="{% url 'submit_lead' %}">
+        {% else %}
+        <form id="betaForm" action="{% url 'submit_lead' %}" method="POST">
           {% csrf_token %}
-          <div class="hp"><input type="text" name="hp_company_website" tabindex="-1" autocomplete="off"></div>
-
-          <div class="form-cols">
-            <div class="form-row">
-              <label for="name">Name *</label>
-              <input id="name" name="name" type="text" required>
-            </div>
-            <div class="form-row">
-              <label for="email">Work email *</label>
-              <input id="email" name="email" type="email" required>
-            </div>
+          <input type="hidden" name="interest" value="Beta access request">
+          <!-- Honeypot — hidden from humans -->
+          <div style="display:none;"><input type="text" name="hp_company_website" tabindex="-1" autocomplete="off"></div>
+          <div class="form-field">
+            <input type="text" name="name" placeholder="Your name" required autocomplete="name">
           </div>
-
-          <div class="form-cols">
-            <div class="form-row">
-              <label for="company">Organisation</label>
-              <input id="company" name="company" type="text">
-            </div>
-            <div class="form-row">
-              <label for="phone">Phone</label>
-              <input id="phone" name="phone" type="tel">
-            </div>
+          <div class="form-field">
+            <input type="email" name="email" placeholder="Work email" required autocomplete="email">
           </div>
-
-          <div class="form-row">
-            <label for="interest">I'm interested in</label>
-            <select id="interest" name="interest">
-              <option value="">— Select one —</option>
-              <option value="Demo">A product demo</option>
-              <option value="Starter">Starter plan</option>
-              <option value="Pro">Pro plan</option>
-              <option value="Enterprise">Enterprise / custom</option>
-              <option value="Self-hosted">Self-hosted deployment</option>
-              <option value="Other">Something else</option>
-            </select>
-          </div>
-
-          <div class="form-row">
-            <label for="message">A few words about what you're looking for</label>
-            <textarea id="message" name="message" placeholder="Volume of footage, languages, compliance needs, deployment model..."></textarea>
-          </div>
-
-          <button type="submit">Send message</button>
+          <button type="submit" class="form-submit" id="betaSubmit">Request access →</button>
+          <p class="form-note">We'll reply within 24 hours. No spam, ever.</p>
         </form>
+        {% endif %}
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ── FOOTER ───────────────────────────────────────────────────── -->
-  <footer>
-    <div class="footer-grid">
-      <div class="footer-brand">
-        <img src="{% static 'videos/logos/logo-long-dark.png' %}" alt="ClipLens">
-        <p>Searchable AI media intelligence for organisations that produce more video and photo than they can manually catalogue.</p>
-      </div>
-      <div class="footer-col">
-        <h4>Product</h4>
-        <ul>
-          <li><a href="#capabilities">Capabilities</a></li>
-          <li><a href="#use-cases">Use cases</a></li>
-          <li><a href="#how">How it works</a></li>
-          <li><a href="#plans">Plans &amp; pricing</a></li>
-        </ul>
-      </div>
-      <div class="footer-col">
-        <h4>Resources</h4>
-        <ul>
-          <li><a href="#faq">FAQ</a></li>
-          <li><a href="#contact">Request a demo</a></li>
-          <li><a href="mailto:hello@cliplens.com">hello@cliplens.com</a></li>
-          <li><a href="#contact">Contact sales</a></li>
-        </ul>
-      </div>
-      <div class="footer-col">
-        <h4>Legal</h4>
-        <ul>
-          <li><a href="/privacy/">Privacy policy</a></li>
-          <li><a href="/terms/">Terms of service</a></li>
-          <li><a href="/terms/#your-content">Data processing</a></li>
-          <li><a href="/terms/#acceptable-use">Acceptable use</a></li>
-        </ul>
-      </div>
+<!-- FOUNDER -->
+<section class="founder">
+  <div class="founder-card reveal">
+    <div class="founder-avatar">SM</div>
+    <div class="founder-body">
+      <p>I kept watching teams sit on years of valuable footage they couldn't actually use — because nobody had time to tag or transcribe it manually. ClipLens started as an internal tool to answer one question: what if your archive could search itself?</p>
+      <p>If your team produces more media than they can catalogue, I'd love to show you what ClipLens can do on your own footage. <a href="#beta">Join the beta →</a></p>
+      <div class="founder-sig"><strong>Soham Maskara</strong> · Founder &amp; Engineer</div>
     </div>
-    <div class="footer-bottom">
-      <div>© {% now "Y" %} ClipLens. All rights reserved.</div>
-      <div class="made-with">Made with <span class="heart">♥</span> by Soham Maskara</div>
-    </div>
-  </footer>
+  </div>
+</section>
 
-  <script>
-    // Smooth in-page scroll
-    document.querySelectorAll('a[href^="#"]').forEach(a => {
-      a.addEventListener('click', e => {
-        const id = a.getAttribute('href').slice(1);
-        const el = document.getElementById(id);
-        if (el) { e.preventDefault(); el.scrollIntoView({ behavior: 'smooth' }); }
-      });
-    });
-    // Auto-scroll after form submit
-    if (location.search.includes('contact=ok')) {
-      setTimeout(() => document.getElementById('contact')?.scrollIntoView({behavior:'smooth'}), 100);
-    }
-    // Auto-dismiss toasts
-    document.querySelectorAll('.toast').forEach(t => setTimeout(() => t.remove(), 5000));
-  </script>
+<!-- FOOTER -->
+<footer>
+  <div class="footer-inner">
+    <span>© 2026 ClipLens. All rights reserved.</span>
+    <div class="footer-links">
+      <a href="https://cliplens.in/product.html">Product</a>
+      <a href="https://cliplens.in/security.html">Security</a>
+      <a href="https://cliplens.in/privacy.html">Privacy</a>
+      <a href="https://cliplens.in/terms.html">Terms</a>
+      <a href="https://cliplens.in/data-processing.html">DPA</a>
+      <a href="https://cliplens.in/acceptable-use.html">AUP</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Scroll reveal
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
 </body>
 </html>

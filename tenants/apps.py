@@ -15,3 +15,4 @@ class TenantsConfig(AppConfig):
             load_all_tenant_dbs()
             from .celery_utils import connect_celery_signals
             connect_celery_signals()
+        from . import signals  # noqa: F401  — registers post_save cache-busting handlers

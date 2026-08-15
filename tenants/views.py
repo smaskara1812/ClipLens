@@ -143,11 +143,13 @@ def dashboard(request):
 
         # Effective limits = plan + addons (credits & storage subscriptions)
         from .metering import get_credit_minutes_available, get_storage_addon_gb
-        plan_ai      = t.plan.ai_minutes_limit if t.plan else 0
+        plan_ai      = float(t.plan.ai_minutes_limit if t.plan else 0)
         plan_storage = t.plan.storage_limit_gb if t.plan else 0
-        credit_min   = get_credit_minutes_available(t)
+        credit_min   = get_credit_minutes_available(t)  # remaining in active packs
         addon_gb     = get_storage_addon_gb(t)
-        ai_limit      = plan_ai      + credit_min
+        # Capacity: max(used, plan baseline) + remaining — expiring a partially-used
+        # pack only forfeits unused remainder, never inflates the usage percentage.
+        ai_limit      = max(float(ai_minutes), plan_ai) + credit_min
         storage_limit = plan_storage + addon_gb
 
         tenant_data.append({
@@ -208,7 +210,7 @@ def tenant_detail(request, tenant_id):
     from .models import StorageAddon, AICreditPack
     credits_minutes = get_credit_minutes_available(tenant)
     addon_storage   = get_storage_addon_gb(tenant)
-    from django.db.models import Q as _Q
+    from django.db.models import Q as _Q, Sum as _Sum2
     active_storage_addons = list(StorageAddon.objects.using('control').filter(
         _Q(tenant=tenant) & (
             (_Q(cancelled_at__isnull=True) & _Q(expires_at__isnull=True)) |
@@ -219,14 +221,22 @@ def tenant_detail(request, tenant_id):
         tenant=tenant, expires_at__gt=now
     ).order_by('purchased_at'))
 
+    ai_minutes_raw = float(events_this_month.exclude(
+        event_type=UsageEvent.TYPE_STORAGE_DELTA
+    ).aggregate(total=Sum('value'))['total'] or 0)
+    plan_ai_limit = float(tenant.plan.ai_minutes_limit if tenant.plan else 0)
+    # Capacity: max(used, plan baseline) + remaining active credits.
+    # Expiring a partially-consumed pack only forfeits its unused remainder —
+    # already-consumed minutes stay in the denominator so the percentage never spikes.
+    ai_minutes_capacity = max(ai_minutes_raw, plan_ai_limit) + credits_minutes
+
     usage = {
-        'ai_minutes': round(events_this_month.exclude(
-            event_type=UsageEvent.TYPE_STORAGE_DELTA
-        ).aggregate(total=Sum('value'))['total'] or 0, 1),
+        'ai_minutes':              round(ai_minutes_raw, 1),
         'storage_gb':              round(_disk_usage_bytes(tenant) / 1024**3, 2),
-        'credit_minutes':          round(credits_minutes, 1),
+        'credit_minutes':          round(credits_minutes, 1),   # remaining in active packs
         'addon_storage_gb':        addon_storage,
-        'ai_minutes_effective':    (tenant.plan.ai_minutes_limit if tenant.plan else 0) + credits_minutes,
+        'ai_minutes_effective':    plan_ai_limit + credits_minutes,
+        'ai_minutes_capacity':     round(ai_minutes_capacity, 1),
         'storage_limit_effective': (tenant.plan.storage_limit_gb if tenant.plan else 0) + addon_storage,
     }
 
@@ -289,10 +299,12 @@ def tenant_detail(request, tenant_id):
     )
 
     # Pending invite (if onboarding not yet completed)
+    from django.utils import timezone as _tz
     invite = OnboardingInvite.objects.using('control').filter(
         tenant=tenant, consumed_at__isnull=True
     ).first()
     onboard_url = f"{scheme}://{org_host}/onboard/{invite.token}/" if invite else None
+    invite_expired = invite and invite.expires_at < _tz.now()
 
     return render(request, 'tenants/tenant_detail.html', {
         'tenant':                tenant,
@@ -303,6 +315,7 @@ def tenant_detail(request, tenant_id):
         'org_url':               org_url,
         'invite':                invite,
         'onboard_url':           onboard_url,
+        'invite_expired':        invite_expired,
         'active_storage_addons': active_storage_addons,
         'active_credit_packs':   active_credit_packs,
         'current_media_path':    current_media_path,
@@ -419,6 +432,91 @@ def create_tenant(request):
         return redirect('tenants:create_tenant')
 
 
+@platform_owner_required
+@require_POST
+def resend_onboarding_invite(request, tenant_id: int):
+    """
+    Regenerate the onboarding invite for a tenant that has not yet completed
+    onboarding.  Deletes the old token and issues a fresh 7-day one.
+    Optionally changes the recipient email (POST param: new_email).
+    """
+    import secrets
+    from datetime import timedelta
+    from django.utils import timezone
+
+    tenant = get_object_or_404(Tenant.objects.using('control'), pk=tenant_id)
+
+    # Must not already be onboarded (consumed invite means an admin user exists)
+    existing = OnboardingInvite.objects.using('control').filter(
+        tenant=tenant, consumed_at__isnull=True
+    ).first()
+    if existing is None:
+        messages.error(request, "This org has already completed onboarding or has no pending invite.")
+        return redirect('tenants:tenant_detail', tenant_id=tenant_id)
+
+    new_email = request.POST.get('new_email', '').strip() or existing.admin_email
+
+    # Delete old invite and create a fresh one
+    existing.delete()
+    token = secrets.token_urlsafe(32)
+    invite = OnboardingInvite.objects.using('control').create(
+        tenant=tenant,
+        token=token,
+        admin_email=new_email,
+        admin_username=existing.admin_username,
+        expires_at=timezone.now() + timedelta(days=7),
+    )
+
+    # Update tenant admin_email if it changed
+    if new_email != tenant.admin_email:
+        Tenant.objects.using('control').filter(pk=tenant_id).update(admin_email=new_email)
+
+    # Build the onboarding URL
+    scheme = 'https' if request.is_secure() else 'http'
+    host = request.get_host()
+    parts = host.split('.')
+    if len(parts) >= 3:
+        parts[0] = tenant.slug
+        org_host = '.'.join(parts)
+    else:
+        org_host = f"{tenant.slug}.cliplens.local"
+    onboard_url = f"{scheme}://{org_host}/onboard/{token}/"
+
+    # Best-effort email
+    email_sent = False
+    try:
+        from .tasks import queue_email
+        email_sent = queue_email(
+            scope='platform',
+            trigger_source='resend_onboarding_invite',
+            triggered_by_username=getattr(request.user, 'username', '') or '',
+            subject=f'Your ClipLens invite — finish setting up {tenant.name}',
+            body=(
+                f'Hi {invite.admin_username},\n\n'
+                f'Here is a new onboarding link for your ClipLens organisation: {tenant.name}.\n\n'
+                f'Click this one-time link to set your password and pick a plan:\n'
+                f'{onboard_url}\n\n'
+                f'This link expires in 7 days.\n\n'
+                f'— The ClipLens team'
+            ),
+            recipients=[new_email],
+        )
+    except Exception:
+        logger.exception("Failed to email regenerated onboarding invite to %s", new_email)
+
+    if email_sent:
+        messages.success(
+            request,
+            f"New invite generated and emailed to {new_email}. Expires in 7 days."
+        )
+    else:
+        messages.success(
+            request,
+            f"New invite generated for {new_email}. Email delivery unavailable — copy the link manually."
+        )
+    return redirect('tenants:tenant_detail', tenant_id=tenant_id)
+
+
 def onboard(request, token: str):
     """
     Public onboarding page reached via invite link.
@@ -447,29 +545,43 @@ def onboard(request, token: str):
         })
 
     # POST — claim
+    import re as _re
     password         = request.POST.get('password', '')
     password_confirm = request.POST.get('password_confirm', '')
     plan_id          = request.POST.get('plan_id', '')
+    username         = request.POST.get('username', '').strip().lower()
+
+    def _render_error(msg):
+        return render(request, 'tenants/onboard.html', {
+            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
+            'chosen_username': username,
+        }, status=400)
+
+    if not username or not _re.match(r'^[a-z0-9_]{3,30}$', username):
+        messages.error(request, 'Username must be 3–30 characters: lowercase letters, numbers, and underscores only.')
+        return _render_error(username)
+
+    # Uniqueness check against the tenant's own DB
+    from django.contrib.auth import get_user_model
+    from .provisioning import _register_db_alias
+    _register_db_alias(invite.tenant.db_name)
+    if get_user_model().objects.using(invite.tenant.db_name).filter(username=username).exists():
+        messages.error(request, f'Username "{username}" is already taken. Please choose another.')
+        return _render_error(username)
 
     if len(password) < 8:
         messages.error(request, 'Password must be at least 8 characters.')
-        return render(request, 'tenants/onboard.html', {
-            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
-        }, status=400)
+        return _render_error(username)
 
     if password != password_confirm:
         messages.error(request, 'Passwords do not match.')
-        return render(request, 'tenants/onboard.html', {
-            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
-        }, status=400)
+        return _render_error(username)
 
     if not plan_id:
         messages.error(request, 'Please choose a plan.')
-        return render(request, 'tenants/onboard.html', {
-            'invite': invite, 'tenant': invite.tenant, 'plans': plans,
-        }, status=400)
+        return _render_error(username)
 
-    result = claim_onboarding_invite(token=token, password=password, plan_id=int(plan_id))
+    result = claim_onboarding_invite(token=token, password=password, plan_id=int(plan_id), username=username)
     if not result['success']:
         messages.error(request, result['error'])
         return render(request, 'tenants/onboard.html', {
@@ -580,7 +692,7 @@ def _create_team_invites_from_post(request, tenant, *, inviter_username: str, ma
         accept_url = f'{scheme}://{host}/team-invite/{token}/'
         try:
             queue_email(
-                scope='platform',
+                scope='tenant',
                 trigger_source='team_member_invite',
                 triggered_by_username=inviter_username or '',
                 tenant=tenant,
@@ -808,6 +920,160 @@ def submit_lead(request):
     return redirect('/?contact=ok#contact')
 
 
+def public_signup(request):
+    """
+    Self-service signup — anyone can register a new organisation.
+    Derives a subdomain slug from the org name, provisions the tenant DB,
+    and sends an onboarding invite email.  Password + plan are set by the
+    admin when they click the invite link (/onboard/<token>/).
+    """
+    import re
+    from django.core.cache import cache
+    from django.utils import timezone
+
+    plans = list(Plan.objects.using('control').filter(is_active=True).order_by('price_usd'))
+
+    if request.method == 'GET':
+        return render(request, 'tenants/signup.html', {'plans': plans})
+
+    # ── Rate-limit: 5 signups per IP per hour ────────────────────────────────
+    ip = (request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR', '')).split(',')[0].strip()
+    rate_key = f'signup_rate_{ip}'
+    count = cache.get(rate_key, 0)
+    if count >= 5:
+        return render(request, 'tenants/signup.html', {
+            'plans': plans,
+            'error': 'Too many sign-up attempts. Please try again in an hour.',
+        }, status=429)
+    cache.set(rate_key, count + 1, 3600)
+
+    org_name = request.POST.get('org_name', '').strip()
+    email    = request.POST.get('email', '').strip().lower()
+    slug     = request.POST.get('slug', '').strip().lower()
+
+    # ── Validate ─────────────────────────────────────────────────────────────
+    errors = {}
+    if not org_name:
+        errors['org_name'] = 'Organisation name is required.'
+    if not email or '@' not in email:
+        errors['email'] = 'A valid email address is required.'
+    if not slug or not re.match(r'^[a-z0-9][a-z0-9\-]{1,28}[a-z0-9]$', slug):
+        errors['slug'] = 'Workspace ID must be 3–30 lowercase letters, numbers, or hyphens.'
+    if Tenant.objects.using('control').filter(slug=slug).exists():
+        errors['slug'] = f'"{slug}" is already taken. Please choose another.'
+
+    if errors:
+        return render(request, 'tenants/signup.html', {
+            'plans': plans,
+            'errors': errors,
+            'org_name': org_name,
+            'email': email,
+            'slug': slug,
+        }, status=400)
+
+    # ── Derive username from email ────────────────────────────────────────────
+    username_base = re.sub(r'[^a-z0-9_]', '', email.split('@')[0].lower())[:30] or 'admin'
+
+    # ── Provision ─────────────────────────────────────────────────────────────
+    result = provision_tenant_with_invite(
+        slug=slug,
+        name=org_name,
+        admin_email=email,
+        admin_username=username_base,
+        source='self_service',
+    )
+
+    if not result['success']:
+        return render(request, 'tenants/signup.html', {
+            'plans': plans,
+            'error': f'Could not create your workspace: {result["error"]}',
+            'org_name': org_name,
+            'email': email,
+            'slug': slug,
+        }, status=500)
+
+    # ── Send invite email ─────────────────────────────────────────────────────
+    try:
+        scheme   = 'https' if request.is_secure() else 'http'
+        host     = request.get_host()
+        parts    = host.split('.')
+        if len(parts) >= 2:
+            org_host = f"{slug}.{'.'.join(parts[-2:])}"
+        else:
+            org_host = f"{slug}.cliplens.local"
+        onboard_url = f"{scheme}://{org_host}/onboard/{result['token']}/"
+
+        from .tasks import queue_email
+        queue_email(
+            scope='platform',
+            trigger_source='self_service_signup',
+            triggered_by_username=username_base,
+            subject=f'Welcome to ClipLens — activate your workspace',
+            body=(
+                f'Hi,\n\n'
+                f'Your ClipLens workspace "{org_name}" has been created.\n\n'
+                f'Click the link below to set your password and choose a plan:\n'
+                f'{onboard_url}\n\n'
+                f'This link expires in 7 days.\n\n'
+                f'— The ClipLens team'
+            ),
+            recipients=[email],
+        )
+    except Exception:
+        logger.exception('public_signup: failed to send invite email to %s', email)
+
+    return redirect(f'/signup/check-email/?org={slug}&email={email}')
+
+
+def public_signup_check_email(request):
+    """Confirmation page shown after successful self-service signup."""
+    return render(request, 'tenants/signup_check_email.html', {
+        'email': request.GET.get('email', ''),
+        'org':   request.GET.get('org', ''),
+    })
+
+
+def public_signup_check_slug(request):
+    """AJAX: check whether a slug is available and valid."""
+    import re
+    slug = request.GET.get('slug', '').strip().lower()
+    if not slug:
+        return JsonResponse({'available': False, 'error': 'Empty'})
+    if not re.match(r'^[a-z0-9][a-z0-9\-]{1,28}[a-z0-9]$', slug):
+        return JsonResponse({'available': False, 'error': 'Must be 3–30 lowercase letters, numbers, or hyphens.'})
+    taken = Tenant.objects.using('control').filter(slug=slug).exists()
+    return JsonResponse({'available': not taken, 'slug': slug})
+
+
+def onboard_check_username(request):
+    """AJAX: check whether a username is valid and available in the tenant's DB."""
+    import re
+    from django.contrib.auth import get_user_model
+    from .provisioning import _register_db_alias
+
+    token    = request.GET.get('token', '').strip()
+    username = request.GET.get('username', '').strip().lower()
+
+    if not username:
+        return JsonResponse({'available': False, 'error': 'Username is required.'})
+    if not re.match(r'^[a-z0-9_]{3,30}$', username):
+        return JsonResponse({'available': False, 'error': 'Only lowercase letters, numbers, and underscores. 3–30 characters.'})
+
+    try:
+        invite = OnboardingInvite.objects.using('control').select_related('tenant').get(token=token)
+    except OnboardingInvite.DoesNotExist:
+        return JsonResponse({'available': True})  # can't verify — allow, view will catch it
+
+    try:
+        _register_db_alias(invite.tenant.db_name)
+        taken = get_user_model().objects.using(invite.tenant.db_name).filter(username=username).exists()
+    except Exception:
+        return JsonResponse({'available': True})  # DB not yet set up — allow
+
+    return JsonResponse({'available': not taken,
+                         'error': f'"{username}" is already taken.' if taken else None})
+
+
 def privacy_page(request):
     """Public privacy policy."""
     return render(request, 'tenants/privacy.html')
@@ -882,7 +1148,6 @@ def manage_plans(request):
                 'storage_limit_gb': int(request.POST.get('storage_limit_gb', 100)),
                 'ai_minutes_limit': int(request.POST.get('ai_minutes_limit', 300)),
                 'max_users':        int(request.POST.get('max_users', 3)),
-                'max_videos':       int(request.POST.get('max_videos', 0)),
                 'is_active':        bool(request.POST.get('is_active', True)),
             }
             Plan.objects.using('control').create(**data)
@@ -896,7 +1161,6 @@ def manage_plans(request):
                 p.storage_limit_gb = int(request.POST.get('storage_limit_gb', p.storage_limit_gb))
                 p.ai_minutes_limit = int(request.POST.get('ai_minutes_limit', p.ai_minutes_limit))
                 p.max_users        = int(request.POST.get('max_users', p.max_users))
-                p.max_videos       = int(request.POST.get('max_videos', p.max_videos))
                 p.is_active        = bool(request.POST.get('is_active'))
                 p.save(using='control')
                 messages.success(request, f"Plan '{p.name}' updated.")
