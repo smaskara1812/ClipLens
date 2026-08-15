@@ -84,9 +84,20 @@ print(n)
 echo "  ✓ ${TASK_COUNT} Celery tasks registered"
 echo ""
 
-# ── 1. Django dev server ─────────────────────────────────────────────────────
-echo "  [1/7] Django dev server       → http://localhost:8000"
-python manage.py runserver &
+# ── 1. App server ────────────────────────────────────────────────────────────
+# gunicorn in production mode; falls back to runserver if DEBUG=True
+if [ "${DEBUG:-True}" = "False" ]; then
+  echo "  [1/7] Gunicorn (production)    → http://localhost:8000"
+  gunicorn cliplens.wsgi:application \
+    --bind 0.0.0.0:8000 \
+    --workers 2 \
+    --timeout 300 \
+    --access-logfile - \
+    --error-logfile - &
+else
+  echo "  [1/7] Django dev server        → http://localhost:8000"
+  python manage.py runserver &
+fi
 DJANGO_PID=$!
 
 # ── macOS fork-safety fix ─────────────────────────────────────────────────────

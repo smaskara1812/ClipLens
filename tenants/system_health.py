@@ -125,9 +125,9 @@ def check_disk_space():
                       hint='Create the media directory')
     pct_free = (free / total) * 100
     detail = f'{_fmt_bytes(free)} free of {_fmt_bytes(total)} ({pct_free:.0f}% free)'
-    if pct_free < 5:
+    if pct_free < 3:
         return _error('Disk space', detail, hint='Critical — free space immediately')
-    if pct_free < 15:
+    if pct_free < 7:
         return _warn('Disk space', detail, hint='Running low — consider cleanup_orphans or upgrade')
     return _ok('Disk space', detail)
 

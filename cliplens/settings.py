@@ -222,17 +222,21 @@ if MULTI_TENANT and _use_postgres:
     # DB router — routes tenants app → control, everything else → active tenant DB
     DATABASE_ROUTERS = ['tenants.db_router.TenantDatabaseRouter']
 
-    # Allow *.cliplens.local and *.your-domain.com subdomains
+    # Allow *.cliplens.local, *.cliplens.com, and *.cliplens.in subdomains
     _extra_hosts = [
         '.cliplens.local',
         '.cliplens.com',
+        '.cliplens.in',
+        'cliplens.in',
     ]
     ALLOWED_HOSTS = list(set(ALLOWED_HOSTS + _extra_hosts))
 
-    # Trust CSRF from all subdomains (local dev)
+    # Trust CSRF from all subdomains
     CSRF_TRUSTED_ORIGINS = list(set(CSRF_TRUSTED_ORIGINS + [
         'http://*.cliplens.local',
         'https://*.cliplens.com',
+        'https://*.cliplens.in',
+        'https://cliplens.in',
     ]))
 
 # ── Cache (Redis — reuses the Celery broker, separate DB index 1) ─────────────

@@ -20,6 +20,7 @@ don't have to wrap every send in try/except.
 """
 
 import logging
+import os
 import time
 from typing import Iterable, Optional
 
@@ -29,6 +30,186 @@ from django.core.mail.backends.base import BaseEmailBackend
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+# ── Shared branding constants ──────────────────────────────────────────────────
+
+LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'videos', 'static', 'videos', 'logos', 'logo-long.png',
+)
+LOGO_CID = 'logo@cliplens.in'
+
+# ── HTML email templates ───────────────────────────────────────────────────────
+
+def _base_email(*, preheader: str, hero_title: str, hero_sub: str, body_html: str) -> str:
+    """Shared wrapper: logo header + purple hero + body + feature strip + footer."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ClipLens</title></head>
+<body style="margin:0;padding:0;background:#f2f2f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{preheader}</div>
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+  <tr><td align="center" style="padding:40px 16px 48px;">
+    <table width="560" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;width:100%;">
+
+      <!-- Logo bar -->
+      <tr><td style="background:#ffffff;border-radius:16px 16px 0 0;padding:28px 36px;border-bottom:1px solid #ebebed;">
+        <img src="cid:{LOGO_CID}" alt="ClipLens" width="130" height="auto" style="display:block;border:0;outline:0;">
+      </td></tr>
+
+      <!-- Hero -->
+      <tr><td style="background:linear-gradient(135deg,#1e1250 0%,#3b1fa8 60%,#5b21b6 100%);padding:36px 36px 32px;">
+        <p style="margin:0 0 10px;font-size:26px;font-weight:700;color:#ffffff;letter-spacing:-0.6px;line-height:1.2;">{hero_title}</p>
+        <p style="margin:0;font-size:15px;color:#c4b5fd;line-height:1.5;">{hero_sub}</p>
+      </td></tr>
+
+      <!-- Body -->
+      <tr><td style="background:#ffffff;padding:36px 36px 32px;">
+        {body_html}
+      </td></tr>
+
+      <!-- Footer -->
+      <tr><td style="background:#f2f2f5;border-radius:0 0 16px 16px;padding:24px 36px;">
+        <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;">Questions? Reply to this email — we read every one.</p>
+        <p style="margin:0;font-size:12px;color:#b0b0b8;">&copy; 2026 ClipLens &nbsp;&middot;&nbsp; <a href="https://cliplens.in" style="color:#9ca3af;text-decoration:none;">cliplens.in</a></p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def _cta_button(label: str, url: str) -> str:
+    return (
+        f'<table cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">'
+        f'<tr><td style="background:#5b21b6;border-radius:10px;">'
+        f'<a href="{url}" style="display:inline-block;padding:15px 34px;font-size:15px;'
+        f'font-weight:600;color:#ffffff;text-decoration:none;letter-spacing:-0.1px;">'
+        f'{label} &rarr;</a></td></tr></table>'
+    )
+
+
+def _fallback_url_box(url: str) -> str:
+    return (
+        f'<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:24px;">'
+        f'<tr><td style="background:#f8f7ff;border:1px solid #e0d9ff;border-radius:8px;padding:13px 15px;">'
+        f'<p style="margin:0 0 4px;font-size:11px;font-weight:600;text-transform:uppercase;'
+        f'letter-spacing:0.7px;color:#7c3aed;">Or copy this link</p>'
+        f'<p style="margin:0;font-size:12px;color:#4b5563;word-break:break-all;line-height:1.6;">{url}</p>'
+        f'</td></tr></table>'
+    )
+
+
+def onboarding_email_html(username: str, org_name: str, onboard_url: str, login_url: str) -> str:
+    body = (
+        f'<p style="margin:0 0 18px;font-size:15px;color:#374151;line-height:1.7;">'
+        f'Hi <strong style="color:#111827;">{username}</strong>,</p>'
+        f'<p style="margin:0 0 28px;font-size:15px;color:#4b5563;line-height:1.75;">'
+        f'Your AI-powered media archive is set up and waiting. Click below to set your password '
+        f'and choose a plan — you\'ll be searching your archive in minutes.</p>'
+        + _cta_button('Activate workspace', onboard_url)
+        + _fallback_url_box(onboard_url)
+        + f'<table width="100%" cellpadding="0" cellspacing="0" role="presentation">'
+        f'<tr><td style="border-top:1px solid #f0eff5;padding-top:20px;">'
+        f'<p style="margin:0 0 4px;font-size:13px;color:#9ca3af;">This link expires in 7 days. After activating, log in at:</p>'
+        f'<a href="{login_url}" style="font-size:13px;color:#5b21b6;text-decoration:none;font-weight:500;">{login_url}</a>'
+        f'</td></tr></table>'
+    )
+    return _base_email(
+        preheader=f'Your ClipLens workspace {org_name} is ready to activate.',
+        hero_title='Your workspace is ready.',
+        hero_sub=f'<strong style="color:#ede9fe;">{org_name}</strong> has been provisioned on ClipLens.',
+        body_html=body,
+    )
+
+
+def team_invite_email_html(username: str, inviter: str, org_name: str, role: str, accept_url: str) -> str:
+    body = (
+        f'<p style="margin:0 0 18px;font-size:15px;color:#374151;line-height:1.7;">'
+        f'Hi <strong style="color:#111827;">{username}</strong>,</p>'
+        f'<p style="margin:0 0 28px;font-size:15px;color:#4b5563;line-height:1.75;">'
+        f'<strong>{inviter}</strong> has invited you to join '
+        f'<strong style="color:#111827;">{org_name}</strong> on ClipLens as a <strong>{role}</strong>. '
+        f'Click below to set your password and get started.</p>'
+        + _cta_button('Accept invitation', accept_url)
+        + _fallback_url_box(accept_url)
+        + f'<p style="margin:0;font-size:13px;color:#9ca3af;">This link expires in 7 days. '
+        f'If you weren\'t expecting this, you can safely ignore it.</p>'
+    )
+    return _base_email(
+        preheader=f'{inviter} invited you to join {org_name} on ClipLens.',
+        hero_title="You've been invited.",
+        hero_sub=f'Join <strong style="color:#ede9fe;">{org_name}</strong> as a {role}.',
+        body_html=body,
+    )
+
+
+def notification_email_html(title: str, message: str, link_url: str = '', org_name: str = '') -> str:
+    link_block = ''
+    if link_url:
+        link_block = _cta_button('View', link_url)
+    body = (
+        f'<p style="margin:0 0 20px;font-size:15px;color:#4b5563;line-height:1.75;">{message}</p>'
+        + link_block
+    )
+    sub = f'From <strong style="color:#ede9fe;">{org_name}</strong>' if org_name else 'ClipLens system notification'
+    return _base_email(
+        preheader=title,
+        hero_title=title,
+        hero_sub=sub,
+        body_html=body,
+    )
+
+
+def support_reply_email_html(ticket_id: int, subject: str, body_text: str) -> str:
+    body = (
+        f'<p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.7;">'
+        f'ClipLens support has replied to your ticket <strong>#{ticket_id}</strong>.</p>'
+        f'<div style="background:#f8f7ff;border-left:3px solid #5b21b6;border-radius:0 8px 8px 0;'
+        f'padding:16px 20px;margin-bottom:24px;">'
+        f'<p style="margin:0;font-size:14px;color:#374151;line-height:1.7;white-space:pre-wrap;">{body_text}</p>'
+        f'</div>'
+        f'<p style="margin:0;font-size:13px;color:#9ca3af;">You can view the full thread in your admin panel under <strong>Support</strong>.</p>'
+    )
+    return _base_email(
+        preheader=f'Reply to your ticket #{ticket_id}: {subject}',
+        hero_title='Support reply',
+        hero_sub=f'Ticket <strong style="color:#ede9fe;">#{ticket_id}</strong> — {subject}',
+        body_html=body,
+    )
+
+
+def lead_notification_email_html(name: str, email: str, company: str, message: str) -> str:
+    rows = [
+        ('Name', name),
+        ('Email', email),
+        ('Company', company or '—'),
+    ]
+    rows_html = ''.join(
+        f'<tr><td style="padding:8px 12px;font-size:13px;font-weight:600;color:#6b7280;'
+        f'white-space:nowrap;width:80px;">{k}</td>'
+        f'<td style="padding:8px 12px;font-size:13px;color:#111827;">{v}</td></tr>'
+        for k, v in rows
+    )
+    body = (
+        f'<p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">'
+        f'A new beta access request was submitted via the landing page.</p>'
+        f'<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;'
+        f'border-radius:8px;overflow:hidden;margin-bottom:24px;">'
+        f'<tbody>{rows_html}</tbody></table>'
+        + (f'<p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#6b7280;">Message</p>'
+           f'<p style="margin:0;font-size:14px;color:#374151;line-height:1.7;'
+           f'white-space:pre-wrap;">{message}</p>' if message else '')
+    )
+    return _base_email(
+        preheader=f'New lead: {name}' + (f' from {company}' if company else ''),
+        hero_title='New beta request',
+        hero_sub=f'<strong style="color:#ede9fe;">{name}</strong>' + (f' · {company}' if company else ''),
+        body_html=body,
+    )
 
 
 # ── Backend resolution ────────────────────────────────────────────────────────
@@ -185,6 +366,7 @@ def send_managed_email(
     recipients: Iterable[str],
     tenant=None,
     html: Optional[str] = None,
+    inline_images: Optional[dict] = None,
     from_override: Optional[str] = None,
     reply_to: Optional[str] = None,
     # ── Log context (optional but recommended) ──
@@ -270,6 +452,18 @@ def send_managed_email(
     )
     if html:
         msg.attach_alternative(html, 'text/html')
+    if html and inline_images:
+        from email.mime.image import MIMEImage
+        msg.mixed_subtype = 'related'
+        for cid, file_path in (inline_images or {}).items():
+            try:
+                with open(file_path, 'rb') as f:
+                    mime_img = MIMEImage(f.read())
+                mime_img.add_header('Content-ID', f'<{cid}>')
+                mime_img.add_header('Content-Disposition', 'inline')
+                msg.attach(mime_img)
+            except (OSError, IOError):
+                logger.warning('send_managed_email: inline image %s not found at %s', cid, file_path)
 
     t0 = time.monotonic()
     try:

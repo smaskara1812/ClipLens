@@ -2337,6 +2337,7 @@ def org_team_invites(request):
 
                 scheme = 'https' if request.is_secure() else 'http'
                 accept_url = f'{scheme}://{request.get_host()}/team-invite/{inv.token}/'
+                from tenants.email_utils import team_invite_email_html, LOGO_PATH, LOGO_CID
                 queue_email(
                     scope='platform',
                     trigger_source='team_member_invite_resend',
@@ -2350,6 +2351,11 @@ def org_team_invites(request):
                         f'Click this link within 7 days to set your password and log in:\n'
                         f'{accept_url}\n'
                     ),
+                    html=team_invite_email_html(
+                        inv.username, request.user.username,
+                        tenant.name, inv.get_role_display(), accept_url,
+                    ),
+                    inline_images={LOGO_CID: LOGO_PATH},
                     recipients=[inv.email],
                 )
                 messages.success(request, f"Invite re-sent to {inv.email}.")
@@ -3749,6 +3755,17 @@ def org_support_list(request):
                     .exclude(email='').values_list('email', flat=True)
                 )
                 if owner_emails:
+                    from tenants.email_utils import notification_email_html, LOGO_PATH, LOGO_CID
+                    _ticket_msg = (
+                        f'<strong>{request.user.username}</strong> opened a new support ticket '
+                        f'from <strong>{tenant.name}</strong>.<br><br>'
+                        f'<strong>Subject:</strong> {subject}<br>'
+                        f'<strong>Category:</strong> {ticket.get_category_display()} &nbsp;·&nbsp; '
+                        f'<strong>Priority:</strong> {ticket.get_priority_display()}<br><br>'
+                        f'<div style="background:#f8f7ff;border-left:3px solid #5b21b6;border-radius:0 8px 8px 0;'
+                        f'padding:14px 18px;margin-top:12px;font-size:14px;color:#374151;'
+                        f'line-height:1.7;white-space:pre-wrap;">{body}</div>'
+                    )
                     queue_email(
                         scope='platform',
                         trigger_source='support_ticket_created',
@@ -3756,13 +3773,17 @@ def org_support_list(request):
                         tenant=tenant,
                         subject=f'[Support #{ticket.pk}] {tenant.slug}: {subject}',
                         body=(
-                            f'New support ticket from tenant "{tenant.slug}" ({tenant.name}).\n\n'
-                            f'Subject:   {subject}\n'
-                            f'Category:  {ticket.get_category_display()}\n'
-                            f'Priority:  {ticket.get_priority_display()}\n'
-                            f'From:      {request.user.username} <{request.user.email or "—"}>\n\n'
-                            f'Description:\n{body}\n'
+                            f'New support ticket from "{tenant.slug}" ({tenant.name}).\n\n'
+                            f'Subject: {subject}\nCategory: {ticket.get_category_display()}\n'
+                            f'Priority: {ticket.get_priority_display()}\n'
+                            f'From: {request.user.username}\n\n{body}\n'
                         ),
+                        html=notification_email_html(
+                            title=f'New support ticket #{ticket.pk}',
+                            message=_ticket_msg,
+                            org_name=tenant.name,
+                        ),
+                        inline_images={LOGO_CID: LOGO_PATH},
                         recipients=owner_emails,
                         reply_to=request.user.email or None,
                     )
@@ -3818,6 +3839,14 @@ def org_support_detail(request, ticket_id):
                         .exclude(email='').values_list('email', flat=True)
                     )
                     if owner_emails:
+                        from tenants.email_utils import notification_email_html, LOGO_PATH, LOGO_CID
+                        _reply_msg = (
+                            f'<strong>{request.user.username}</strong> replied on ticket '
+                            f'<strong>#{ticket.pk}</strong> from <strong>{tenant.name}</strong>.<br><br>'
+                            f'<div style="background:#f8f7ff;border-left:3px solid #5b21b6;border-radius:0 8px 8px 0;'
+                            f'padding:14px 18px;margin-top:8px;font-size:14px;color:#374151;'
+                            f'line-height:1.7;white-space:pre-wrap;">{body}</div>'
+                        )
                         queue_email(
                             scope='platform',
                             trigger_source='support_reply_from_tenant',
@@ -3825,6 +3854,12 @@ def org_support_detail(request, ticket_id):
                             tenant=tenant,
                             subject=f'[Support #{ticket.pk}] Reply from {tenant.slug}: {ticket.subject}',
                             body=f'{request.user.username} replied on ticket #{ticket.pk}:\n\n{body}\n',
+                            html=notification_email_html(
+                                title=f'Support reply on ticket #{ticket.pk}',
+                                message=_reply_msg,
+                                org_name=tenant.name,
+                            ),
+                            inline_images={LOGO_CID: LOGO_PATH},
                             recipients=owner_emails,
                             reply_to=request.user.email or None,
                         )

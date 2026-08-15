@@ -19,6 +19,18 @@ from .provisioning import provision_tenant, provision_tenant_with_invite, claim_
 logger = logging.getLogger(__name__)
 
 
+# ── Email helpers (templates live in email_utils) ─────────────────────────────
+
+from .email_utils import (
+    LOGO_PATH as _LOGO_PATH,
+    LOGO_CID as _LOGO_CID,
+    onboarding_email_html as _onboarding_email_html,
+    team_invite_email_html as _team_invite_email_html,
+    lead_notification_email_html as _lead_notification_email_html,
+    support_reply_email_html as _support_reply_email_html,
+)
+
+
 # ── Auth guard ─────────────────────────────────────────────────────────────────
 
 def platform_owner_required(view_func):
@@ -394,6 +406,7 @@ def create_tenant(request):
         email_sent = False
         try:
             from .tasks import queue_email
+            login_url = f'{scheme}://{org_host}/login/'
             email_sent = queue_email(
                 scope='platform',
                 trigger_source='create_tenant',
@@ -405,10 +418,12 @@ def create_tenant(request):
                     f'Click this one-time link to set your password and pick a plan:\n'
                     f'{onboard_url}\n\n'
                     f'The link expires in 7 days. After you complete onboarding, you can log in at:\n'
-                    f'{scheme}://{org_host}/login/\n\n'
+                    f'{login_url}\n\n'
                     f'Need help? Reply to this email.\n\n'
                     f'— The ClipLens team'
                 ),
+                html=_onboarding_email_html(admin_username, name, onboard_url, login_url),
+                inline_images={_LOGO_CID: _LOGO_PATH},
                 recipients=[admin_email],
             )
         except Exception:
@@ -486,6 +501,7 @@ def resend_onboarding_invite(request, tenant_id: int):
     email_sent = False
     try:
         from .tasks import queue_email
+        resend_login_url = f'{scheme}://{org_host}/login/'
         email_sent = queue_email(
             scope='platform',
             trigger_source='resend_onboarding_invite',
@@ -499,6 +515,8 @@ def resend_onboarding_invite(request, tenant_id: int):
                 f'This link expires in 7 days.\n\n'
                 f'— The ClipLens team'
             ),
+            html=_onboarding_email_html(invite.admin_username, tenant.name, onboard_url, resend_login_url),
+            inline_images={_LOGO_CID: _LOGO_PATH},
             recipients=[new_email],
         )
     except Exception:
@@ -705,6 +723,11 @@ def _create_team_invites_from_post(request, tenant, *, inviter_username: str, ma
                     f'and log in:\n{accept_url}\n\n'
                     f'If you were not expecting this email, you can ignore it.\n'
                 ),
+                html=_team_invite_email_html(
+                    username, inviter_username or 'An administrator',
+                    tenant.name, invite.get_role_display(), accept_url,
+                ),
+                inline_images={_LOGO_CID: _LOGO_PATH},
                 recipients=[email],
             )
         except Exception:
@@ -895,21 +918,19 @@ def submit_lead(request):
             queue_email(
                 scope='platform',
                 trigger_source='submit_lead',
-                triggered_by_username='',  # public form — anonymous
+                triggered_by_username='',
                 subject=f'[ClipLens] New lead: {lead.name}' + (f' ({lead.company})' if lead.company else ''),
                 body=(
                     f'A new contact form submission just came in.\n\n'
                     f'Name:      {lead.name}\n'
                     f'Email:     {lead.email}\n'
                     f'Company:   {lead.company or "—"}\n'
-                    f'Phone:     {lead.phone or "—"}\n'
-                    f'Interest:  {lead.interest or "—"}\n'
-                    f'IP:        {lead.ip_address or "—"}\n\n'
-                    f'Message:\n{lead.message or "(none)"}\n\n'
-                    f'Reply to: {lead.email}\n'
-                    f'View in admin: '
-                    f'{request.build_absolute_uri("/")[:-1].replace("//", "//admin.", 1)}/platform/leads/'
+                    f'Message:\n{lead.message or "(none)"}\n'
                 ),
+                html=_lead_notification_email_html(
+                    lead.name, lead.email, lead.company or '', lead.message or '',
+                ),
+                inline_images={_LOGO_CID: _LOGO_PATH},
                 recipients=owner_emails,
                 reply_to=lead.email,
             )
@@ -1004,6 +1025,7 @@ def public_signup(request):
         onboard_url = f"{scheme}://{org_host}/onboard/{result['token']}/"
 
         from .tasks import queue_email
+        signup_login_url = f'{scheme}://{slug}.cliplens.in/login/'
         queue_email(
             scope='platform',
             trigger_source='self_service_signup',
@@ -1017,6 +1039,8 @@ def public_signup(request):
                 f'This link expires in 7 days.\n\n'
                 f'— The ClipLens team'
             ),
+            html=_onboarding_email_html(username_base, org_name, onboard_url, signup_login_url),
+            inline_images={_LOGO_CID: _LOGO_PATH},
             recipients=[email],
         )
     except Exception:
@@ -1387,6 +1411,8 @@ def platform_support_detail(request, ticket_id):
                                 f'{body}\n\n'
                                 f'View the full thread in your admin panel under "Support".\n'
                             ),
+                            html=_support_reply_email_html(ticket.pk, ticket.subject, body),
+                            inline_images={_LOGO_CID: _LOGO_PATH},
                             recipients=[ticket.created_by_email],
                         )
                     except Exception:

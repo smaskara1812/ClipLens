@@ -90,6 +90,7 @@ def dispatch(
         try:
             from tenants.tasks import queue_email
             from tenants.models import Tenant
+            from tenants.email_utils import notification_email_html, LOGO_PATH, LOGO_CID
             tenant = None
             if tenant_slug:
                 try:
@@ -100,17 +101,25 @@ def dispatch(
                 f'Hi {recipient.username},\n\n'
                 f'{message}\n\n'
             )
+            full_link = ''
             if link:
-                # Prepend tenant host if we have it
                 if tenant and not link.startswith('http'):
-                    body += f'View: https://{tenant.slug}.cliplens.com{link}\n\n'
+                    full_link = f'https://{tenant.slug}.cliplens.in{link}'
                 else:
-                    body += f'View: {link}\n\n'
+                    full_link = link
+                body += f'View: {full_link}\n\n'
             body += '— ClipLens'
             queue_email(
                 scope=email_scope_override or ('tenant' if tenant else 'platform'),
                 subject=f'[ClipLens] {title}',
                 body=body,
+                html=notification_email_html(
+                    title=title,
+                    message=f'Hi <strong>{recipient.username}</strong>,<br><br>{message}',
+                    link_url=full_link,
+                    org_name=tenant.name if tenant else '',
+                ),
+                inline_images={LOGO_CID: LOGO_PATH},
                 recipients=[recipient.email],
                 tenant=tenant,
                 trigger_source=f'notify:{notification_type}',

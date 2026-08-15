@@ -50,6 +50,7 @@ def send_email_async(
     recipients,
     tenant_id=None,
     html=None,
+    inline_images=None,
     from_override=None,
     reply_to=None,
     trigger_source='',
@@ -74,6 +75,7 @@ def send_email_async(
         recipients=list(recipients),
         tenant=tenant,
         html=html,
+        inline_images=inline_images or {},
         from_override=from_override,
         reply_to=reply_to,
         trigger_source=trigger_source,
@@ -95,6 +97,7 @@ def queue_email(
     recipients,
     tenant=None,
     html=None,
+    inline_images=None,
     from_override=None,
     reply_to=None,
     trigger_source='',
@@ -116,6 +119,7 @@ def queue_email(
             recipients=list(recipients),
             tenant_id=tenant_id,
             html=html,
+            inline_images=inline_images or {},
             from_override=from_override,
             reply_to=reply_to,
             trigger_source=trigger_source,
@@ -128,7 +132,8 @@ def queue_email(
         from .email_utils import send_managed_email
         return send_managed_email(
             scope=scope, subject=subject, body=body, recipients=recipients,
-            tenant=tenant, html=html, from_override=from_override, reply_to=reply_to,
+            tenant=tenant, html=html, inline_images=inline_images or {},
+            from_override=from_override, reply_to=reply_to,
             trigger_source=trigger_source, triggered_by_username=triggered_by_username,
             template_key=template_key,
         )

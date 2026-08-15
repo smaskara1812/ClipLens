@@ -850,7 +850,7 @@
         document.getElementById('ytMetaSub').textContent = [data.uploader, dur].filter(Boolean).join(' · ');
         document.getElementById('ytPreview').classList.add('show');
         document.getElementById('ytPlaylistVideoWrap').style.display = 'none';
-        document.getElementById('ytCountWrap').style.display = 'none';
+        const _cw = document.getElementById('ytCountWrap'); if (_cw) _cw.style.display = 'none';
         document.getElementById('ytSectionWrap').style.display = '';
         document.getElementById('ytMetaFields').style.display = '';
         document.getElementById('ytTitle').value = data.title || '';
